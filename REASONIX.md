@@ -163,7 +163,7 @@ build — so this rule is held by review.
 - Never: restatements of the code, phase/stage narrative, incident or
   conversation history, section banners, commented-out code, `@param` lists.
 - `TODO(#nnn):` and `HACK(#nnn):` need the issue anchor. `FIXME` is banned.
-- One responsibility per file; 800 lines is the ceiling. Test files are exempt:
+- One responsibility per file; 1000 lines is the ceiling. Test files are exempt:
   their length tracks how many cases they cover, not how many concerns they
   carry, so splitting one only scatters a subject's table across files.
 

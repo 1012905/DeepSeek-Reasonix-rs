@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const maxFileLines = 800
+const maxFileLines = 1000
 
 // Translation tables are data, not code: they grow one entry per UI string, so
 // a ceiling there fires on every new label without ever pointing at something

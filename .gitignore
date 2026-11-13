@@ -105,3 +105,4 @@ desktop-tauri/src-tauri/target/
 desktop-tauri/src-tauri/gen/schemas/
 desktop-tauri/tsconfig.tsbuildinfo
 /relayfake
+/wiremanifest
