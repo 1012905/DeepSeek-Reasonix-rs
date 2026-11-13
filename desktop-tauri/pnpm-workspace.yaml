@@ -1,0 +1,7 @@
+# pnpm 10 reads onlyBuiltDependencies; pnpm 11+ removed that spelling in
+# favour of the allowBuilds map (settings/build). Both name the same approval:
+# esbuild's postinstall only verifies its official platform binary.
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
