@@ -1,0 +1,71 @@
+name: studio-tauri
+
+# The Tauri desktop shell is its own Cargo workspace and npm root under
+# desktop-tauri/, outside every lockfile the other workflows install. This
+# workflow holds its gates: frontend typecheck + build + vitest (the wire
+# parity witness), the src-tauri cargo check, and the eventwire manifest
+# drift check that pins the Rust wire types to the manifest the TS mirror
+# is tested against.
+on:
+  push:
+    branches: [main-v2, studio]
+    paths:
+      - "desktop-tauri/**"
+      - "crates/contract/src/eventwire/**"
+      - "crates/contract/src/eventwire_manifest.json"
+      - "tools/wiremanifest/**"
+      - ".github/workflows/studio-tauri.yml"
+  pull_request:
+    branches: [main-v2, studio]
+    paths:
+      - "desktop-tauri/**"
+      - "crates/contract/src/eventwire/**"
+      - "crates/contract/src/eventwire_manifest.json"
+      - "tools/wiremanifest/**"
+      - ".github/workflows/studio-tauri.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-tauri-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/studio' }}
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: desktop-tauri/pnpm-lock.yaml
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: frontend build and test
+        working-directory: desktop-tauri
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm test
+      # The manifest is generated from the Rust wire types and the TS mirror's
+      # parity test reads it back. A fresh generation that differs byte-for-byte
+      # means one of the three sides moved without the others.
+      - name: eventwire manifest matches a fresh generation
+        run: |
+          go run ./tools/wiremanifest "$RUNNER_TEMP/eventwire_manifest.json"
+          diff -u crates/contract/src/eventwire_manifest.json "$RUNNER_TEMP/eventwire_manifest.json"
+      - name: cargo check
+        run: cargo check --manifest-path desktop-tauri/src-tauri/Cargo.toml

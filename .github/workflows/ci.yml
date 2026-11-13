@@ -56,10 +56,11 @@ jobs:
               code=false; desktop=false; sdk=false; scripts=false
               # Root-module CI: desktop/ is a separate module, so only the
               # clearly unrelated paths below can skip it.
-              if echo "$files" | grep -qvE '^(docs/|release-notes/|desktop/|workers/|[^/]+\.md$)'; then code=true; fi
+              if echo "$files" | grep -qvE '^(docs/|release-notes/|desktop/|desktop-tauri/|workers/|[^/]+\.md$)'; then code=true; fi
               # desktop/ imports the root kernel via `replace reasonix => ../`,
-              # so only this clearly-unrelated set is safe to skip.
-              if echo "$files" | grep -qvE '^(docs/|release-notes/|workers/|benchmarks/|npm/|[^/]+\.md$)'; then desktop=true; fi
+              # so only this clearly-unrelated set is safe to skip. desktop-tauri/
+              # holds no Go code; its gates run in studio-tauri.yml.
+              if echo "$files" | grep -qvE '^(docs/|release-notes/|desktop/|desktop-tauri/|workers/|benchmarks/|npm/|[^/]+\.md$)'; then desktop=true; fi
               # sdk/go is a nested module invisible to root `go test ./...`;
               # its DTOs are generated from internal/ext/extension/protocol, so
               # both paths must trigger the sdk job.

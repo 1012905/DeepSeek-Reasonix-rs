@@ -9,7 +9,7 @@ GOEXE := $(shell go env GOEXE)
 # One pin for the Makefile and the CI lint job; see .github/workflows/ci.yml.
 GOLANGCI_VERSION := $(shell cat .golangci-version)
 
-.PHONY: build vet fmt lint lint-go lint-install lint-cross lint-update coverage-gate coverage-gate-update pricecheck acp-conformance check test studio-test sdk-test sdk-test-race hooks cross clean studio
+.PHONY: build vet fmt lint lint-go lint-install lint-cross lint-update coverage-gate coverage-gate-update pricecheck acp-conformance check test studio-test studio-tauri-test studio-tauri-check sdk-test sdk-test-race hooks cross clean studio
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/reasonix$(GOEXE) ./cmd/reasonix
@@ -97,6 +97,19 @@ acp-conformance: build
 # The shell is a nested module, so the root `test` target never reaches it.
 studio-test:
 	cd desktop && go test ./...
+
+# The Tauri shell is its own Cargo workspace and npm root under desktop-tauri/,
+# invisible to the targets above. Its cargo target dir defaults off Desktop,
+# where the MSVC linker fails (D8050); CI's runner has no such restriction.
+TAURI_TARGET_DIR ?= $(HOME)/.cache/reasonix-rust-target-tauri
+
+# The vitest suite carries the wire parity witness that pins src/port/wire.ts
+# to the generated eventwire manifest.
+studio-tauri-test:
+	cd desktop-tauri && pnpm install --frozen-lockfile && pnpm test
+
+studio-tauri-check:
+	CARGO_TARGET_DIR="$(TAURI_TARGET_DIR)" cargo check --manifest-path desktop-tauri/src-tauri/Cargo.toml
 
 sdk-test:
 	cd sdk/go && go test ./...
