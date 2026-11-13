@@ -1,0 +1,153 @@
+{
+  "handshakeVersion": 1,
+  "cases": [
+    {
+      "slug": "get-runtimes",
+      "kind": "http",
+      "request": {
+        "method": "GET",
+        "path": "/runtimes",
+        "headers": {
+          "cookie": "reasonix_token=__CREDENTIAL__"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "date": "Fri, 13 Nov 2026 05:55:46 GMT",
+          "content-length": "121"
+        },
+        "body": "[{\"id\":\"r1\",\"base\":\"/rt/r1\",\"root\":\"C:\\\\Users\\\\10129\\\\Desktop\\\\Projects\\\\DeepSeek-Reasonix\",\"name\":\"DeepSeek-Reasonix\"}]\n"
+      }
+    },
+    {
+      "slug": "get-events-sse",
+      "kind": "sse",
+      "request": {
+        "method": "GET",
+        "path": "/events",
+        "headers": {
+          "cookie": "reasonix_token=__CREDENTIAL__"
+        }
+      },
+      "response": {
+        "status": 200,
+        "frames": [
+          ": connected",
+          "",
+          "data: {\"kind\":\"notice\",\"text\":\"Selected model is missing its API key.\",\"detail\":\"model \\\"deepseek-flash\\\" is selected but its API key DEEPSEEK_API_KEY is not set — requests will fail until you set it\",\"level\":\"info\",\"audience\":\"operator\"}",
+          ""
+        ]
+      }
+    },
+    {
+      "slug": "get-unknown-route",
+      "kind": "http",
+      "request": {
+        "method": "GET",
+        "path": "/definitely-not-a-route",
+        "headers": {
+          "cookie": "reasonix_token=__CREDENTIAL__"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "date": "Fri, 13 Nov 2026 05:55:48 GMT",
+          "content-length": "78"
+        },
+        "body": "{\"code\":\"page.not_built\",\"error\":\"this kernel is serving no built interface\"}\n"
+      }
+    },
+    {
+      "slug": "post-runtimes-no-origin",
+      "kind": "http",
+      "request": {
+        "method": "POST",
+        "path": "/runtimes",
+        "headers": {
+          "cookie": "reasonix_token=__CREDENTIAL__"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "date": "Fri, 13 Nov 2026 05:55:48 GMT",
+          "content-length": "86"
+        },
+        "body": "{\"code\":\"loopback.origin_rejected\",\"error\":\"that origin may not reach this listener\"}\n"
+      }
+    },
+    {
+      "slug": "get-bad-host",
+      "kind": "http",
+      "request": {
+        "method": "GET",
+        "path": "/runtimes",
+        "headers": {
+          "host": "example.com:80",
+          "cookie": "reasonix_token=__CREDENTIAL__"
+        },
+        "body": null
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "date": "Fri, 13 Nov 2026 05:55:48 GMT",
+          "content-length": "88"
+        },
+        "body": "{\"code\":\"loopback.host_rejected\",\"error\":\"this listener does not answer for that host\"}\n"
+      }
+    },
+    {
+      "slug": "get-no-credential",
+      "kind": "http",
+      "request": {
+        "method": "GET",
+        "path": "/runtimes",
+        "headers": {},
+        "body": null
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "date": "Fri, 13 Nov 2026 05:55:48 GMT",
+          "content-length": "85"
+        },
+        "body": "{\"code\":\"loopback.unauthorized\",\"error\":\"this listener needs the host's credential\"}\n"
+      }
+    },
+    {
+      "slug": "post-runtimes",
+      "kind": "http",
+      "request": {
+        "method": "POST",
+        "path": "/runtimes",
+        "headers": {
+          "cookie": "reasonix_token=__CREDENTIAL__",
+          "origin": "http://127.0.0.1:__PORT__",
+          "content-type": "application/json",
+          "content-length": 2
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "date": "Fri, 13 Nov 2026 05:55:49 GMT",
+          "content-length": "119"
+        },
+        "body": "{\"id\":\"r2\",\"base\":\"/rt/r2\",\"root\":\"C:\\\\Users\\\\10129\\\\Desktop\\\\Projects\\\\DeepSeek-Reasonix\",\"name\":\"DeepSeek-Reasonix\"}\n"
+      }
+    }
+  ]
+}

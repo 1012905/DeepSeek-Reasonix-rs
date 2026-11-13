@@ -1,0 +1,1265 @@
+{
+  "kinds": [
+    "adjudications_changed",
+    "approval_request",
+    "ask_engaged",
+    "ask_request",
+    "browser_tabs_changed",
+    "compaction_done",
+    "compaction_progress",
+    "compaction_started",
+    "completion_summary",
+    "context_maintenance",
+    "extension_status",
+    "extension_surface",
+    "graph_delta",
+    "guardian_assessment",
+    "inbox_changed",
+    "mcp_surface_ready",
+    "message",
+    "notice",
+    "phase",
+    "progress_watch",
+    "reasoning",
+    "retrying",
+    "rewind_changed",
+    "steer",
+    "stream_attempt",
+    "text",
+    "todo_progress",
+    "tool_dispatch",
+    "tool_progress",
+    "tool_result",
+    "turn_done",
+    "turn_phase",
+    "turn_started",
+    "usage",
+    "workspace_changed",
+    "workspace_lease"
+  ],
+  "types": {
+    "agentgraph.Delta": {
+      "fields": [
+        "edges",
+        "nodes"
+      ],
+      "omitted": [
+        "edges",
+        "nodes"
+      ]
+    },
+    "agentgraph.Edge": {
+      "fields": [
+        "from",
+        "kind",
+        "to"
+      ],
+      "omitted": []
+    },
+    "agentgraph.Graph": {
+      "fields": [
+        "edges",
+        "nodes"
+      ],
+      "omitted": [
+        "edges",
+        "nodes"
+      ]
+    },
+    "agentgraph.Node": {
+      "fields": [
+        "effort",
+        "endedAt",
+        "err",
+        "grant",
+        "id",
+        "kind",
+        "label",
+        "model",
+        "parentId",
+        "profile",
+        "queuedAt",
+        "ref",
+        "startedAt",
+        "state",
+        "wait"
+      ],
+      "omitted": [
+        "effort",
+        "endedAt",
+        "err",
+        "grant",
+        "kind",
+        "label",
+        "model",
+        "parentId",
+        "profile",
+        "queuedAt",
+        "ref",
+        "startedAt",
+        "state",
+        "wait"
+      ]
+    },
+    "delivery.File": {
+      "fields": [
+        "description",
+        "path",
+        "root"
+      ],
+      "omitted": [
+        "description",
+        "root"
+      ]
+    },
+    "event.ContextComposition": {
+      "fields": [
+        "active",
+        "at",
+        "largest",
+        "parts",
+        "total"
+      ],
+      "omitted": [
+        "largest"
+      ]
+    },
+    "event.ContextItem": {
+      "fields": [
+        "active",
+        "role",
+        "tokens",
+        "tool"
+      ],
+      "omitted": [
+        "active",
+        "tool"
+      ]
+    },
+    "event.ContextPart": {
+      "fields": [
+        "name",
+        "tokens"
+      ],
+      "omitted": []
+    },
+    "eventwire.Approval": {
+      "fields": [
+        "allowsPersist",
+        "allowsSession",
+        "fresh",
+        "id",
+        "input",
+        "kind",
+        "reason",
+        "reasonCode",
+        "recovery",
+        "scope",
+        "subject",
+        "tool"
+      ],
+      "omitted": [
+        "allowsPersist",
+        "allowsSession",
+        "fresh",
+        "input",
+        "kind",
+        "reason",
+        "reasonCode",
+        "recovery",
+        "scope"
+      ]
+    },
+    "eventwire.Ask": {
+      "fields": [
+        "id",
+        "origin",
+        "questions",
+        "skipInMs"
+      ],
+      "omitted": [
+        "origin",
+        "skipInMs"
+      ]
+    },
+    "eventwire.AskOption": {
+      "fields": [
+        "description",
+        "label"
+      ],
+      "omitted": [
+        "description"
+      ]
+    },
+    "eventwire.AskOrigin": {
+      "fields": [
+        "kind",
+        "message",
+        "note",
+        "source",
+        "url",
+        "urlHost",
+        "urlLocal"
+      ],
+      "omitted": [
+        "message",
+        "note",
+        "url",
+        "urlHost",
+        "urlLocal"
+      ]
+    },
+    "eventwire.AskQuestion": {
+      "fields": [
+        "callId",
+        "default",
+        "header",
+        "id",
+        "multi",
+        "options",
+        "prompt",
+        "reason",
+        "surface"
+      ],
+      "omitted": [
+        "callId",
+        "default",
+        "header",
+        "multi",
+        "reason",
+        "surface"
+      ]
+    },
+    "eventwire.Attachment": {
+      "fields": [
+        "path"
+      ],
+      "omitted": []
+    },
+    "eventwire.Bound": {
+      "fields": [
+        "bytes",
+        "keptBytes",
+        "kind",
+        "lines",
+        "path"
+      ],
+      "omitted": [
+        "bytes",
+        "keptBytes",
+        "lines",
+        "path"
+      ]
+    },
+    "eventwire.CacheDiagnostics": {
+      "fields": [
+        "bodyChanged",
+        "bodyHash",
+        "cacheHitTokens",
+        "cacheMissTokens",
+        "carriedMessages",
+        "logRewriteVersion",
+        "prefixChangeReasons",
+        "prefixChanged",
+        "prefixHash",
+        "systemHash",
+        "toolSchemaTokens",
+        "toolsHash"
+      ],
+      "omitted": [
+        "prefixChangeReasons"
+      ]
+    },
+    "eventwire.Compaction": {
+      "fields": [
+        "boundary",
+        "code",
+        "coverageBackstopped",
+        "coverageMissing",
+        "coverageRequired",
+        "messages",
+        "projectionTokens",
+        "remains",
+        "sourceTokens",
+        "summary",
+        "trigger",
+        "triggerTokens"
+      ],
+      "omitted": [
+        "boundary",
+        "code",
+        "coverageBackstopped",
+        "coverageMissing",
+        "coverageRequired",
+        "messages",
+        "projectionTokens",
+        "remains",
+        "sourceTokens",
+        "summary",
+        "trigger",
+        "triggerTokens"
+      ]
+    },
+    "eventwire.CompletionReceipt": {
+      "fields": [
+        "changes",
+        "gaps",
+        "risks",
+        "saysSomething",
+        "severity",
+        "unverified",
+        "verdict",
+        "verifications"
+      ],
+      "omitted": [
+        "changes",
+        "gaps",
+        "risks",
+        "severity",
+        "unverified",
+        "verifications"
+      ]
+    },
+    "eventwire.CompletionSummary": {
+      "fields": [
+        "checks_failed",
+        "checks_passed",
+        "checks_suppressed",
+        "criteria_rewritten",
+        "gap_kinds",
+        "mutations",
+        "preset",
+        "review",
+        "verdict"
+      ],
+      "omitted": [
+        "criteria_rewritten",
+        "gap_kinds"
+      ]
+    },
+    "eventwire.ContextMaintenance": {
+      "fields": [
+        "action",
+        "affectedToolResults",
+        "boundary",
+        "cacheBreak",
+        "code",
+        "inputTokens",
+        "operationId",
+        "projectionVersion",
+        "reason",
+        "resultTokens",
+        "savedTokens",
+        "status",
+        "trigger",
+        "triggerTokens"
+      ],
+      "omitted": [
+        "action",
+        "affectedToolResults",
+        "boundary",
+        "cacheBreak",
+        "code",
+        "inputTokens",
+        "operationId",
+        "projectionVersion",
+        "reason",
+        "resultTokens",
+        "savedTokens",
+        "status",
+        "trigger",
+        "triggerTokens"
+      ]
+    },
+    "eventwire.DecisionReceipt": {
+      "fields": [
+        "id",
+        "kind",
+        "outcome",
+        "subject",
+        "tool",
+        "via"
+      ],
+      "omitted": [
+        "subject",
+        "tool",
+        "via"
+      ]
+    },
+    "eventwire.Event": {
+      "fields": [
+        "approval",
+        "ask",
+        "attachments",
+        "audience",
+        "authoredTurn",
+        "cancelled",
+        "checkpointTurn",
+        "code",
+        "compaction",
+        "completion",
+        "decisionReceipt",
+        "detail",
+        "err",
+        "extension",
+        "graph",
+        "guardian",
+        "hostAuthored",
+        "itemId",
+        "kind",
+        "level",
+        "maintenance",
+        "memoryCitations",
+        "modelRef",
+        "msgIndex",
+        "nonPersistable",
+        "outcome",
+        "phase",
+        "progressWatch",
+        "reasoning",
+        "receipt",
+        "retryAttempt",
+        "retryCause",
+        "retryDelayMs",
+        "retryMax",
+        "retryScope",
+        "retryStatus",
+        "retryTimeoutSecs",
+        "seq",
+        "source",
+        "streamAttempt",
+        "text",
+        "thoughtMs",
+        "todoProgress",
+        "tool",
+        "usage",
+        "via",
+        "workDurationMs",
+        "workStartedAt",
+        "workspace",
+        "workspaceLease"
+      ],
+      "omitted": [
+        "approval",
+        "ask",
+        "attachments",
+        "audience",
+        "authoredTurn",
+        "cancelled",
+        "checkpointTurn",
+        "code",
+        "compaction",
+        "completion",
+        "decisionReceipt",
+        "detail",
+        "err",
+        "extension",
+        "graph",
+        "guardian",
+        "hostAuthored",
+        "itemId",
+        "level",
+        "maintenance",
+        "memoryCitations",
+        "modelRef",
+        "msgIndex",
+        "nonPersistable",
+        "outcome",
+        "phase",
+        "progressWatch",
+        "reasoning",
+        "receipt",
+        "retryAttempt",
+        "retryCause",
+        "retryDelayMs",
+        "retryMax",
+        "retryScope",
+        "retryStatus",
+        "retryTimeoutSecs",
+        "seq",
+        "source",
+        "streamAttempt",
+        "text",
+        "thoughtMs",
+        "todoProgress",
+        "tool",
+        "usage",
+        "via",
+        "workDurationMs",
+        "workStartedAt",
+        "workspace",
+        "workspaceLease"
+      ]
+    },
+    "eventwire.ExtensionActionRef": {
+      "fields": [
+        "actionId",
+        "label"
+      ],
+      "omitted": []
+    },
+    "eventwire.ExtensionCard": {
+      "fields": [
+        "actions",
+        "fields",
+        "markdown",
+        "progress",
+        "text",
+        "title"
+      ],
+      "omitted": [
+        "actions",
+        "fields",
+        "markdown",
+        "progress",
+        "text",
+        "title"
+      ]
+    },
+    "eventwire.ExtensionForm": {
+      "fields": [
+        "fields",
+        "message",
+        "title"
+      ],
+      "omitted": [
+        "message",
+        "title"
+      ]
+    },
+    "eventwire.ExtensionFormField": {
+      "fields": [
+        "default",
+        "key",
+        "kind",
+        "label",
+        "options",
+        "required"
+      ],
+      "omitted": [
+        "default",
+        "kind",
+        "label",
+        "options",
+        "required"
+      ]
+    },
+    "eventwire.ExtensionKeyValue": {
+      "fields": [
+        "key",
+        "value"
+      ],
+      "omitted": []
+    },
+    "eventwire.ExtensionNotification": {
+      "fields": [
+        "body",
+        "severity",
+        "title"
+      ],
+      "omitted": [
+        "body",
+        "severity"
+      ]
+    },
+    "eventwire.ExtensionPanel": {
+      "fields": [
+        "actions",
+        "fields",
+        "progress",
+        "text",
+        "title"
+      ],
+      "omitted": [
+        "actions",
+        "fields",
+        "progress",
+        "text",
+        "title"
+      ]
+    },
+    "eventwire.ExtensionStatus": {
+      "fields": [
+        "detail",
+        "label",
+        "progress",
+        "severity"
+      ],
+      "omitted": [
+        "detail",
+        "progress",
+        "severity"
+      ]
+    },
+    "eventwire.ExtensionSurface": {
+      "fields": [
+        "card",
+        "code",
+        "form",
+        "generation",
+        "kind",
+        "notification",
+        "panel",
+        "pluginId",
+        "sessionId",
+        "status",
+        "surfaceId",
+        "view"
+      ],
+      "omitted": [
+        "card",
+        "code",
+        "form",
+        "generation",
+        "notification",
+        "panel",
+        "sessionId",
+        "status",
+        "view"
+      ]
+    },
+    "eventwire.ExtensionView": {
+      "fields": [
+        "anchor",
+        "body",
+        "slot"
+      ],
+      "omitted": [
+        "anchor",
+        "slot"
+      ]
+    },
+    "eventwire.ExtensionViewNode": {
+      "fields": [
+        "actionId",
+        "children",
+        "dataset",
+        "diff",
+        "field",
+        "key",
+        "kind",
+        "label",
+        "progress",
+        "tone",
+        "value"
+      ],
+      "omitted": [
+        "actionId",
+        "children",
+        "dataset",
+        "diff",
+        "field",
+        "key",
+        "label",
+        "progress",
+        "tone",
+        "value"
+      ]
+    },
+    "eventwire.Guardian": {
+      "fields": [
+        "duration_ms",
+        "id",
+        "outcome",
+        "rationale",
+        "risk_level",
+        "subject",
+        "tool",
+        "usage",
+        "user_authorization"
+      ],
+      "omitted": [
+        "duration_ms",
+        "rationale",
+        "risk_level",
+        "usage",
+        "user_authorization"
+      ]
+    },
+    "eventwire.MemoryCitation": {
+      "fields": [
+        "id",
+        "kind",
+        "lineEnd",
+        "lineStart",
+        "note",
+        "source"
+      ],
+      "omitted": [
+        "id",
+        "kind",
+        "lineEnd",
+        "lineStart",
+        "note"
+      ]
+    },
+    "eventwire.Profile": {
+      "fields": [
+        "count",
+        "effort",
+        "label",
+        "model",
+        "name"
+      ],
+      "omitted": [
+        "count",
+        "effort",
+        "label",
+        "model",
+        "name"
+      ]
+    },
+    "eventwire.ProgressWatch": {
+      "fields": [
+        "cause",
+        "idleRounds",
+        "pausing",
+        "promptTokens",
+        "roundLimit",
+        "stalled",
+        "tokenLimit",
+        "tokenMultiple"
+      ],
+      "omitted": [
+        "cause",
+        "pausing",
+        "promptTokens",
+        "roundLimit",
+        "tokenLimit",
+        "tokenMultiple"
+      ]
+    },
+    "eventwire.ReceiptChange": {
+      "fields": [
+        "path",
+        "reviewed"
+      ],
+      "omitted": []
+    },
+    "eventwire.ReceiptGap": {
+      "fields": [
+        "detail",
+        "kind"
+      ],
+      "omitted": [
+        "detail"
+      ]
+    },
+    "eventwire.ReceiptVerification": {
+      "fields": [
+        "command",
+        "inconclusive",
+        "passed",
+        "stale"
+      ],
+      "omitted": [
+        "inconclusive",
+        "stale"
+      ]
+    },
+    "eventwire.RecoveryApproval": {
+      "fields": [
+        "can_grant_task",
+        "change_kind",
+        "change_rationale",
+        "diagnosis",
+        "failed_summary",
+        "failed_tool",
+        "next_action",
+        "next_tool",
+        "plan_after",
+        "plan_before",
+        "review_rationale",
+        "source_agent",
+        "task_grant_scope"
+      ],
+      "omitted": [
+        "can_grant_task",
+        "change_kind",
+        "change_rationale",
+        "diagnosis",
+        "failed_summary",
+        "failed_tool",
+        "next_action",
+        "next_tool",
+        "plan_after",
+        "plan_before",
+        "review_rationale",
+        "source_agent",
+        "task_grant_scope"
+      ]
+    },
+    "eventwire.ShellExecution": {
+      "fields": [
+        "durationMs",
+        "exitCode",
+        "failurePhase",
+        "jobId",
+        "kind",
+        "mutationRisk",
+        "outputTail",
+        "platform",
+        "shell",
+        "shellVersion",
+        "state",
+        "subject",
+        "supportsAndAnd",
+        "verification"
+      ],
+      "omitted": [
+        "durationMs",
+        "exitCode",
+        "failurePhase",
+        "jobId",
+        "kind",
+        "mutationRisk",
+        "outputTail",
+        "platform",
+        "shell",
+        "shellVersion",
+        "state",
+        "subject",
+        "verification"
+      ]
+    },
+    "eventwire.StreamAttempt": {
+      "fields": [
+        "action",
+        "attempt",
+        "firstTokenMs",
+        "id",
+        "max",
+        "reason"
+      ],
+      "omitted": [
+        "attempt",
+        "firstTokenMs",
+        "max",
+        "reason"
+      ]
+    },
+    "eventwire.TodoProgress": {
+      "fields": [
+        "completed",
+        "contentRevision",
+        "kind",
+        "planRevision",
+        "progressRevision",
+        "steps"
+      ],
+      "omitted": [
+        "completed",
+        "contentRevision",
+        "planRevision",
+        "progressRevision",
+        "steps"
+      ]
+    },
+    "eventwire.Tool": {
+      "fields": [
+        "added",
+        "argChars",
+        "args",
+        "argumentNormalization",
+        "attemptId",
+        "bound",
+        "capabilityId",
+        "contextTokens",
+        "deliveries",
+        "diff",
+        "durationMs",
+        "endedAt",
+        "err",
+        "execution",
+        "id",
+        "images",
+        "issuer",
+        "name",
+        "output",
+        "outputDiff",
+        "parentId",
+        "partial",
+        "profile",
+        "rate",
+        "readOnly",
+        "refreshed",
+        "refusalCode",
+        "removed",
+        "resolvedName",
+        "startedAt",
+        "truncated",
+        "videos",
+        "workspaceLease"
+      ],
+      "omitted": [
+        "added",
+        "argChars",
+        "args",
+        "argumentNormalization",
+        "attemptId",
+        "bound",
+        "capabilityId",
+        "contextTokens",
+        "deliveries",
+        "diff",
+        "durationMs",
+        "endedAt",
+        "err",
+        "execution",
+        "id",
+        "images",
+        "issuer",
+        "output",
+        "outputDiff",
+        "parentId",
+        "partial",
+        "profile",
+        "rate",
+        "refreshed",
+        "refusalCode",
+        "removed",
+        "resolvedName",
+        "startedAt",
+        "truncated",
+        "videos",
+        "workspaceLease"
+      ]
+    },
+    "eventwire.Usage": {
+      "fields": [
+        "aggregateMode",
+        "attemptId",
+        "cacheDiagnostics",
+        "cacheHitTokens",
+        "cacheMissTokens",
+        "completionTokens",
+        "contextCacheHitTokens",
+        "contextCacheMissTokens",
+        "contextCompletionTokens",
+        "contextPromptTokens",
+        "contextReasoningTokens",
+        "cost",
+        "costComplete",
+        "costQuote",
+        "costUsd",
+        "currency",
+        "currencyCode",
+        "displayComplete",
+        "displayStatus",
+        "estimated",
+        "originalTotals",
+        "promptTokens",
+        "reasoningTokens",
+        "sessionCacheHitTokens",
+        "sessionCacheMissTokens",
+        "source",
+        "totalTokens"
+      ],
+      "omitted": [
+        "aggregateMode",
+        "attemptId",
+        "cacheDiagnostics",
+        "contextCacheHitTokens",
+        "contextCacheMissTokens",
+        "contextCompletionTokens",
+        "contextPromptTokens",
+        "contextReasoningTokens",
+        "cost",
+        "costComplete",
+        "costQuote",
+        "costUsd",
+        "currency",
+        "currencyCode",
+        "displayComplete",
+        "displayStatus",
+        "estimated",
+        "originalTotals",
+        "reasoningTokens",
+        "source"
+      ]
+    },
+    "eventwire.Via": {
+      "fields": [
+        "device",
+        "ordinal"
+      ],
+      "omitted": []
+    },
+    "eventwire.VideoShown": {
+      "fields": [
+        "durationMs",
+        "model",
+        "name",
+        "size"
+      ],
+      "omitted": [
+        "durationMs"
+      ]
+    },
+    "eventwire.WorkspaceChanged": {
+      "fields": [
+        "allPaths",
+        "changes",
+        "revisions",
+        "source",
+        "watchState"
+      ],
+      "omitted": []
+    },
+    "eventwire.WorkspaceLease": {
+      "fields": [
+        "contended",
+        "heldMs",
+        "holder",
+        "holderSessionId",
+        "idleMs",
+        "paths",
+        "reported",
+        "repository",
+        "requestedPaths",
+        "waitedMs"
+      ],
+      "omitted": [
+        "holder",
+        "holderSessionId",
+        "paths",
+        "reported",
+        "repository",
+        "requestedPaths",
+        "waitedMs"
+      ]
+    },
+    "eventwire.WorkspacePathChange": {
+      "fields": [
+        "oldPath",
+        "op",
+        "path"
+      ],
+      "omitted": [
+        "oldPath"
+      ]
+    },
+    "eventwire.WorkspaceRevision": {
+      "fields": [
+        "content",
+        "gitMeta",
+        "session",
+        "tree",
+        "workingTree"
+      ],
+      "omitted": []
+    },
+    "pricing.CostQuote": {
+      "fields": [
+        "aggregateMode",
+        "billingMode",
+        "catalogSource",
+        "complete",
+        "costComplete",
+        "coverage",
+        "displayComplete",
+        "displayStatus",
+        "estimated",
+        "incompleteReason",
+        "legacyEstimate",
+        "modelRef",
+        "original",
+        "originalTotals",
+        "pricingFingerprint",
+        "rateBand",
+        "rateDate",
+        "selected",
+        "usageSource",
+        "valuations"
+      ],
+      "omitted": [
+        "aggregateMode",
+        "billingMode",
+        "catalogSource",
+        "coverage",
+        "displayStatus",
+        "incompleteReason",
+        "legacyEstimate",
+        "modelRef",
+        "originalTotals",
+        "pricingFingerprint",
+        "rateBand",
+        "rateDate",
+        "selected",
+        "usageSource",
+        "valuations"
+      ]
+    },
+    "pricing.Money": {
+      "fields": [
+        "amount",
+        "currency"
+      ],
+      "omitted": []
+    },
+    "pricing.RateSnapshot": {
+      "fields": [
+        "asOf",
+        "base",
+        "quote",
+        "rate",
+        "source",
+        "stale"
+      ],
+      "omitted": [
+        "stale"
+      ]
+    },
+    "pricing.Valuation": {
+      "fields": [
+        "asOf",
+        "basis",
+        "money",
+        "rateSnapshot",
+        "source",
+        "stale"
+      ],
+      "omitted": [
+        "rateSnapshot",
+        "stale"
+      ]
+    },
+    "provider.ArgumentNormalization": {
+      "fields": [
+        "effective",
+        "original",
+        "reason"
+      ],
+      "omitted": []
+    },
+    "surfacespec.Dataset": {
+      "fields": [
+        "categories",
+        "series"
+      ],
+      "omitted": []
+    },
+    "surfacespec.Diff": {
+      "fields": [
+        "after",
+        "before"
+      ],
+      "omitted": []
+    },
+    "surfacespec.Fact": {
+      "fields": [
+        "label",
+        "value"
+      ],
+      "omitted": []
+    },
+    "surfacespec.Field": {
+      "fields": [
+        "default",
+        "max",
+        "max_length",
+        "min",
+        "options",
+        "required",
+        "type"
+      ],
+      "omitted": [
+        "default",
+        "max",
+        "max_length",
+        "min",
+        "options",
+        "required"
+      ]
+    },
+    "surfacespec.Image": {
+      "fields": [
+        "alt",
+        "path",
+        "source"
+      ],
+      "omitted": [
+        "source"
+      ]
+    },
+    "surfacespec.Location": {
+      "fields": [
+        "latitude",
+        "longitude"
+      ],
+      "omitted": []
+    },
+    "surfacespec.Node": {
+      "fields": [
+        "actionId",
+        "children",
+        "dataset",
+        "diff",
+        "field",
+        "key",
+        "kind",
+        "label",
+        "progress",
+        "tone",
+        "value"
+      ],
+      "omitted": [
+        "actionId",
+        "children",
+        "dataset",
+        "diff",
+        "field",
+        "key",
+        "label",
+        "progress",
+        "tone",
+        "value"
+      ]
+    },
+    "surfacespec.Option": {
+      "fields": [
+        "currency",
+        "description",
+        "facts",
+        "group",
+        "image",
+        "label",
+        "location",
+        "preview",
+        "price",
+        "value"
+      ],
+      "omitted": [
+        "currency",
+        "description",
+        "facts",
+        "group",
+        "image",
+        "location",
+        "preview",
+        "price"
+      ]
+    },
+    "surfacespec.Series": {
+      "fields": [
+        "id",
+        "label",
+        "unit",
+        "values"
+      ],
+      "omitted": [
+        "unit"
+      ]
+    },
+    "surfacespec.Spec": {
+      "fields": [
+        "body",
+        "spec_version",
+        "title"
+      ],
+      "omitted": [
+        "title"
+      ]
+    }
+  }
+}

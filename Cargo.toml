@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/base",
+    "crates/contract",
+    "crates/state",
+    "crates/safety",
+    "crates/model",
+    "crates/tools",
+    "crates/runtime",
+    "crates/session",
+    "crates/serve",
+    "crates/boot",
+]
+# The Tauri shell is its own workspace: a different toolchain profile and a
+# dependency graph that must not enter the kernel's Cargo.lock.
+exclude = ["desktop-tauri/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/esengine/DeepSeek-Reasonix"
+
+# Pinned once here; members opt in with `<dep> = { workspace = true }`.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "native-tls",
+] }
