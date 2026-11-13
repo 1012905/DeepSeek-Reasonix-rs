@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,73 +32,73 @@ func main() {
 	}
 
 	roots := map[string]reflect.Type{
-		"eventwire.Event":                 reflect.TypeOf(eventwire.Event{}),
-		"eventwire.Approval":              reflect.TypeOf(eventwire.Approval{}),
-		"eventwire.RecoveryApproval":      reflect.TypeOf(eventwire.RecoveryApproval{}),
-		"eventwire.Ask":                   reflect.TypeOf(eventwire.Ask{}),
-		"eventwire.AskQuestion":           reflect.TypeOf(eventwire.AskQuestion{}),
-		"eventwire.AskOption":             reflect.TypeOf(eventwire.AskOption{}),
-		"eventwire.AskOrigin":             reflect.TypeOf(eventwire.AskOrigin{}),
-		"eventwire.Attachment":            reflect.TypeOf(eventwire.Attachment{}),
-		"eventwire.Bound":                 reflect.TypeOf(eventwire.Bound{}),
-		"eventwire.CacheDiagnostics":      reflect.TypeOf(eventwire.CacheDiagnostics{}),
-		"eventwire.Compaction":            reflect.TypeOf(eventwire.Compaction{}),
-		"eventwire.CompletionReceipt":     reflect.TypeOf(eventwire.CompletionReceipt{}),
-		"eventwire.CompletionSummary":     reflect.TypeOf(eventwire.CompletionSummary{}),
-		"eventwire.ContextMaintenance":    reflect.TypeOf(eventwire.ContextMaintenance{}),
-		"eventwire.DecisionReceipt":       reflect.TypeOf(eventwire.DecisionReceipt{}),
-		"eventwire.ExtensionActionRef":    reflect.TypeOf(eventwire.ExtensionActionRef{}),
-		"eventwire.ExtensionCard":         reflect.TypeOf(eventwire.ExtensionCard{}),
-		"eventwire.ExtensionFormField":    reflect.TypeOf(eventwire.ExtensionFormField{}),
-		"eventwire.ExtensionForm":         reflect.TypeOf(eventwire.ExtensionForm{}),
-		"eventwire.ExtensionKeyValue":     reflect.TypeOf(eventwire.ExtensionKeyValue{}),
-		"eventwire.ExtensionNotification": reflect.TypeOf(eventwire.ExtensionNotification{}),
-		"eventwire.ExtensionPanel":        reflect.TypeOf(eventwire.ExtensionPanel{}),
-		"eventwire.ExtensionStatus":       reflect.TypeOf(eventwire.ExtensionStatus{}),
-		"eventwire.ExtensionSurface":      reflect.TypeOf(eventwire.ExtensionSurface{}),
-		"eventwire.ExtensionView":         reflect.TypeOf(eventwire.ExtensionView{}),
-		"eventwire.ExtensionViewNode":     reflect.TypeOf(eventwire.ExtensionViewNode{}),
-		"eventwire.Guardian":              reflect.TypeOf(eventwire.Guardian{}),
-		"eventwire.MemoryCitation":        reflect.TypeOf(eventwire.MemoryCitation{}),
-		"eventwire.Profile":               reflect.TypeOf(eventwire.Profile{}),
-		"eventwire.ProgressWatch":         reflect.TypeOf(eventwire.ProgressWatch{}),
-		"eventwire.ReceiptChange":         reflect.TypeOf(eventwire.ReceiptChange{}),
-		"eventwire.ReceiptGap":            reflect.TypeOf(eventwire.ReceiptGap{}),
-		"eventwire.ReceiptVerification":   reflect.TypeOf(eventwire.ReceiptVerification{}),
-		"eventwire.ShellExecution":        reflect.TypeOf(eventwire.ShellExecution{}),
-		"eventwire.StreamAttempt":         reflect.TypeOf(eventwire.StreamAttempt{}),
-		"eventwire.Tool":                  reflect.TypeOf(eventwire.Tool{}),
-		"eventwire.TodoProgress":          reflect.TypeOf(eventwire.TodoProgress{}),
-		"eventwire.Usage":                 reflect.TypeOf(eventwire.Usage{}),
-		"eventwire.Via":                   reflect.TypeOf(eventwire.Via{}),
-		"eventwire.VideoShown":            reflect.TypeOf(eventwire.VideoShown{}),
-		"eventwire.WorkspaceChanged":      reflect.TypeOf(eventwire.WorkspaceChanged{}),
-		"eventwire.WorkspaceLease":        reflect.TypeOf(eventwire.WorkspaceLease{}),
-		"eventwire.WorkspacePathChange":   reflect.TypeOf(eventwire.WorkspacePathChange{}),
-		"eventwire.WorkspaceRevision":     reflect.TypeOf(eventwire.WorkspaceRevision{}),
-		"event.ContextComposition":        reflect.TypeOf(event.ContextComposition{}),
-		"event.ContextItem":               reflect.TypeOf(event.ContextItem{}),
-		"event.ContextPart":               reflect.TypeOf(event.ContextPart{}),
-		"delivery.File":                   reflect.TypeOf(delivery.File{}),
-		"pricing.CostQuote":               reflect.TypeOf(pricing.CostQuote{}),
-		"pricing.Money":                   reflect.TypeOf(pricing.Money{}),
-		"pricing.RateSnapshot":            reflect.TypeOf(pricing.RateSnapshot{}),
-		"pricing.Valuation":               reflect.TypeOf(pricing.Valuation{}),
-		"agentgraph.Node":                 reflect.TypeOf(agentgraph.Node{}),
-		"agentgraph.Edge":                 reflect.TypeOf(agentgraph.Edge{}),
-		"agentgraph.Delta":                reflect.TypeOf(agentgraph.Delta{}),
-		"agentgraph.Graph":                reflect.TypeOf(agentgraph.Graph{}),
-		"surfacespec.Spec":                reflect.TypeOf(surfacespec.Spec{}),
-		"surfacespec.Node":                reflect.TypeOf(surfacespec.Node{}),
-		"surfacespec.Field":               reflect.TypeOf(surfacespec.Field{}),
-		"surfacespec.Option":              reflect.TypeOf(surfacespec.Option{}),
-		"surfacespec.Diff":                reflect.TypeOf(surfacespec.Diff{}),
-		"surfacespec.Image":               reflect.TypeOf(surfacespec.Image{}),
-		"surfacespec.Location":            reflect.TypeOf(surfacespec.Location{}),
-		"surfacespec.Fact":                reflect.TypeOf(surfacespec.Fact{}),
-		"surfacespec.Dataset":             reflect.TypeOf(surfacespec.Dataset{}),
-		"surfacespec.Series":              reflect.TypeOf(surfacespec.Series{}),
-		"provider.ArgumentNormalization":  reflect.TypeOf(provider.ArgumentNormalization{}),
+		"eventwire.Event":                 reflect.TypeFor[eventwire.Event](),
+		"eventwire.Approval":              reflect.TypeFor[eventwire.Approval](),
+		"eventwire.RecoveryApproval":      reflect.TypeFor[eventwire.RecoveryApproval](),
+		"eventwire.Ask":                   reflect.TypeFor[eventwire.Ask](),
+		"eventwire.AskQuestion":           reflect.TypeFor[eventwire.AskQuestion](),
+		"eventwire.AskOption":             reflect.TypeFor[eventwire.AskOption](),
+		"eventwire.AskOrigin":             reflect.TypeFor[eventwire.AskOrigin](),
+		"eventwire.Attachment":            reflect.TypeFor[eventwire.Attachment](),
+		"eventwire.Bound":                 reflect.TypeFor[eventwire.Bound](),
+		"eventwire.CacheDiagnostics":      reflect.TypeFor[eventwire.CacheDiagnostics](),
+		"eventwire.Compaction":            reflect.TypeFor[eventwire.Compaction](),
+		"eventwire.CompletionReceipt":     reflect.TypeFor[eventwire.CompletionReceipt](),
+		"eventwire.CompletionSummary":     reflect.TypeFor[eventwire.CompletionSummary](),
+		"eventwire.ContextMaintenance":    reflect.TypeFor[eventwire.ContextMaintenance](),
+		"eventwire.DecisionReceipt":       reflect.TypeFor[eventwire.DecisionReceipt](),
+		"eventwire.ExtensionActionRef":    reflect.TypeFor[eventwire.ExtensionActionRef](),
+		"eventwire.ExtensionCard":         reflect.TypeFor[eventwire.ExtensionCard](),
+		"eventwire.ExtensionFormField":    reflect.TypeFor[eventwire.ExtensionFormField](),
+		"eventwire.ExtensionForm":         reflect.TypeFor[eventwire.ExtensionForm](),
+		"eventwire.ExtensionKeyValue":     reflect.TypeFor[eventwire.ExtensionKeyValue](),
+		"eventwire.ExtensionNotification": reflect.TypeFor[eventwire.ExtensionNotification](),
+		"eventwire.ExtensionPanel":        reflect.TypeFor[eventwire.ExtensionPanel](),
+		"eventwire.ExtensionStatus":       reflect.TypeFor[eventwire.ExtensionStatus](),
+		"eventwire.ExtensionSurface":      reflect.TypeFor[eventwire.ExtensionSurface](),
+		"eventwire.ExtensionView":         reflect.TypeFor[eventwire.ExtensionView](),
+		"eventwire.ExtensionViewNode":     reflect.TypeFor[eventwire.ExtensionViewNode](),
+		"eventwire.Guardian":              reflect.TypeFor[eventwire.Guardian](),
+		"eventwire.MemoryCitation":        reflect.TypeFor[eventwire.MemoryCitation](),
+		"eventwire.Profile":               reflect.TypeFor[eventwire.Profile](),
+		"eventwire.ProgressWatch":         reflect.TypeFor[eventwire.ProgressWatch](),
+		"eventwire.ReceiptChange":         reflect.TypeFor[eventwire.ReceiptChange](),
+		"eventwire.ReceiptGap":            reflect.TypeFor[eventwire.ReceiptGap](),
+		"eventwire.ReceiptVerification":   reflect.TypeFor[eventwire.ReceiptVerification](),
+		"eventwire.ShellExecution":        reflect.TypeFor[eventwire.ShellExecution](),
+		"eventwire.StreamAttempt":         reflect.TypeFor[eventwire.StreamAttempt](),
+		"eventwire.Tool":                  reflect.TypeFor[eventwire.Tool](),
+		"eventwire.TodoProgress":          reflect.TypeFor[eventwire.TodoProgress](),
+		"eventwire.Usage":                 reflect.TypeFor[eventwire.Usage](),
+		"eventwire.Via":                   reflect.TypeFor[eventwire.Via](),
+		"eventwire.VideoShown":            reflect.TypeFor[eventwire.VideoShown](),
+		"eventwire.WorkspaceChanged":      reflect.TypeFor[eventwire.WorkspaceChanged](),
+		"eventwire.WorkspaceLease":        reflect.TypeFor[eventwire.WorkspaceLease](),
+		"eventwire.WorkspacePathChange":   reflect.TypeFor[eventwire.WorkspacePathChange](),
+		"eventwire.WorkspaceRevision":     reflect.TypeFor[eventwire.WorkspaceRevision](),
+		"event.ContextComposition":        reflect.TypeFor[event.ContextComposition](),
+		"event.ContextItem":               reflect.TypeFor[event.ContextItem](),
+		"event.ContextPart":               reflect.TypeFor[event.ContextPart](),
+		"delivery.File":                   reflect.TypeFor[delivery.File](),
+		"pricing.CostQuote":               reflect.TypeFor[pricing.CostQuote](),
+		"pricing.Money":                   reflect.TypeFor[pricing.Money](),
+		"pricing.RateSnapshot":            reflect.TypeFor[pricing.RateSnapshot](),
+		"pricing.Valuation":               reflect.TypeFor[pricing.Valuation](),
+		"agentgraph.Node":                 reflect.TypeFor[agentgraph.Node](),
+		"agentgraph.Edge":                 reflect.TypeFor[agentgraph.Edge](),
+		"agentgraph.Delta":                reflect.TypeFor[agentgraph.Delta](),
+		"agentgraph.Graph":                reflect.TypeFor[agentgraph.Graph](),
+		"surfacespec.Spec":                reflect.TypeFor[surfacespec.Spec](),
+		"surfacespec.Node":                reflect.TypeFor[surfacespec.Node](),
+		"surfacespec.Field":               reflect.TypeFor[surfacespec.Field](),
+		"surfacespec.Option":              reflect.TypeFor[surfacespec.Option](),
+		"surfacespec.Diff":                reflect.TypeFor[surfacespec.Diff](),
+		"surfacespec.Image":               reflect.TypeFor[surfacespec.Image](),
+		"surfacespec.Location":            reflect.TypeFor[surfacespec.Location](),
+		"surfacespec.Fact":                reflect.TypeFor[surfacespec.Fact](),
+		"surfacespec.Dataset":             reflect.TypeFor[surfacespec.Dataset](),
+		"surfacespec.Series":              reflect.TypeFor[surfacespec.Series](),
+		"provider.ArgumentNormalization":  reflect.TypeFor[provider.ArgumentNormalization](),
 	}
 
 	fields := map[string]map[string]bool{}
@@ -129,11 +130,10 @@ func collect(t reflect.Type, into map[string]bool) {
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
 		t = t.Elem()
 	}
-	if t.Kind() != reflect.Struct || t == reflect.TypeOf(json.RawMessage{}) {
+	if t.Kind() != reflect.Struct || t == reflect.TypeFor[json.RawMessage]() {
 		return
 	}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
+	for f := range t.Fields() {
 		if !f.IsExported() {
 			continue
 		}
@@ -145,14 +145,7 @@ func collect(t reflect.Type, into map[string]bool) {
 		if name == "" {
 			name = f.Name
 		}
-		omit := false
-		for _, opt := range parts[1:] {
-			if opt == "omitempty" {
-				omit = true
-				break
-			}
-		}
-		into[name] = omit
+		into[name] = slices.Contains(parts[1:], "omitempty")
 	}
 }
 
