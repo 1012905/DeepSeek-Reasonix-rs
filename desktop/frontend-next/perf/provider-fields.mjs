@@ -59,6 +59,25 @@ try {
       return { clipped, uneven, outside };
     });
     const selected = await measure();
+    // TEMP DIAGNOSTIC: dump the layout facts that decide `available` so the
+    // regression behind the 207-vs-220 miss can be read from CI logs alone.
+    const probe = await page.evaluate(() => {
+      const input = document.querySelector('.ml-row input[data-value="model-window"]');
+      const unit = input.closest(".unit-field");
+      const unitStyle = getComputedStyle(unit);
+      const unitI = unit.querySelector("i");
+      const style = getComputedStyle(input);
+      const pick = (el) => el && { w: el.clientWidth };
+      return {
+        font: style.font, inputW: input.clientWidth, padL: style.paddingLeft, padR: style.paddingRight,
+        unitW: unit.clientWidth, unitPad: unitStyle.paddingLeft + "/" + unitStyle.paddingRight,
+        unitBorder: unitStyle.borderLeftWidth + "/" + unitStyle.borderRightWidth, unitI: unitI && unitI.clientWidth,
+        row: pick(input.closest(".ml-row")), group: pick(input.closest(".ml-group")),
+        section: pick(input.closest(".addp-section")), prefsMain: pick(document.querySelector(".prefs-main")),
+        placeholder: input.placeholder,
+      };
+    });
+    console.log(`PROBE ${label}: ${JSON.stringify(probe)}`);
     await form.locator(".ml-group").first().scrollIntoViewIfNeeded();
     await page.screenshot({ path: `perf/shots/provider-fields-${label}.png` });
     assert.deepEqual(selected, { clipped: [], uneven: [], outside: [] }, `${label}: values, inherited hints and the full billing choice fit aligned controls`);
