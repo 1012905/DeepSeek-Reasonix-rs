@@ -124,6 +124,32 @@ func readsAsKnownHosts(dir string, line []byte) bool {
 	return err == nil
 }
 
+// scanManagedLines names the lines of the managed file the parser will drop.
+// x/crypto ≥0.59 skips unreadable lines the way OpenSSH does instead of failing
+// the load, so a successful load no longer proves the file was fully readable,
+// and the tolerant loader no longer gets a say. A dropped marker line is an
+// error: losing a @revoked or @cert-authority could turn a refusal into an
+// acceptance, a trade the tolerant loader never made either.
+func scanManagedLines(managed string) (skipped []int, err error) {
+	data, err := os.ReadFile(managed)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Dir(managed)
+	lines := bytes.Split(data, []byte("\n"))
+	for i, line := range lines {
+		text := bytes.TrimSpace(line)
+		if len(text) == 0 || text[0] == '#' || readsAsKnownHosts(dir, text) {
+			continue
+		}
+		if text[0] == '@' {
+			return nil, fmt.Errorf("%s:%d: unreadable @marker line", managed, i+1)
+		}
+		skipped = append(skipped, i+1)
+	}
+	return skipped, nil
+}
+
 // remapKnownHostsFile points a lookup answer at the file the user has rather than
 // the repaired copy the lookup ran against; line numbers are the same by construction.
 func remapKnownHostsFile(err error, from, to string) error {
