@@ -121,6 +121,23 @@ func TestLinuxCIPackageMatrixPreservesUpstreamScope(t *testing.T) {
 			if seen["amd64"] != "ubuntu-22.04" || (seen["arm64"] == "ubuntu-22.04-arm") != tc.arm64 {
 				t.Fatalf("Linux CI matrix = %v; selector output: %s", seen, out)
 			}
+			// The three required legs report on every event: a pull request
+			// that cannot affect packaging flips steps to false instead of
+			// pruning the legs, which left required checks "expected" forever.
+			wantSteps := "true"
+			wantLegs := 5
+			if tc.event == "pull_request" && tc.file == "docs/test.md" {
+				wantSteps = "false"
+				wantLegs = 3
+			}
+			if len(matrix.Include) != wantLegs {
+				t.Fatalf("matrix holds %d legs, want %d", len(matrix.Include), wantLegs)
+			}
+			for _, leg := range matrix.Include {
+				if leg["steps"] != wantSteps {
+					t.Fatalf("leg %v/%v has steps %q, want %q", leg["os"], leg["arch"], leg["steps"], wantSteps)
+				}
+			}
 		})
 	}
 }
