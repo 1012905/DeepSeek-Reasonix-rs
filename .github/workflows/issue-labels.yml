@@ -105,7 +105,7 @@ jobs:
   # Issue forms can't let a reporter set a label directly (that needs triage
   # rights), so the bug/feature forms carry a "Version line" dropdown and this
   # job reads the submitted value and applies the matching label on their
-  # behalf: 0.x -> v1 (TypeScript), 1.x -> v2 (main-v2), 2.x -> v3 (studio).
+  # behalf: 0.x -> v1 (TypeScript), 2.x -> v3 (studio).
   version-label:
     if: github.event.action == 'opened' || github.event.action == 'edited'
     runs-on: ubuntu-latest

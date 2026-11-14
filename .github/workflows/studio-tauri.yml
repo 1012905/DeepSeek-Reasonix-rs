@@ -8,7 +8,7 @@ name: studio-tauri
 # is tested against.
 on:
   push:
-    branches: [main-v2, studio]
+    branches: [studio]
     paths:
       - "desktop-tauri/**"
       - "crates/contract/src/eventwire/**"
@@ -16,7 +16,7 @@ on:
       - "tools/wiremanifest/**"
       - ".github/workflows/studio-tauri.yml"
   pull_request:
-    branches: [main-v2, studio]
+    branches: [studio]
     paths:
       - "desktop-tauri/**"
       - "crates/contract/src/eventwire/**"

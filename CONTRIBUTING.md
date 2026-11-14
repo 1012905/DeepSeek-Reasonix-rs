@@ -178,20 +178,14 @@ ci: add golangci-lint and govulncheck
 
 ## Submitting changes
 
-Reasonix ships on two lines (see the
-[version roadmap](https://github.com/esengine/DeepSeek-Reasonix/discussions/10748)),
-and each takes different changes:
-
-| Line | Branch | Takes |
-| --- | --- | --- |
-| 2.x | `studio` | Features and fixes: active development |
-| 1.x | `main-v2` | Bug fixes, provider/API compatibility, release/updater, security, platform stability |
-
-A fix that matters on both lines lands on `main-v2` and is reviewed for
-porting to `studio`; do not open the same PR against both.
+This repository carries a single line: `studio` (2.x — Reasonix Studio;
+Rust + Vue + Tauri is the target stack with Go kept through the transition).
+The upstream 1.x line lives on
+[esengine/DeepSeek-Reasonix `main-v2`](https://github.com/esengine/DeepSeek-Reasonix/tree/main-v2)
+and takes its fixes there, not here.
 
 1. Fork the repository
-2. Create a feature branch from the branch your change targets
+2. Create a feature branch from `studio`
 3. Make your changes with tests
 4. Ensure `go test ./...` passes
 5. Ensure `gofmt -l .` shows no changes
