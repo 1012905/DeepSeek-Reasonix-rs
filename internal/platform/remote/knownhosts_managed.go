@@ -128,8 +128,8 @@ func readsAsKnownHosts(dir string, line []byte) bool {
 // x/crypto ≥0.59 skips unreadable lines the way OpenSSH does instead of failing
 // the load, so a successful load no longer proves the file was fully readable,
 // and the tolerant loader no longer gets a say. A dropped marker line is an
-// error: losing a @revoked or @cert-authority could turn a refusal into an
-// acceptance, a trade the tolerant loader never made either.
+// error: losing a @revoked could turn a refusal into an acceptance, a trade
+// the tolerant loader never made either.
 func scanManagedLines(managed string) (skipped []int, err error) {
 	data, err := os.ReadFile(managed)
 	if err != nil {
