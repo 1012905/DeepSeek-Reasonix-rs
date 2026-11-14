@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.esengine.reasonix-studio",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "go build -o src-tauri/bin/reasonix-studio-host.exe ../cmd/reasonix-studio-host && pnpm dev",
     "devUrl": "http://localhost:5280",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
