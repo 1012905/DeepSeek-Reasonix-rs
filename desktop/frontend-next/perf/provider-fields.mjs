@@ -62,15 +62,19 @@ try {
     // TEMP DIAGNOSTIC: dump the layout facts that decide `available` so the
     // regression behind the 207-vs-220 miss can be read from CI logs alone.
     const probe = await form.evaluate((root) => {
-      const input = root.querySelector(".token-limits input");
+      const input = root.querySelector('.ml-row input[aria-label^="Context window"]');
+      const unit = input.closest(".unit-field");
+      const unitStyle = getComputedStyle(unit);
+      const unitI = unit.querySelector("i");
       const style = getComputedStyle(input);
-      const pick = (el) => el && { w: el.clientWidth, right: Math.round(el.getBoundingClientRect().right) };
+      const pick = (el) => el && { w: el.clientWidth };
       return {
-        font: style.font, inputW: input.clientWidth,
-        padL: style.paddingLeft, padR: style.paddingRight,
-        unitField: pick(input.closest(".unit-field")), label: pick(input.closest("label")),
-        form: pick(root), prefsMain: pick(document.querySelector(".prefs-main")),
-        prefsNav: pick(document.querySelector(".prefs-nav")), body: pick(document.body),
+        font: style.font, inputW: input.clientWidth, padL: style.paddingLeft, padR: style.paddingRight,
+        unitW: unit.clientWidth, unitPad: unitStyle.paddingLeft + "/" + unitStyle.paddingRight,
+        unitBorder: unitStyle.borderLeftWidth + "/" + unitStyle.borderRightWidth, unitI: unitI && unitI.clientWidth,
+        row: pick(input.closest(".ml-row")), group: pick(input.closest(".ml-group")),
+        section: pick(input.closest(".addp-section")), prefsMain: pick(document.querySelector(".prefs-main")),
+        placeholder: input.placeholder,
       };
     });
     console.log(`PROBE ${label}: ${JSON.stringify(probe)}`);
