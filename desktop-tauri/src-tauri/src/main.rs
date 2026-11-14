@@ -14,7 +14,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 const TOKEN_COOKIE: &str = "reasonix_token";
 
@@ -116,6 +116,101 @@ fn drain_acts(stdout: impl BufRead + Send + 'static) {
     });
 }
 
+// The live event stream: one GET /events per shell, frames forwarded to the
+// webview as kernel-frame events. A dropped stream reconnects with
+// Last-Event-ID, so resume costs only what the replay log cannot reach — the
+// same contract the SPA's EventSource rides. Keepalive comments fall through.
+fn bridge_events(app: tauri::AppHandle, origin: String, token: String) {
+    std::thread::spawn(move || {
+        let mut last_seq: i64 = 0;
+        loop {
+            if let Err(err) = events_stream(
+                &|payload: &str| {
+                    app.emit("kernel-frame", payload)
+                        .map_err(|e| format!("emitting a frame: {e}"))
+                },
+                &origin,
+                &token,
+                &mut last_seq,
+            ) {
+                eprintln!("kernel events: {err}");
+            }
+            // The stream ended — the hub stopped or the connection dropped.
+            // Either way the replay picks up from the watermark after a beat.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    });
+}
+
+enum SseLine {
+    Id(i64),
+    Data(String),
+    Other,
+}
+
+// One line of the host's /events stream: numbered frames, JSON data, and
+// keepalive comments that carry no frame.
+fn parse_sse_line(line: &str) -> SseLine {
+    if let Some(seq) = line.strip_prefix("id: ") {
+        return seq
+            .parse::<i64>()
+            .map(SseLine::Id)
+            .unwrap_or(SseLine::Other);
+    }
+    if let Some(data) = line.strip_prefix("data: ") {
+        return SseLine::Data(data.to_string());
+    }
+    SseLine::Other
+}
+
+fn events_stream(
+    emit: &dyn Fn(&str) -> Result<(), String>,
+    origin: &str,
+    token: &str,
+    last_seq: &mut i64,
+) -> Result<(), String> {
+    let url: tauri::Url = format!("{origin}/events")
+        .parse()
+        .map_err(|e| format!("parsing /events: {e}"))?;
+    let authority = format!(
+        "{}:{}",
+        url.host_str().ok_or("the kernel origin has no host")?,
+        url.port_or_known_default()
+            .ok_or("the kernel origin has no port")?
+    );
+    let request = [
+        "GET /events HTTP/1.1\r\n".to_string(),
+        format!("Host: {authority}\r\n"),
+        format!("Cookie: reasonix_token={token}\r\n"),
+        format!("Last-Event-ID: {last_seq}\r\n"),
+        "Accept: text/event-stream\r\n".to_string(),
+        "\r\n".to_string(),
+    ]
+    .concat();
+    let mut stream = std::net::TcpStream::connect(&authority)
+        .map_err(|e| format!("connecting to /events: {e}"))?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("sending /events: {e}"))?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("reading the event stream: {e}"))?;
+        if read == 0 {
+            return Ok(()); // the hub ended its stream
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        match parse_sse_line(trimmed) {
+            SseLine::Id(seq) => *last_seq = seq,
+            SseLine::Data(payload) => emit(&payload)?,
+            SseLine::Other => {}
+        }
+    }
+}
+
 fn run() -> Result<(), String> {
     tauri::Builder::default()
         .setup(|app| {
@@ -131,10 +226,11 @@ fn run() -> Result<(), String> {
                 bound
             };
             app.manage(KernelState {
-                origin: bound.origin,
-                token: bound.token,
+                origin: bound.origin.clone(),
+                token: bound.token.clone(),
                 child: Mutex::new(kernel),
             });
+            bridge_events(app.handle().clone(), bound.origin, bound.token);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -283,6 +379,43 @@ mod tests {
         let body = "{\"task\":\"x\"}";
         assert!(request.contains(&format!("Content-Length: {}\r\n", body.len())));
         assert!(request.ends_with(body));
+    }
+
+    #[test]
+    fn parse_sse_line_reads_ids_data_and_skips_the_rest() {
+        assert!(matches!(parse_sse_line("id: 42"), SseLine::Id(42)));
+        assert!(matches!(
+            parse_sse_line("data: {\"kind\":\"text\"}"),
+            SseLine::Data(_)
+        ));
+        assert!(matches!(parse_sse_line(": ping"), SseLine::Other));
+        assert!(matches!(parse_sse_line(""), SseLine::Other));
+    }
+
+    // The credential boundary of the stream: the frames ride the cookie the
+    // shell already holds, never a query token. The listener closes its side
+    // after the GET (which carries no body), and the clean end is what the
+    // function reports.
+    #[test]
+    fn events_request_carries_the_cookie_and_resume_point() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).expect("read");
+            String::from_utf8_lossy(&request).to_string()
+        });
+        let frames: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let sink = |payload: &str| {
+            frames.lock().expect("frames").push(payload.to_string());
+            Ok(())
+        };
+        let _ = events_stream(&sink, "http://127.0.0.1:PORT", "t3", &mut 7i64);
+        let request = handle.join().expect("the mock thread");
+        assert!(request.contains("GET /events HTTP/1.1\r\n"));
+        assert!(request.contains("Cookie: reasonix_token=t3\r\n"));
+        assert!(request.contains("Last-Event-ID: 7\r\n"));
+        assert!(frames.lock().expect("frames").is_empty());
     }
 
     // The kernel_request round trip runs against a real loopback listener so
