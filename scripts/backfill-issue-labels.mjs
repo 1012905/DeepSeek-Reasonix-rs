@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Backfill area/platform/severity labels on existing open issues via the DeepSeek
-// API — the one-off companion to .github/workflows/issue-auto-label.yml (which
+// API — the one-off companion to .github/workflows/issue-labels.yml (which
 // only fires on new issues). Keep the label sets and prompt in sync with that
 // workflow. GitHub access uses the local `gh` CLI (must be authenticated).
 //

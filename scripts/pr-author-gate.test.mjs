@@ -50,9 +50,16 @@ test("decide admits only maintainers, bots and listed logins", () => {
 
 test("the shipped allowlist parses and the workflow is safe", () => {
   assert.ok(parseAllowlist(readFileSync(new URL("../.github/pr-authors.txt", import.meta.url), "utf8")).size >= 1);
-  const text = readFileSync(new URL("../.github/workflows/pr-author-gate.yml", import.meta.url), "utf8");
-  assert.match(text, /pull_request_target:\n\s+types: \[opened\]/);
+  const text = readFileSync(new URL("../.github/workflows/pr-gate-and-labels.yml", import.meta.url), "utf8");
+  assert.match(text, /pull_request_target:\n\s+types: \[opened, synchronize, reopened, edited\]/);
   assert.doesNotMatch(text, /head\.(sha|ref)|refs\/pull/);
   assert.match(text, /permissions:\n\s+contents: read\n\s+pull-requests: write/);
   assert.match(text, /node scripts\/pr-author-gate\.mjs/);
+  // The gate closes pull requests, so it may run only when one opens — never
+  // on synchronize, whose push a fork author controls.
+  const gate = text.slice(text.indexOf("\n  gate:"), text.indexOf("\n  area-label:"));
+  assert.match(gate, /if: github\.event\.action == 'opened'/);
+  // The labeler and the version label never check anything out.
+  const labelers = text.slice(text.indexOf("\n  area-label:"));
+  assert.doesNotMatch(labelers, /actions\/checkout/);
 });

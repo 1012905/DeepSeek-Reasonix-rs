@@ -46,7 +46,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
+      # A push reaches this workflow only when the sweeper or its test changed
+      # (paths above), so it is the one trigger that owes the sweeper's tests.
+      # The verification before anything is deployed stays in the sweep step's
+      # dry-run and STALE_SWEEP_ENABLED gates below.
       - name: Test sweeper
+        if: github.event_name == 'push'
         run: node --test scripts/stale-report-sweep.test.mjs
       # A push that only touched the sweeper runs its tests and stops there.
       - name: Sweep

@@ -130,9 +130,59 @@ jobs:
           go run ./cmd/signpath-contract validate
           echo "workflow fingerprint=$(go run ./cmd/signpath-contract fingerprint)" >> "$GITHUB_STEP_SUMMARY"
 
+  # The SPA every package embeds and every CLI archive carries, built once from
+  # the tagged commit. The fixture guard is the same one Studio's CI runs: a
+  # release that cannot reach the kernel has to say so, not act out a fake
+  # session.
+  frontend:
+    name: build the SPA
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 10
+          run_install: false
+
+      # No cache on this job: it runs the tagged commit's code, and a cache
+      # entry written here is one the rest of the repository can later restore
+      # (the same cache-poisoning shape the older build and publish steps carry).
+      # The install runs once per release; the store cache is not worth the
+      # exposure.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+
+      - name: Build the SPA
+        working-directory: desktop/frontend-next
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: no fixtures in the bundle
+        working-directory: desktop/frontend-next
+        run: |
+          if grep -rl 网关瞬时态 dist/ 2>/dev/null; then
+            echo "::error::MockPort fixtures reached the production bundle - check the import.meta.env.DEV guard in main.tsx"
+            exit 1
+          fi
+
+      - name: upload SPA bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: studio-spa-dist
+          path: desktop/frontend-next/dist
+          if-no-files-found: error
+          retention-days: 7
+
   build:
     name: build (${{ matrix.platform }})
-    needs: [resolve, signing-contract]
+    needs: [resolve, signing-contract, frontend]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -209,9 +259,15 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: |
-            desktop/frontend-next/pnpm-lock.yaml
-            desktop/electron/pnpm-lock.yaml
+          cache-dependency-path: desktop/electron/pnpm-lock.yaml
+
+      # The same bundle the frontend job built and checked for fixtures. The
+      # artifact carries the dist directory's contents at its root, so the
+      # download path ends at dist.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: studio-spa-dist
+          path: desktop/frontend-next/dist
 
       # electron-builder shells out to dpkg-deb through fakeroot for the .deb and
       # to rpmbuild for the .rpm, and carries its own NSIS -- the toolchain the
@@ -276,11 +332,6 @@ jobs:
             echo "::error::all five APPLE_* secrets are required to publish Studio for macOS"
             exit 1
           fi
-
-      - name: Build the SPA
-        working-directory: desktop/frontend-next
-        shell: bash
-        run: pnpm install --frozen-lockfile && pnpm build
 
       # The kernel the shell speaks to. It is a main-module binary and stays
       # CGO-free, so no platform needs a toolchain for it.
@@ -578,10 +629,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # No environment and no secrets: electron-builder and its dependencies run
-  # here, on a runner that never held a signing session.
+  # No environment and no secrets: electron-builder, the archive parsing of the
+  # package check and their dependencies run here, on a runner that never held
+  # a signing session. Packaging and verification share one runner because
+  # neither touches a credential; the verification still reads its script and
+  # its payload from outside what this tag's packaging step wrote: the script
+  # from the workflow's own commit, the payload from the artifact the signing
+  # job hashed. Its outputs are the hashes of the two files it checked, which
+  # the installer signing job requires.
   windows-package:
-    name: package Windows from the signed tree (${{ matrix.arch }})
+    name: package and check the Windows packages (${{ matrix.arch }})
     needs: [resolve, windows-sign-payload]
     runs-on: windows-latest
     timeout-minutes: 30
@@ -597,6 +654,11 @@ jobs:
             unpacked: win-arm64-unpacked
     permissions:
       contents: read
+    outputs:
+      installer-sha256-amd64: ${{ matrix.arch == 'amd64' && steps.check.outputs.installer-sha256 || '' }}
+      installer-sha256-arm64: ${{ matrix.arch == 'arm64' && steps.check.outputs.installer-sha256 || '' }}
+      archive-sha256-amd64: ${{ matrix.arch == 'amd64' && steps.check.outputs.archive-sha256 || '' }}
+      archive-sha256-arm64: ${{ matrix.arch == 'arm64' && steps.check.outputs.archive-sha256 || '' }}
     steps:
       - name: Stop Defender scanning the build
         continue-on-error: true
@@ -651,6 +713,36 @@ jobs:
           wait "$zip_pid"
           mv ../../dist-zip/ReasonixStudio-windows-${{ matrix.arch }}.zip ../../dist/
 
+      # The NSIS run writes elevate.exe into the tree it packs, so the tree at
+      # dist/${{ matrix.unpacked }} is no longer the bytes that were signed:
+      # the check reads a second, pristine download of the signed payload.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-studio-windows-payload-${{ matrix.arch }}
+          path: payload
+
+      # 7-Zip is the runner image's, not the tag's; the verify script is the
+      # workflow's, not the tag's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: verify
+          persist-credentials: false
+
+      - name: Compare both packages with the signed payload
+        id: check
+        shell: pwsh
+        env:
+          PAYLOAD_DIGEST: ${{ needs.windows-sign-payload.outputs[format('payload-digest-{0}', matrix.arch)] }}
+        run: |
+          ./verify/scripts/verify-windows-package.ps1 `
+            -PayloadDirectory payload `
+            -ExpectedPayloadDigest $env:PAYLOAD_DIGEST `
+            -InstallerPath "dist/ReasonixStudio-windows-${{ matrix.arch }}-installer.exe" `
+            -PortableArchivePath "dist/ReasonixStudio-windows-${{ matrix.arch }}.zip" `
+            -OutputPath $env:GITHUB_OUTPUT `
+            -Architecture ${{ matrix.arch }}
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: packaged-studio-windows-${{ matrix.arch }}
@@ -660,60 +752,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Unpacks what windows-package built and compares it with the signed payload.
-  # Archive parsing happens here, on a runner with no environment and no
-  # secrets, never in a job that holds the Certum credentials. Its outputs are
-  # the hashes of the two files it checked, which the signing job requires.
-  windows-verify-package:
-    name: check the Windows packages against the signed tree (${{ matrix.arch }})
-    needs: [resolve, windows-sign-payload, windows-package]
-    runs-on: windows-2022
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    permissions:
-      contents: read
-    outputs:
-      installer-sha256-amd64: ${{ matrix.arch == 'amd64' && steps.check.outputs.installer-sha256 || '' }}
-      installer-sha256-arm64: ${{ matrix.arch == 'arm64' && steps.check.outputs.installer-sha256 || '' }}
-      archive-sha256-amd64: ${{ matrix.arch == 'amd64' && steps.check.outputs.archive-sha256 || '' }}
-      archive-sha256-arm64: ${{ matrix.arch == 'arm64' && steps.check.outputs.archive-sha256 || '' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: signed-studio-windows-payload-${{ matrix.arch }}
-          path: payload
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: packaged-studio-windows-${{ matrix.arch }}
-          path: dist
-
-      # 7-Zip is the runner image's, not the tag's.
-      - name: Compare both packages with the signed payload
-        id: check
-        shell: pwsh
-        env:
-          PAYLOAD_DIGEST: ${{ needs.windows-sign-payload.outputs[format('payload-digest-{0}', matrix.arch)] }}
-        run: |
-          ./scripts/verify-windows-package.ps1 `
-            -PayloadDirectory payload `
-            -ExpectedPayloadDigest $env:PAYLOAD_DIGEST `
-            -InstallerPath "dist/ReasonixStudio-windows-${{ matrix.arch }}-installer.exe" `
-            -PortableArchivePath "dist/ReasonixStudio-windows-${{ matrix.arch }}.zip" `
-            -OutputPath $env:GITHUB_OUTPUT `
-            -Architecture ${{ matrix.arch }}
-
   windows-sign-installer:
     name: sign the Windows installer (Certum, ${{ matrix.arch }})
-    needs: [resolve, windows-package, windows-verify-package]
+    needs: [resolve, windows-package]
     runs-on: windows-2022
     timeout-minutes: 30
     strategy:
@@ -774,14 +815,14 @@ jobs:
           name: packaged-studio-windows-${{ matrix.arch }}
           path: dist
 
-      # Only the two files windows-verify-package checked, byte for byte. This
+      # Only the two files windows-package checked, byte for byte. This
       # job opens no archive: what is inside was settled on a runner without
       # the credentials, so Certum never signs an installer that did not match.
       - name: Require the checked packages
         shell: pwsh
         env:
-          INSTALLER_SHA256: ${{ needs.windows-verify-package.outputs[format('installer-sha256-{0}', matrix.arch)] }}
-          ARCHIVE_SHA256: ${{ needs.windows-verify-package.outputs[format('archive-sha256-{0}', matrix.arch)] }}
+          INSTALLER_SHA256: ${{ needs.windows-package.outputs[format('installer-sha256-{0}', matrix.arch)] }}
+          ARCHIVE_SHA256: ${{ needs.windows-package.outputs[format('archive-sha256-{0}', matrix.arch)] }}
         run: |
           $ErrorActionPreference = 'Stop'
           $expected = [ordered]@{
@@ -793,7 +834,7 @@ jobs:
           foreach ($entry in $expected.GetEnumerator()) {
             if ($entry.Value -notmatch '^[0-9a-f]{64}$') { throw "No checked hash for $($entry.Key)" }
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path dist $entry.Key)).Hash.ToLowerInvariant()
-            if ($hash -cne $entry.Value) { throw "$($entry.Key) is not the file windows-verify-package checked" }
+            if ($hash -cne $entry.Value) { throw "$($entry.Key) is not the file windows-package checked" }
           }
 
       - name: Connect to Certum
@@ -894,7 +935,7 @@ jobs:
   # of them with nothing to name but npm's, which is another line's.
   cli:
     name: build the CLI archives
-    needs: resolve
+    needs: [resolve, frontend]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -908,23 +949,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # The page every archive carries beside the executable, built once here
-      # rather than once per target: serve.FindPage looks for
-      # frontend-next/dist next to the binary.
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      # The page every archive carries beside the executable, the same bundle
+      # the packages embed: serve.FindPage looks for frontend-next/dist next
+      # to the binary. The artifact carries the dist directory's contents at
+      # its root, so the download path ends at dist.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          version: 10
-          run_install: false
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: "24"
-          cache: pnpm
-          cache-dependency-path: desktop/frontend-next/pnpm-lock.yaml
-
-      - name: Build the page
-        working-directory: desktop/frontend-next
-        run: pnpm install --frozen-lockfile && pnpm build
+          name: studio-spa-dist
+          path: desktop/frontend-next/dist
 
       # Every target the release line claims to support, from one runner: the
       # CLI is CGO-free, so none of them needs a toolchain of its own.
@@ -967,17 +999,17 @@ jobs:
 
   publish:
     name: sign, publish and mirror
-    needs: [resolve, build, cli, windows-sign-payload, windows-package, windows-verify-package, windows-sign-installer, windows-install-smoke]
+    needs: [resolve, build, cli, windows-sign-payload, windows-package, windows-sign-installer, windows-install-smoke]
     # The Windows signing jobs may be skipped only while the switch is off; with
     # it on, any of them failing, cancelled or absent blocks the release.
     if: >-
       ${{ !cancelled() && needs.resolve.result == 'success' && needs.build.result == 'success' &&
       needs.cli.result == 'success' && needs.windows-install-smoke.result == 'success' &&
       ((needs.windows-sign-payload.result == 'success' &&
-      needs.windows-package.result == 'success' && needs.windows-verify-package.result == 'success' &&
+      needs.windows-package.result == 'success' &&
       needs.windows-sign-installer.result == 'success') ||
       (vars.STUDIO_SIGNING_ENABLED != 'true' && needs.windows-sign-payload.result == 'skipped' &&
-      needs.windows-package.result == 'skipped' && needs.windows-verify-package.result == 'skipped' &&
+      needs.windows-package.result == 'skipped' &&
       needs.windows-sign-installer.result == 'skipped')) }}
     runs-on: ubuntu-latest
     # Owner approval for the whole line. The gate sits here rather than before
@@ -1051,14 +1083,14 @@ jobs:
 
       # Any job can upload an artifact, so the signed Windows packages are
       # taken only if they are the bytes the signing jobs recorded: each
-      # installer as signed, each zip as windows-verify-package checked it.
+      # installer as signed, each zip as windows-package checked it.
       - name: Require the recorded Windows packages
         if: needs.windows-sign-installer.result == 'success'
         env:
           INSTALLER_SHA256_AMD64: ${{ needs.windows-sign-installer.outputs[format('installer-sha256-{0}', 'amd64')] }}
-          ARCHIVE_SHA256_AMD64: ${{ needs.windows-verify-package.outputs[format('archive-sha256-{0}', 'amd64')] }}
+          ARCHIVE_SHA256_AMD64: ${{ needs.windows-package.outputs[format('archive-sha256-{0}', 'amd64')] }}
           INSTALLER_SHA256_ARM64: ${{ needs.windows-sign-installer.outputs[format('installer-sha256-{0}', 'arm64')] }}
-          ARCHIVE_SHA256_ARM64: ${{ needs.windows-verify-package.outputs[format('archive-sha256-{0}', 'arm64')] }}
+          ARCHIVE_SHA256_ARM64: ${{ needs.windows-package.outputs[format('archive-sha256-{0}', 'arm64')] }}
         run: |
           check() {
             local file="$1/$2" want="$3" got
