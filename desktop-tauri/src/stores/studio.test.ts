@@ -1,8 +1,9 @@
 // The Studio store's kernel traffic: the runtime boot opens on the shell's
 // own working directory when none is open, /history is a read, /submit
-// carries the input under the host's own field name, and a submitted turn
-// ends with a history refresh — the port is stubbed, so the shapes are what's
-// under test.
+// carries the input under the host's own field name, a submitted turn ends
+// with a history refresh, and the live stream narrows frames to the fields
+// the transcript renders — the port and the event bridge are stubbed, so the
+// shapes are what's under test.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useStudioStore } from "./studio";
@@ -20,17 +21,32 @@ vi.mock("../port/kernel", () => ({
   },
 }));
 
+// The event bridge is stubbed at the same seam the Rust shell emits on; the
+// captured handler lets a test drive frames through the store's narrowing.
+let captured: ((e: { payload: string }) => void) | undefined;
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async (_event: string, handler: (e: { payload: string }) => void) => {
+    captured = handler;
+    return () => {};
+  },
+}));
+
 const history = [
   { role: "user", content: "hello", msgIndex: 0 },
   { role: "assistant", content: "hi", msgIndex: 1 },
 ];
+
+function emitFrame(payload: string) {
+  captured?.({ payload });
+}
 
 beforeEach(() => {
   setActivePinia(createPinia());
   get.mockReset();
   post.mockReset();
   defaultRoot.mockReset();
-  get.mockResolvedValue(history);
+    get.mockResolvedValue(history);
 });
 
 describe("studio store", () => {
@@ -83,5 +99,25 @@ describe("studio store", () => {
     await store.refreshHistory();
     expect(store.error).toContain("403");
     expect(store.history).toEqual([]);
+  });
+
+  it("the stream narrows frames and turn_done folds into the history", async () => {
+    const store = useStudioStore();
+    await store.startStream();
+    emitFrame('{"kind":"text","text":"working on it"}');
+    emitFrame('{"kind":"text","text":" done"}');
+    emitFrame('{"kind":"turn_done"}');
+    expect(store.live).toHaveLength(3);
+    expect(store.live[0]).toEqual({ kind: "text", text: "working on it" });
+    expect(store.live[2]).toEqual({ kind: "turn_done" });
+    expect(get).toHaveBeenLastCalledWith("/history");
+  });
+
+  it("frames the kernel sends outside the contract disappear silently", async () => {
+    const store = useStudioStore();
+    await store.startStream();
+    emitFrame('{"kind":"mystery_kind","text":"x"}');
+    emitFrame("not even json");
+    expect(store.live).toHaveLength(0);
   });
 });
