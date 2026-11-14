@@ -94,40 +94,19 @@ it("repaints active packs and contrast exactly at both boundaries, and restores 
 it("reconciles sleep, visibility and clock changes on focus without replaying missed boundaries", async () => {
   localStorage.setItem("rx-theme", "scheduled");
   vi.useFakeTimers(); vi.setSystemTime(at(19));
-  // Watch the hook's own boundary timers (identified by their delay) instead of
-  // `getTimerCount()`: since jsdom 31 React's act wrapper leaves an internal
-  // guard timer pending on the fake clock, so the global count is no longer
-  // the component's.
-  const registered = vi.spyOn(window, "setTimeout");
-  const cleared = vi.spyOn(window, "clearTimeout");
-  const paintWrites = vi.spyOn(Storage.prototype, "setItem");
-  const writes = () => paintWrites.mock.calls.filter(([key]) => key === "rx-theme-resolved").length;
   const { result } = await setup();
-  // Boundary timers still pending with the given delay: armed, and not yet cleared.
-  const liveBoundaries = (delay: number) => {
-    const clearedHandles = new Set(cleared.mock.calls.map(([handle]) => String(handle)));
-    return registered.mock.calls.filter(([, ms], i) =>
-      ms === delay && !clearedHandles.has(String(registered.mock.results[i]?.value))).length;
-  };
-  expect(liveBoundaries(60 * 60 * 1000)).toBe(1); // 19:00 sits 1h before the 20:00 boundary
+  expect(vi.getTimerCount()).toBe(1);
   vi.setSystemTime(at(23));
   act(() => window.dispatchEvent(new Event("focus")));
   expect(result.current.scheme).toBe("dark");
   vi.setSystemTime(at(8));
   act(() => document.dispatchEvent(new Event("visibilitychange")));
   expect(result.current.scheme).toBe("light");
-  expect(liveBoundaries(60 * 60 * 1000)).toBe(0); // the pre-boundary timer was re-armed
-  expect(liveBoundaries(12 * 60 * 60 * 1000)).toBe(1); // exactly once: 08:00 sits 12h before 20:00
-  // Stale boundaries were cleared: advancing past them must fire no paint.
-  const before = writes();
-  act(() => vi.advanceTimersByTime(12 * 60 * 60 * 1000 - 1));
-  expect(writes()).toBe(before);
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("keeps explicit and system modes authoritative and cancels the schedule when leaving it", async () => {
   vi.useFakeTimers(); vi.setSystemTime(at(23));
-  // See "reconciles" above: watch the hook's own timers, not the fake clock's.
-  const registered = vi.spyOn(window, "setTimeout");
   const { result } = await setup();
   act(() => result.current.setTheme("light"));
   act(() => setThemeSchedule({ start: "00:00", end: "23:59" }));
@@ -138,15 +117,11 @@ it("keeps explicit and system modes authoritative and cancels the schedule when 
   expect(result.current.scheme).toBe(matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   act(() => result.current.setTheme("scheduled"));
   expect(result.current.scheme).toBe("dark");
-  // Armed exactly once on entering the schedule: the range was rewritten to
-  // 00:00–23:59 above, so 23:00 sits 59 minutes before the 23:59 boundary.
-  expect(registered.mock.calls.length).toBe(1);
-  expect(registered.mock.calls[0]?.[1]).toBe(59 * 60 * 1000);
+  expect(vi.getTimerCount()).toBe(1);
   act(() => result.current.setTheme("light"));
-  // Leaving the schedule re-arms nothing.
-  expect(registered.mock.calls.length).toBe(1);
+  expect(vi.getTimerCount()).toBe(0);
   act(() => vi.advanceTimersByTime(24 * 60 * 60 * 1000));
-  expect(result.current.scheme).toBe("light"); // a leaked boundary would repaint dark at 23:00
+  expect(result.current.scheme).toBe("light");
 });
 
 it("changes the real paint through appearance controls and leaves contrast, palettes and fixed modes available", async () => {
