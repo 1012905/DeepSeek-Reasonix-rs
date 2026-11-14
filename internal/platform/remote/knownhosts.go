@@ -283,6 +283,16 @@ func (p *HostKeyPolicy) loadCallback() (ssh.HostKeyCallback, string, error) {
 		base, err = knownhosts.New(files...)
 		if err != nil {
 			base, err = tolerantCallback(files, managed, err)
+		} else if managed != "" {
+			// x/crypto ≥0.59 skips unreadable lines the way OpenSSH does, so the
+			// successful load says nothing about the managed file's readability.
+			// Warn about the dropped data lines, and keep refusing to run on a
+			// dropped marker, exactly the trade the tolerant loader made.
+			var skipped []int
+			skipped, err = scanManagedLines(managed)
+			if err == nil && len(skipped) > 0 {
+				warnSkippedKnownHostsLines(managed, skipped)
+			}
 		}
 		if err != nil {
 			return nil, "", fmt.Errorf("load known_hosts: %w", err)
