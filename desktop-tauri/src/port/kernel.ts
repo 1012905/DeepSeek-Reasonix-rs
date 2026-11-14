@@ -18,14 +18,17 @@ function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
 
 export interface KernelPort {
   connected(): Promise<boolean>;
+  defaultRoot(): Promise<string>;
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body: unknown): Promise<T>;
 }
 
+// Kernel API responses are JSON; the IPC body is text, so the port is where
+// the parse happens — stores receive typed values, not wire text. The POST's
+// 202 carries no body, so its text return is passed through as-is.
 export const kernelPort: KernelPort = {
   connected: async () => (await invoke("kernel_connected") as { connected: boolean }).connected,
-  // Kernel API responses are JSON; the IPC body is text, so the port is
-  // where the parse happens — stores receive typed values, not wire text.
+  defaultRoot: async () => (await invoke("default_root")) as string,
   get: async <T>(path: string) => JSON.parse((await invoke("kernel_get", { path })) as string) as T,
   post: async <T>(path: string, body: unknown) =>
     (await invoke("kernel_post", { path, body: JSON.stringify(body) })) as T,

@@ -9,11 +9,13 @@ const studio = useStudioStore();
 const input = ref("");
 let timer: ReturnType<typeof setInterval> | undefined;
 
-// Liveness is polled: a host exit flips the badge within one period, without
-// the shell restarting anything.
+// The boot: connect the badge, open a runtime on the shell's working
+// directory, and read the transcript. Liveness is polled afterwards: a host
+// exit flips the badge within one period, without the shell restarting
+// anything.
 onMounted(() => {
   kernel.refresh();
-  studio.refreshHistory();
+  studio.ensureRuntime().then(() => studio.refreshHistory());
   timer = setInterval(() => kernel.refresh(), 2000);
 });
 onUnmounted(() => clearInterval(timer));
@@ -46,7 +48,7 @@ function send() {
 
       <div style="display: flex; gap: 8px">
         <n-input v-model:value="input" type="text" placeholder="describe a task…"
-          @keydown.enter="send" :disabled="studio.submitting || !kernel.connected" />
+          @keydown.enter="send" :disabled="studio.submitting || !input.trim() || !kernel.connected" />
         <n-button type="primary" @click="send" :disabled="studio.submitting || !input.trim() || !kernel.connected">
           {{ studio.submitting ? "…" : "send" }}
         </n-button>

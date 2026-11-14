@@ -235,6 +235,7 @@ fn run() -> Result<(), String> {
         })
         .invoke_handler(tauri::generate_handler![
             kernel_connected,
+            default_root,
             kernel_get,
             kernel_post
         ])
@@ -302,6 +303,16 @@ fn kernel_request(
         .split_once("\r\n\r\n")
         .map(|(_, body)| body.to_string())
         .unwrap_or(text.to_string()))
+}
+
+// The project root a runtime opens on: the directory the shell was started
+// in. A folder picker is a later phase; the boot slice opens on the shell's
+// own working directory.
+#[tauri::command]
+fn default_root() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("reading the working directory: {e}"))
 }
 
 // The page's window onto the kernel — the host's HTTP API, with the
