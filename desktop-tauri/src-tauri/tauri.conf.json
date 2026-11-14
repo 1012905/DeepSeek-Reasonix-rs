@@ -4,20 +4,12 @@
   "version": "0.1.0",
   "identifier": "com.esengine.reasonix-studio",
   "build": {
-    "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:5280",
+    "beforeDevCommand": "go build -o src-tauri/bin/reasonix-studio-host.exe ../cmd/reasonix-studio-host && pnpm --dir ../desktop/frontend-next build",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Reasonix Studio",
-        "width": 1280,
-        "height": 800
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
