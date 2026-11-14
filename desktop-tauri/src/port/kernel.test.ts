@@ -24,7 +24,7 @@ describe("kernelPort against a stubbed bridge", () => {
   it("sends the shapes the Rust commands expect", async () => {
     const invoke = vi.fn(async (cmd: string, _args?: Record<string, unknown>) => {
       if (cmd === "kernel_connected") return { connected: true };
-      if (cmd === "kernel_get") return [1, 2];
+      if (cmd === "kernel_get") return "[1, 2]";
       return "ok";
     });
     internals.__TAURI_INTERNALS__ = { invoke };
