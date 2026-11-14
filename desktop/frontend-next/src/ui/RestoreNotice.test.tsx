@@ -36,7 +36,9 @@ const style = (selector: string) => {
 it("resets native paint with a resting click cue, themed focus and disabled states", () => {
   const button = style(".restore-notice button");
   expect(button.getPropertyValue("border")).toBe("0px");
-  expect(button.getPropertyValue("background")).toBe("transparent");
+  // jsdom 31 serializes the `background` shorthand as the image layer ("none"),
+  // so the transparency intent is asserted on the color longhand instead.
+  expect(button.getPropertyValue("background-color")).toBe("transparent");
   expect(button.getPropertyValue("font")).toBe("inherit");
   expect(button.getPropertyValue("text-decoration")).toBe("underline");
   expect(button.getPropertyValue("text-underline-offset")).toBe("2px");
