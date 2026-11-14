@@ -54,14 +54,14 @@ Jobs in the run:
 | --- | --- | --- |
 | `resolve` | Validates the tag shape and that the commit is on `studio`. | fails on any other ref |
 | `signing-contract` | Validates `.signpath/contracts/release-signing.yml` against the workflows that reach the Certum credentials and prints its fingerprint. | fails on an undeclared signing workflow |
+| `frontend` | Builds the SPA once from the tagged commit, checks the bundle carries no MockPort fixtures, and uploads it for the build legs and the CLI job to download. | none |
 | `build` | Builds windows/amd64, windows/arm64 (on a native `windows-11-arm` runner), darwin/amd64, darwin/arm64, linux/amd64, linux/arm64 (on a native `ubuntu-22.04-arm` runner, with a system-installed fpm because electron-builder's own is x86_64-only); signs macOS. Windows PE images and all Linux ELF images must match the package architecture. Linux packages pass installed-shell acceptance before upload. With signing on, each Windows leg uploads its bundle instead of packaging it. | Apple secrets are required |
 | `windows-sign-payload` | Only with `STUDIO_SIGNING_ENABLED=true`. One leg per architecture, run one after the other (`max-parallel: 1`). Refuses a bundle whose PE files differ from the declared list or are not all the leg's architecture, signs the release PE files, verifies them and the two Microsoft-signed DLLs, and records a digest of the whole signed tree as a job output. Installs no toolchain. | shared concurrency group `certum-signing`, environment `studio-release` |
-| `windows-package` | Builds each architecture's installer and zip from its signed tree as it came; the arm64 installer is packed with `ELECTRON_BUILDER_7Z_FILTER=BCJ`. Holds no secrets. | none |
-| `windows-verify-package` | Per architecture: checks the payload against the recorded digest, unpacks the zip and the installer, requires both trees to match the payload file for file and the installer to carry exactly its architecture's application archive, and outputs the SHA-256 of both packages. Holds no secrets and no environment. | none |
+| `windows-package` | Builds each architecture's installer and zip from its signed tree as it came (the arm64 installer packed with `ELECTRON_BUILDER_7Z_FILTER=BCJ`), then checks them against the payload: the recorded digest, the zip's tree and the installer's `app-*.7z` unpacked with the runner image's 7-Zip, file for file against the signed payload, and outputs the SHA-256 of both packages. The verify script is checked out from the workflow's own commit, not the tag. Holds no secrets and no environment. | none |
 | `windows-sign-installer` | One leg per architecture, run one after the other. Requires both packages to hash to the checked values, signs the installer, verifies its signature, and outputs the signed installer's SHA-256. Opens no archive. | shared concurrency group `certum-signing`, environment `studio-release` |
 | `windows-install-smoke` | Runs `scripts/install-smoke.ps1` (the script pull requests run against the unsigned installer) with each architecture's installer on a runner of that architecture: silent per-user install, waits for the files to settle, checks the installed tree (the declared PE set, every image's architecture, the shell's own architecture, the kernel starting) and uninstalls. Holds no secrets and no environment. | `publish` waits for it |
-| `cli` | Builds `reasonix` archives for six OS/arch targets plus `SHA256SUMS`. | fails on a missing archive |
-| `publish` | Renders the notes with their authors, minisigns, writes `latest.json`, creates the GitHub release (a stable tag is GitHub latest only when it is the highest stable `studio-v*` tag; a candidate is a prerelease), mirrors to R2. `latest.json` goes to R2 only, never to the GitHub release. | environment `studio-release`; skipped unless `windows-install-smoke` and all four Windows signing jobs (every leg) succeeded, or signing is off (the smoke still runs); an unresolved `#N` stops it before signing |
+| `cli` | Builds `reasonix` archives for six OS/arch targets plus `SHA256SUMS`, each carrying the frontend job's page. | fails on a missing archive |
+| `publish` | Renders the notes with their authors, minisigns, writes `latest.json`, creates the GitHub release (a stable tag is GitHub latest only when it is the highest stable `studio-v*` tag; a candidate is a prerelease), mirrors to R2. `latest.json` goes to R2 only, never to the GitHub release. | environment `studio-release`; skipped unless `windows-install-smoke` and every Windows package-and-signing job (every leg) succeeded, or signing is off (the smoke still runs); an unresolved `#N` stops it before signing |
 | `website` | Dispatches the `website` branch's Pages workflow after a stable publication, and waits for that deployment. / 正式版发布后触发 `website` 分支的官网工作流，并等待该次部署完成。 | official repository, stable releases only; requested version must appear in the generated changelog / 仅官方仓库正式版；生成的日志必须包含本次发布版本 |
 | `cli-gate` | Only with `STUDIO_PUBLISHES_CLI=true`. Requires `CLI_PUBLISH_FROZEN=true`. Checks out nothing and reads no secret. | fails while 1.x is not frozen, and then no other CLI job runs |
 | `cli-tag` | Only with `STUDIO_PUBLISHES_CLI=true`. For a stable or `-preview.N` version, creates the tag `vX.Y.Z` on the studio commit with the release tag identity (`RELEASE_TAG_TOKEN`, see below); an existing tag on that commit is kept, one elsewhere fails. | environment `studio-release`; runs after `publish` and `cli-gate`; checks out nothing, one inline step reads the token |
@@ -235,7 +235,7 @@ To enable signing:
 
 3. Copy the subject from that summary, character for character: `gh variable set STUDIO_SIGNING_SUBJECT --body '<subject>'`.
 4. Run the smoke test again. It now fails unless the signer's subject matches.
-5. `gh variable set STUDIO_SIGNING_ENABLED --body true`. From the next release on, the four Windows signing jobs must succeed before `publish` runs, and the body states that Windows is signed. A missing secret or subject fails the release with an error titled `studio-signing.*`.
+5. `gh variable set STUDIO_SIGNING_ENABLED --body true`. From the next release on, the Windows package-and-signing jobs must succeed before `publish` runs, and the body states that Windows is signed. A missing secret or subject fails the release with an error titled `studio-signing.*`.
 
 What is signed:
 
@@ -243,7 +243,7 @@ What is signed:
 | --- | --- | --- |
 | The release PE files | the project | Windows loads each one, and Smart App Control judges an unsigned DLL on its own reputation. |
 | `d3dcompiler_47.dll` | Microsoft, left as shipped | Verified to carry a trusted, timestamped signature from an `O=Microsoft Corporation` signer under a Microsoft PCA, chaining to Microsoft Root Certificate Authority 2010 by thumbprint. |
-| The installer | the project | Signed only after `windows-verify-package` has matched its contents. |
+| The installer | the project | Signed only after `windows-package` has matched its contents. |
 | `resources/elevate.exe` | nobody | `windows-package` writes it after the payload is signed; its SHA-256 is pinned instead. |
 | The NSIS uninstaller | nobody | electron-builder signs it only through an in-process hook, which would put the session in the packaging job. |
 
@@ -259,7 +259,7 @@ The release PE files:
 | Rule | Detail |
 | --- | --- |
 | Embedded signature only | Verification reads each file's embedded signature through SignTool. `Get-AuthenticodeSignature` answers from the Windows catalog for `d3dcompiler_47.dll`. |
-| `elevate.exe` pin | The hash belongs to the electron-builder in the lockfile. An upgrade that changes it fails `windows-verify-package`; review the new file and update the pin. |
+| `elevate.exe` pin | The hash belongs to the electron-builder in the lockfile. An upgrade that changes it fails `windows-package`; review the new file and update the pin. |
 | One architecture | The installer must carry exactly one application archive: `app-64.7z` for amd64, `app-arm64.7z` for arm64. |
 | Architecture of the files | Every PE image in a signed tree and in the installed tree is built for the leg's architecture; only the installer-written 32-bit `resources/elevate.exe` differs. |
 | arm64 packing filter | The arm64 installer is packed with `ELECTRON_BUILDER_7Z_FILTER=BCJ`. 7-Zip's default ARM64 filter produces an archive the NSIS extractor cannot decode: the installer exits 0 and installs no executable. The package check cannot see this, because it unpacks with the runner's newer 7-Zip, so `windows-install-smoke` runs the installer. |
@@ -269,15 +269,15 @@ How the payload is carried from signing to publishing:
 
 | Check | Where | Refuses |
 | --- | --- | --- |
-| Digest of every file in the signed tree, recorded as a job output of `windows-sign-payload` | `windows-verify-package` | a payload artifact replaced after signing |
-| The zip's tree equals the payload, file for file | `windows-verify-package` | a file added, dropped or changed while packaging, PE or not |
-| The installer's `app-64.7z`, unpacked with the runner image's 7-Zip, equals the payload plus the pinned `resources/elevate.exe` | `windows-verify-package` | the same, inside the installer |
-| Both packages hash to the values `windows-verify-package` output | `windows-sign-installer`, before connecting | a package replaced after it was checked |
-| The downloaded installer hashes to `windows-sign-installer`'s output and the zip to `windows-verify-package`'s, and nothing else is in the artifact | `publish` | a Windows artifact replaced after signing; fails with `studio-signing.package-hash-mismatch`, `package-hash-missing` or `package-set-mismatch` |
+| Digest of every file in the signed tree, recorded as a job output of `windows-sign-payload` | `windows-package` | a payload artifact replaced after signing |
+| The zip's tree equals the payload, file for file | `windows-package` | a file added, dropped or changed while packaging, PE or not |
+| The installer's `app-64.7z`, unpacked with the runner image's 7-Zip, equals the payload plus the pinned `resources/elevate.exe` | `windows-package` | the same, inside the installer |
+| Both packages hash to the values `windows-package` output | `windows-sign-installer`, before connecting | a package replaced after it was checked |
+| The downloaded installer hashes to `windows-sign-installer`'s output and the zip to `windows-package`'s, and nothing else is in the artifact | `publish` | a Windows artifact replaced after signing; fails with `studio-signing.package-hash-mismatch`, `package-hash-missing` or `package-set-mismatch` |
 
 The SimplySign session can sign for any process on its runner while it is up. The two signing jobs therefore check out only the workflow's own commit, install no toolchain, parse no archive, and stop SimplySign after signing.
 
-`windows-package` runs electron-builder and `windows-verify-package` unpacks its output, each on a separate runner with no secrets.
+`windows-package` runs electron-builder and then unpacks its output, on one runner with no secrets: its verify script and its payload both come from outside the packaging step's own writes, the script from the workflow's own commit and the payload from a second download of the artifact the signing job hashed.
 
 Studio and 1.x signing jobs and smoke tests share the concurrency group `certum-signing`: they run one at a time, so no two runs hold the shared SimplySign session at once.
 

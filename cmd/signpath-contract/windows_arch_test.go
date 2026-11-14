@@ -39,7 +39,7 @@ func matrixArches(t *testing.T, job *yaml.Node) []string {
 func TestEveryWindowsSigningStageCoversEveryArchitecture(t *testing.T) {
 	root := parseWorkflowFile(t, "../../.github/workflows/release-studio.yml")
 	jobs := jobsOf(t, root)
-	for _, name := range []string{"windows-sign-payload", "windows-package", "windows-verify-package", "windows-sign-installer", "windows-install-smoke"} {
+	for _, name := range []string{"windows-sign-payload", "windows-package", "windows-sign-installer", "windows-install-smoke"} {
 		if got := matrixArches(t, mappingValue(jobs, name)); !slices.Equal(got, windowsArchitectures) {
 			t.Errorf("%s covers %v, want %v", name, got, windowsArchitectures)
 		}
@@ -87,7 +87,7 @@ func TestWindowsSigningLegsRunOneAtATime(t *testing.T) {
 func TestWindowsPackagingStagesHoldNoSecrets(t *testing.T) {
 	root := parseWorkflowFile(t, "../../.github/workflows/release-studio.yml")
 	jobs := jobsOf(t, root)
-	for _, name := range []string{"windows-package", "windows-verify-package", "windows-install-smoke"} {
+	for _, name := range []string{"windows-package", "windows-install-smoke"} {
 		job := mappingValue(jobs, name)
 		if mappingValue(job, "environment") != nil {
 			t.Errorf("%s declares an environment", name)
@@ -135,7 +135,7 @@ func TestWindowsOutputsAreOnePerArchitecture(t *testing.T) {
 	jobs := jobsOf(t, root)
 	want := map[string][]string{
 		"windows-sign-payload":   {"payload-digest"},
-		"windows-verify-package": {"installer-sha256", "archive-sha256"},
+		"windows-package":        {"installer-sha256", "archive-sha256"},
 		"windows-sign-installer": {"installer-sha256"},
 	}
 	for name, keys := range want {

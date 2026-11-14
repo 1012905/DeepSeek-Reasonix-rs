@@ -111,7 +111,11 @@ func TestWindowsCILegsBypassTheTestResultCache(t *testing.T) {
 			continue
 		}
 		for _, step := range job.Steps {
-			if strings.Contains(step.If, "runner.os != 'Windows'") || !job.rootModule(step) {
+			// A step gated to one non-Windows runner can never execute there.
+			nonWindows := strings.Contains(step.If, "runner.os != 'Windows'") ||
+				strings.Contains(step.If, "runner.os == 'Linux'") ||
+				strings.Contains(step.If, "runner.os == 'macOS'")
+			if nonWindows || !job.rootModule(step) {
 				continue
 			}
 			for _, args := range goTestArgs(step.Run) {
@@ -127,22 +131,15 @@ func TestWindowsCILegsBypassTheTestResultCache(t *testing.T) {
 	}
 }
 
-func prOwnerTestArgs(wf ciWorkflow, windows bool) [][]string {
+func raceTestArgs(wf ciWorkflow) [][]string {
 	job := wf.Jobs["race"]
-	if windows {
-		job = wf.Jobs["test"]
-		if !job.runsOnWindows() {
-			return nil
-		}
-	}
 	var commands [][]string
 	for _, step := range job.Steps {
-		if !job.rootModule(step) || strings.Contains(step.If, "github.event_name != 'pull_request'") ||
-			(windows && strings.Contains(step.If, "runner.os != 'Windows'")) {
+		if !job.rootModule(step) || strings.Contains(step.If, "github.event_name != 'pull_request'") {
 			continue
 		}
 		for _, args := range goTestArgs(step.Run) {
-			if (!windows && !slices.Contains(args, "-race")) || slices.ContainsFunc(args, func(arg string) bool {
+			if !slices.Contains(args, "-race") || slices.ContainsFunc(args, func(arg string) bool {
 				return arg == "-run" || strings.HasPrefix(arg, "-run=") || arg == "-list" || strings.HasPrefix(arg, "-list=")
 			}) {
 				continue
@@ -163,18 +160,48 @@ func coversPackage(args []string, target string) bool {
 	})
 }
 
+// The Windows pull-request leg runs the isolation-owner suite through
+// scripts/ci-windows-targeted.mjs, so the workflow must invoke it and the
+// script must run the owning packages whole.
 func TestPRCIExecutesIsolationOwnersOnWindowsAndRace(t *testing.T) {
 	wf := readCIWorkflow(t)
-	for _, windows := range []bool{true, false} {
-		t.Run(map[bool]string{true: "native_windows", false: "race"}[windows], func(t *testing.T) {
-			commands := prOwnerTestArgs(wf, windows)
-			for _, owner := range []string{"./internal/platform/worktree", "./internal/state/mutation"} {
-				t.Run(owner, func(t *testing.T) {
-					if !slices.ContainsFunc(commands, func(args []string) bool { return coversPackage(args, owner) }) {
-						t.Fatalf("PR CI does not execute the full owning package %s in this matrix leg", owner)
-					}
-				})
+	owners := []string{"./internal/platform/worktree", "./internal/state/mutation"}
+
+	t.Run("race", func(t *testing.T) {
+		commands := raceTestArgs(wf)
+		for _, owner := range owners {
+			t.Run(owner, func(t *testing.T) {
+				if !slices.ContainsFunc(commands, func(args []string) bool { return coversPackage(args, owner) }) {
+					t.Fatalf("PR CI does not execute the full owning package %s under -race", owner)
+				}
+			})
+		}
+	})
+
+	t.Run("native_windows", func(t *testing.T) {
+		job := wf.Jobs["test"]
+		if !job.runsOnWindows() {
+			t.Fatal("ci.yml test job no longer runs on Windows")
+		}
+		var invokes bool
+		for _, step := range job.Steps {
+			if strings.Contains(step.Run, "scripts/ci-windows-targeted.mjs") &&
+				!strings.Contains(step.If, "runner.os != 'Windows'") &&
+				!strings.Contains(step.If, "github.event_name != 'pull_request'") {
+				invokes = true
 			}
-		})
-	}
+		}
+		if !invokes {
+			t.Fatal("ci.yml test job does not run scripts/ci-windows-targeted.mjs on Windows pull requests")
+		}
+		script, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "ci-windows-targeted.mjs"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, owner := range owners {
+			if !strings.Contains(string(script), owner) {
+				t.Errorf("scripts/ci-windows-targeted.mjs does not run %s", owner)
+			}
+		}
+	})
 }
