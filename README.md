@@ -42,12 +42,15 @@ You pick the model: a DeepSeek preset is built in, any OpenAI-compatible service
 
 Download, add a model key, open a project. New here? Start with the Studio desktop app.
 
-1. Download and install the desktop app, Reasonix Studio, from the [releases page](https://github.com/esengine/DeepSeek-Reasonix/releases?q=studio-v&expanded=true).
+1. Download and install the desktop app, Reasonix Studio, from this
+   repository's [releases](https://github.com/1012905/DeepSeek-Reasonix-rs/releases?q=studio-v&expanded=true) — every `studio-v*` tag packages
+   Studio and the `reasonix` CLI. No tag in this repository yet?
+   [Build from source](#build-from-source).
 2. Open it and enter your model provider and key when asked.
 3. Open your project folder and write what you want, for example "add retry on failure to the http client".
 4. At the level you chose, it stops and asks before anything that needs your say-so. Allow it to continue, or refuse.
 
-Prefer a terminal? Download the `reasonix` command-line tool, run `reasonix setup` to pick a model, then run `reasonix`. See [Install](#install) and [Quick start](#quick-start).
+Prefer a terminal? The release archives carry the `reasonix` CLI beside the Studio packages (or [build it from source](#cli)); run `reasonix setup` to pick a model, then run `reasonix`. See [Install](#install) and [Quick start](#quick-start).
 
 ## Four ways to use it
 
@@ -62,7 +65,7 @@ All four are the same program underneath. What follows is for advanced users and
 
 DeepSeek Harness (`dsh`) can hand a task to Reasonix as a subagent over ACP. This repository publishes a plugin index for it:
 
-1. Run `reasonix setup` on the machine that runs `dsh`. In the DSH Web UI turn on Custom plugin markets (Plugins, More) and add this index in the Discover tab: `https://raw.githubusercontent.com/esengine/DeepSeek-Reasonix/studio/integrations/dsh-plugin/market-index.json`
+1. Run `reasonix setup` on the machine that runs `dsh`. In the DSH Web UI turn on Custom plugin markets (Plugins, More) and add this index in the Discover tab: `https://raw.githubusercontent.com/1012905/DeepSeek-Reasonix-rs/studio/integrations/dsh-plugin/market-index.json`
 2. Install "Reasonix subagent" from it.
 3. Open the plugin's page and turn its switch on. While it is off the model has no `reasonix` tool and may run `reasonix -p` in its own shell, which looks like a delegation and is not one.
 
@@ -74,7 +77,7 @@ Reasonix ships on two lines. See the [version roadmap announcement](https://gith
 
 | Line | Branch | Status | Get it |
 | --- | --- | --- | --- |
-| **Reasonix 2.x** | `studio` (this branch) | Active development | [Studio releases](https://github.com/esengine/DeepSeek-Reasonix/releases?q=studio-v&expanded=true) |
+| **Reasonix 2.x** | `studio` (this branch) | Active development | [Studio releases](https://github.com/1012905/DeepSeek-Reasonix-rs/releases?q=studio-v&expanded=true) |
 | **Reasonix 1.x** | [`main-v2`](https://github.com/esengine/DeepSeek-Reasonix/tree/main-v2) | Maintenance / stable | `npm i -g reasonix` · [desktop download](https://reasonix.io/?download=desktop#start) |
 
 - **Want something stable?** Stay on 1.x. It keeps receiving bug fixes,
@@ -118,7 +121,7 @@ Studio, and editor integrations all run the same local Reasonix engine.
 ### Reasonix Studio (2.x)
 
 Download the package for your platform from the latest
-[Studio release](https://github.com/esengine/DeepSeek-Reasonix/releases?q=studio-v&expanded=true)
+[Studio release](https://github.com/1012905/DeepSeek-Reasonix-rs/releases?q=studio-v&expanded=true)
 (tagged `studio-v2.*`; candidates such as `-rc.N` are marked as
 pre-releases):
 
@@ -128,16 +131,26 @@ pre-releases):
 | Windows | Installer `-installer.exe` or portable `.zip` | x64 |
 | Linux | `.deb`, `.rpm`, or `.AppImage` (download only) | x64 (`amd64`) / ARM64 (`arm64`, aarch64) |
 
+No `studio-v*` tag has been cut in this repository yet — until the first
+one, [build from source](#build-from-source). The pipeline that produces
+these artifacts is [documented](./docs/STUDIO_RELEASE.md).
+
 Every package ships with a `.minisig` signature, and the release carries
 `SHA256SUMS`. Once installed, Studio updates itself in place.
 
 The same release also carries the 2.x `reasonix` CLI as archives for
 `darwin|linux|windows × amd64|arm64`.
 
-### Reasonix 1.x (stable)
+The npm and Homebrew channels still belong to the upstream 1.x line — this
+repository's CLI ships as release archives and from source. Publishing to
+npm or Homebrew from this line is gated behind `STUDIO_PUBLISHES_CLI` and
+awaits its own endpoints (the npm `reasonix` name and the tap are
+upstream's).
 
-The 1.x CLI installs through npm on any supported platform, or Homebrew on
-macOS:
+### Reasonix 1.x (upstream)
+
+The 1.x line lives on the upstream repository; its channels install from
+there on any supported platform, or Homebrew on macOS:
 
 ```sh
 npm i -g reasonix                  # any OS; pulls the prebuilt native binary
@@ -160,12 +173,13 @@ selection, and workspace sessions. Install the 1.x CLI first.
 
 ### Build from source
 
-Clone the repository; `studio` builds 2.x and `main-v2` builds 1.x:
+Clone this repository; `studio` is its only line and builds 2.x (the upstream
+1.x line lives on
+[esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)):
 
 ```sh
-git clone https://github.com/esengine/DeepSeek-Reasonix.git
-cd DeepSeek-Reasonix
-git switch studio
+git clone https://github.com/1012905/DeepSeek-Reasonix-rs.git
+cd DeepSeek-Reasonix-rs
 ```
 
 #### CLI
@@ -189,6 +203,19 @@ make studio
 
 See the [Studio build guide](desktop/README.md#prerequisites) for platform
 webview dependencies and Linux build tags.
+
+#### Studio Tauri shell (desktop-tauri)
+
+The Tauri shell is the target desktop stack (Rust + Vue) and runs beside the
+Electron shell during the transition. It needs Node 24+, pnpm 10 and a stable
+Rust toolchain; on Linux, cargo also needs the Tauri system libraries
+(`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`,
+`librsvg2-dev`).
+
+```sh
+make studio-tauri-test            # frontend build + vitest wire-parity witness
+make studio-tauri-check           # cargo check of the Rust shell
+```
 
 ## Quick start
 
