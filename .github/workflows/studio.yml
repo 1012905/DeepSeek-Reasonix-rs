@@ -81,11 +81,24 @@ jobs:
             exit 1
           fi
 
+      # The checked bundle is what the package legs pack, so they download it
+      # instead of rebuilding the SPA per runner.
+      - name: upload SPA bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: studio-spa-dist
+          path: desktop/frontend-next/dist
+          if-no-files-found: error
+          retention-days: 7
+
   # Real-Chromium guards that run without a kernel. Only the ones that passed
   # three consecutive local runs are wired; the rest stay manual (see
-  # desktop/frontend-next/perf/README.md). Skipped unless the SPA changed.
+  # desktop/frontend-next/perf/README.md). Skipped unless the SPA changed, by
+  # the scope job's fail-open `spa` output.
   browser-guards:
     name: browser guards
+    needs: scope
+    if: always() && (github.event_name != 'pull_request' || needs.scope.outputs.spa != 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -93,45 +106,27 @@ jobs:
         working-directory: desktop/frontend-next
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
 
-      - name: SPA changed?
-        id: spa
-        working-directory: .
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] &&
-             git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- desktop/frontend-next; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - if: steps.spa.outputs.run == 'true'
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 10
           run_install: false
 
-      - if: steps.spa.outputs.run == 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/frontend-next/pnpm-lock.yaml
 
-      - if: steps.spa.outputs.run == 'true'
-        name: Install
+      - name: Install
         run: pnpm install --frozen-lockfile
 
-      - if: steps.spa.outputs.run == 'true'
-        name: Build the perf harness and install Chromium
+      - name: Build the perf harness and install Chromium
         run: |
           pnpm exec vite build --config vite.perf.config.ts
           pnpm exec playwright install --with-deps chromium
 
-      - if: steps.spa.outputs.run == 'true'
-        name: Guards
+      - name: Guards
         run: |
           python3 -m http.server 4399 --directory dist-perf >/dev/null 2>&1 &
           for _ in $(seq 30); do curl -sf http://localhost:4399/perf.html >/dev/null && break; sleep 1; done
@@ -227,7 +222,7 @@ jobs:
           node perf/selfcheck.mjs branch-tooltip
 
       - name: Keep UI control previews
-        if: always() && steps.spa.outputs.run == 'true'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: studio-ui-control-previews
@@ -244,50 +239,34 @@ jobs:
   # What a hosted page does over the relay, end to end: the production bundle,
   # the real Studio host and kernel, a real Chromium; only the accounts API and
   # the relay are stand-ins (tools/relayfake). Event-transport changes are
-  # judged here, because a unit test of one side cannot see the other.
+  # judged here, because a unit test of one side cannot see the other. Skipped
+  # unless the transport changed, by the scope job's fail-open `relay` output.
   relay-harness:
     name: relay harness
+    needs: scope
+    if: always() && (github.event_name != 'pull_request' || needs.scope.outputs.relay != 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
 
-      - name: Transport changed?
-        id: scope
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          paths="desktop/frontend-next internal/frontend/serve internal/platform/remotecloud internal/platform/account tools/relayfake cmd/reasonix-studio-host"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] &&
-             git diff --quiet "origin/$BASE_REF...HEAD" -- $paths; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - if: steps.scope.outputs.run == 'true'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
 
-      - if: steps.scope.outputs.run == 'true'
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 10
           run_install: false
 
-      - if: steps.scope.outputs.run == 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/frontend-next/pnpm-lock.yaml
 
-      - if: steps.scope.outputs.run == 'true'
-        name: Build the host, the stand-ins and the page
+      - name: Build the host, the stand-ins and the page
         run: |
           go build -o desktop/frontend-next/relay/bin/studio-host ./cmd/reasonix-studio-host
           go build -o desktop/frontend-next/relay/bin/relayfake ./tools/relayfake
@@ -296,8 +275,7 @@ jobs:
           pnpm exec vite build --outDir dist-relay --emptyOutDir
           pnpm exec playwright install --with-deps chromium
 
-      - if: steps.scope.outputs.run == 'true'
-        name: Scenarios (hosted page over the relay; local page on a flapping network)
+      - name: Scenarios (hosted page over the relay; local page on a flapping network)
         working-directory: desktop/frontend-next
         env:
           RELAY_HOST_BIN: ${{ github.workspace }}/desktop/frontend-next/relay/bin/studio-host
@@ -311,6 +289,8 @@ jobs:
   # moves the Windows and macOS legs onto an ubuntu runner with every step
   # skipped, so the check names still report without a scarce runner. A push to
   # studio, or a failed `scope`, runs all three.
+  # The spa and relay outputs carry the same fail-open rule the browser guards
+  # and the relay harness gate on: a diff that cannot be read runs everything.
   desktop:
     name: desktop (${{ matrix.os }})
     needs: scope
@@ -336,25 +316,29 @@ jobs:
           cache: true
           cache-dependency-path: desktop/go.sum
 
-      # The desktop module's Go tests: the elevated update helper, the
-      # release-side tools and the Windows uninstall planner. The code this
-      # gate covers is what replaces a running application on a user's disk.
-      # The module is CGO-free since the Wails shell retired, so no platform
-      # carries build dependencies of its own.
-      # Same command as `make studio-test`; this job is already in desktop/.
-      - name: go test
-        if: env.RUN_STEPS == 'true'
-        run: go test ./...
+      # The desktop module's Go tests are ci.yml's desktop matrix's; this job
+      # carries what that matrix cannot: the Electron shell's unit suite and
+      # the native CUA acceptance, which need the Electron tree on studio.
+      - if: env.RUN_STEPS == 'true'
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 10
+          run_install: false
 
       - if: env.RUN_STEPS == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/electron/pnpm-lock.yaml
 
-      - name: CUA process and packaging contracts
+      # The Electron shell's unit suite — the CUA process and packaging
+      # contracts, the Linux packaging rules, the global shortcut registry —
+      # runs once per active OS here; the package legs pack without rerunning it.
+      - name: electron suite
         if: env.RUN_STEPS == 'true'
-        timeout-minutes: 2
-        run: node --test --test-name-pattern=CUA electron/test/unit.mjs
+        working-directory: desktop/electron
+        run: pnpm install --frozen-lockfile && pnpm test
 
       - name: Install Linux native CUA fixture dependencies
         if: env.RUN_STEPS == 'true' && runner.os == 'Linux'
@@ -388,7 +372,8 @@ jobs:
   # The ARM64 leg queues on a scarcer runner pool, so a pull request runs it
   # only when it touches what the leg verifies; a push to studio always does.
   # The macOS and Windows package legs follow `platform`, the same rule as the
-  # desktop matrix above.
+  # desktop matrix above. The browser guards and the relay harness read `spa`
+  # and `relay` from here rather than each diffing again.
   scope:
     name: package matrix
     runs-on: ubuntu-latest
@@ -396,6 +381,8 @@ jobs:
       matrix: ${{ steps.pick.outputs.matrix }}
       arm64: ${{ steps.pick.outputs.arm64 }}
       platform: ${{ steps.pick.outputs.platform }}
+      spa: ${{ steps.pick.outputs.spa }}
+      relay: ${{ steps.pick.outputs.relay }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -408,9 +395,16 @@ jobs:
         run: |
           arm64=true
           platform=true
+          spa=true
+          relay=true
           if [ "$EVENT" = pull_request ]; then
             arm64=false
             platform=$(git diff -z --name-only --no-renames "$BASE_SHA" HEAD | bash scripts/ci-platform-scope.sh)
+            # An unreadable diff leaves the flag true: a failed judgement runs
+            # everything, it never skips a gate.
+            if git diff --quiet "$BASE_SHA...HEAD" -- desktop/frontend-next; then spa=false; fi
+            relay_paths=(desktop/frontend-next internal/frontend/serve internal/platform/remotecloud internal/platform/account tools/relayfake cmd/reasonix-studio-host)
+            if git diff --quiet "$BASE_SHA...HEAD" -- "${relay_paths[@]}"; then relay=false; fi
             if git diff --name-only --no-renames "$BASE_SHA" HEAD |
               grep -qE '^(desktop/electron/|desktop/packaging/|desktop/cmd/update-helper/|desktop/cmd/studio-manifest/|desktop/go\.(mod|sum)$|cmd/reasonix-studio-host/|internal/platform/(update|appupdate)/|go\.(mod|sum)$|scripts/(linux-install-smoke|verify-linux-package|verify-linux-appimage|verify-studio-artifacts)\.sh$|scripts/(windows-signing-lib|verify-windows-package|verify-windows-authenticode|install-smoke)\.ps1$|\.github/workflows/(studio|release-studio)\.yml$)'; then
               arm64=true
@@ -431,6 +425,8 @@ jobs:
           {
             echo "arm64=$arm64"
             echo "platform=$platform"
+            echo "spa=$spa"
+            echo "relay=$relay"
             echo "matrix={\"include\":$legs}"
           } >> "$GITHUB_OUTPUT"
 
@@ -441,7 +437,7 @@ jobs:
   # cross-compile while only Windows had ever produced a package.
   package:
     name: package (${{ matrix.os }})
-    needs: scope
+    needs: [scope, frontend]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -485,9 +481,14 @@ jobs:
           sudo gem install --no-document fpm -v 1.16.0
           echo "USE_SYSTEM_FPM=true" >> "$GITHUB_ENV"
 
-      - name: Build the SPA
-        working-directory: desktop/frontend-next
-        run: pnpm install --frozen-lockfile && pnpm build
+      # The same bundle the frontend job built and checked for fixtures — the
+      # extraResources below copy ../frontend-next/dist into every package.
+      # The artifact carries the dist directory's contents at its root, so the
+      # download path ends at dist.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: studio-spa-dist
+          path: desktop/frontend-next/dist
 
       # The Windows legs name their architecture instead of taking the
       # toolchain's, so a runner whose Go or Node is the other architecture
@@ -497,7 +498,7 @@ jobs:
         env:
           REASONIX_GOARCH: ${{ matrix.platform == 'windows' && matrix.arch || '' }}
           REASONIX_VERSION: v0.0.0-ci
-        run: pnpm install --frozen-lockfile && pnpm test && pnpm run build:host
+        run: pnpm install --frozen-lockfile && pnpm run build:host
 
       # The .deb's absolute-path payload. A no-op off Linux, so it is not
       # guarded here: the one place it must not be forgotten is the one place
@@ -520,11 +521,11 @@ jobs:
       - name: Artifacts carry the release architecture
         run: |
           ls -la dist
-          if ls dist | grep -q -- '-x64'; then
+          if [ -n "$(find dist -maxdepth 1 -name '*-x64*' -print -quit)" ]; then
             echo "::error::an artifact still names x64; studio-manifest reads names as GOARCH"
             exit 1
           fi
-          if ! ls dist | grep -q -- "-${{ matrix.platform }}-${{ matrix.arch }}"; then
+          if [ -z "$(find dist -maxdepth 1 -name "*-${{ matrix.platform }}-${{ matrix.arch }}*" -print -quit)" ]; then
             echo "::error::no artifact named for ${{ matrix.platform }}-${{ matrix.arch }}"
             exit 1
           fi
@@ -628,11 +629,11 @@ jobs:
       # inflates the count the release uses to refuse a partial publish.
       - name: No electron-updater metadata
         run: |
-          if ls dist | grep -qiE '^(latest|beta|alpha).*\.yml$'; then
+          if [ -n "$(find dist -maxdepth 1 -type f \( -iname 'latest*.yml' -o -iname 'beta*.yml' -o -iname 'alpha*.yml' \) -print -quit)" ]; then
             echo "::error::electron-updater metadata was published beside the manifest channel"
             exit 1
           fi
-          if ls dist | grep -q '\.blockmap$'; then
+          if [ -n "$(find dist -maxdepth 1 -type f -name '*.blockmap' -print -quit)" ]; then
             echo "::error::a .blockmap ships under the release prefix; set differentialPackage: false"
             exit 1
           fi
@@ -667,9 +668,9 @@ jobs:
         run: |
           app=$(find dist -maxdepth 2 -name '*.app' | head -1)
           echo "app: $app"
-          ls "$app/Contents"
-          ls "$app/Contents/Resources" | head -20
-          ls "$app/Contents/Frameworks" | head -20
+          find "$app/Contents" -maxdepth 1 -mindepth 1 -exec basename {} \;
+          find "$app/Contents/Resources" -maxdepth 1 -mindepth 1 | sed 's|.*/||' | head -20
+          find "$app/Contents/Frameworks" -maxdepth 1 -mindepth 1 | sed 's|.*/||' | head -20
 
       # The end of the contract: not that the name parses, but that the manifest
       # keys the artifact under the platform this runner actually is. The tool
