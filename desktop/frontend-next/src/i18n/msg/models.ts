@@ -87,7 +87,7 @@ export const MODELS: Messages = {
   "models.inherits_automatic": { zh: "继承：自动", en: "Inherits: automatic" },
   "models.inherits_levels": { zh: "继承：{levels}", en: "Inherits: {levels}" },
   "models.inherits_n": { zh: "继承 {n}", en: "Inherits {n}" },
-  "models.inherits_not_declared": { zh: "继承：未声明", en: "Inherits: not declared" },
+  "models.inherits_not_declared": { zh: "继承：未声明", en: "Inherits: not set" },
   "models.inherits_settled_by_the_connection": { zh: "继承：保存后按接入设置确定", en: "Inherits: settled by the connection once saved" },
   "models.inherits_the_endpoint_declares_no": { zh: "继承：端点未声明档位", en: "Inherits: the endpoint declares no levels" },
   "models.insufficient_balance_top_up_and": { zh: "余额不足，请充值后重试", en: "Insufficient balance; top up and retry" },
