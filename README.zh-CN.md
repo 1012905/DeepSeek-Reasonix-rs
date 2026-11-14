@@ -40,12 +40,12 @@ Reasonix 是一个开源的 AI 编程助手。程序跑在你的电脑上；AI �
 
 下载、填模型密钥、打开项目。第一次用，从桌面应用 Studio 开始。
 
-1. 从[发布页](https://github.com/esengine/DeepSeek-Reasonix/releases?q=studio-v&expanded=true)下载并安装桌面应用 Reasonix Studio。
+1. 从本仓库的[发布页](https://github.com/1012905/DeepSeek-Reasonix-rs/releases?q=studio-v&expanded=true)下载并安装桌面应用 Reasonix Studio。发布流水线会在每个 `studio-v*` 标签上同时打包 Studio 与 `reasonix` CLI；本仓库尚未打出首个标签时，请先[从源码构建](#从源码构建)。
 2. 打开应用，按提示填入模型服务商和密钥。
 3. 打开你的项目文件夹，写下想做的事，例如“给 http 客户端加上失败重试”。
 4. 按你选的档位，该问你的操作它会先停下来问；同意就继续，不同意就拒绝。
 
-更喜欢终端的话，下载 `reasonix` 命令行后运行 `reasonix setup` 配好模型，再运行 `reasonix` 即可。详见[安装](#安装)和[快速开始](#快速开始)。
+更喜欢终端的话，发布归档里带有 `reasonix` CLI（见[安装](#安装)），也可以[从源码构建](#cli)；运行 `reasonix setup` 配好模型，再运行 `reasonix` 即可。详见[快速开始](#快速开始)。
 
 ## 四种用法
 
@@ -60,7 +60,7 @@ Reasonix 是一个开源的 AI 编程助手。程序跑在你的电脑上；AI �
 
 DeepSeek Harness（`dsh`）可以通过 ACP 把任务交给 Reasonix 作为子智能体去做。本仓库为此发布了一个插件索引：
 
-1. 在运行 `dsh` 的机器上先运行 `reasonix setup`。在 DSH 网页界面打开“自定义插件市场”（插件，更多），再到 Discover 页添加这个索引：`https://raw.githubusercontent.com/esengine/DeepSeek-Reasonix/studio/integrations/dsh-plugin/market-index.json`
+1. 在运行 `dsh` 的机器上先运行 `reasonix setup`。在 DSH 网页界面打开“自定义插件市场”（插件，更多），再到 Discover 页添加这个索引：`https://raw.githubusercontent.com/1012905/DeepSeek-Reasonix-rs/studio/integrations/dsh-plugin/market-index.json`
 2. 从中安装“Reasonix subagent”。
 3. 打开这个插件的页面，把它的开关打开。关着的时候模型没有 `reasonix` 工具，可能改在自己的 shell 里直接运行 `reasonix -p`，看起来像委派，其实不是。
 
@@ -72,7 +72,7 @@ Reasonix 分为两条版本线，调整的原因见[版本路线公告](https://
 
 | 版本线 | 分支 | 状态 | 获取方式 |
 | --- | --- | --- | --- |
-| **Reasonix 2.x** | `studio`（当前分支） | 活跃开发 | [Studio 发布页](https://github.com/esengine/DeepSeek-Reasonix/releases?q=studio-v&expanded=true) |
+| **Reasonix 2.x** | `studio`（当前分支） | 活跃开发 | [Studio 发布页](https://github.com/1012905/DeepSeek-Reasonix-rs/releases?q=studio-v&expanded=true) |
 | **Reasonix 1.x** | [`main-v2`](https://github.com/esengine/DeepSeek-Reasonix/tree/main-v2) | 维护 / 稳定 | `npm i -g reasonix` · [桌面端下载](https://reasonix.io/?download=desktop#start) |
 
 - **想要稳定**：继续使用 1.x。它会持续收到 Bug 修复、Provider / API 兼容、
@@ -107,7 +107,7 @@ Reasonix 分为两条版本线，调整的原因见[版本路线公告](https://
 
 ### Reasonix Studio（2.x）
 
-从最新的 [Studio 发布](https://github.com/esengine/DeepSeek-Reasonix/releases?q=studio-v&expanded=true)
+从最新的 [Studio 发布](https://github.com/1012905/DeepSeek-Reasonix-rs/releases?q=studio-v&expanded=true)
 下载对应平台的安装包（标签为 `studio-v2.*`；`-rc.N` 等候选版本标为预发布）：
 
 | 平台 | 安装包 | 架构 |
@@ -116,14 +116,17 @@ Reasonix 分为两条版本线，调整的原因见[版本路线公告](https://
 | Windows | 安装器 `-installer.exe` 或便携 `.zip` | x64 |
 | Linux | `.deb`、`.rpm` 或 `.AppImage`（只提供下载） | x64（`amd64`）/ ARM64（`arm64`，aarch64） |
 
+本仓库尚未打出首个 `studio-v*` 标签——在那之前请[从源码构建](#从源码构建)；产出
+这些产物的流水线已在[文档](./docs/STUDIO_RELEASE.md)中说明。
+
 每个安装包都附带 `.minisig` 签名，发布页另有 `SHA256SUMS`。安装后 Studio 会在
 应用内自行更新。
 
-同一个发布页也提供 2.x 的 `reasonix` CLI 归档（`darwin|linux|windows × amd64|arm64`）。
+同一个发布页也提供 2.x 的 `reasonix` CLI 归档（`darwin|linux|windows × amd64|arm64`）。npm 与 Homebrew 渠道仍属上游 1.x 线——本仓库的 CLI 以发布归档和源码分发；从本线发布到 npm/Homebrew 由 `STUDIO_PUBLISHES_CLI` 门控，等待自有端点（npm 包名与 tap 均属上游）。
 
-### Reasonix 1.x（稳定版）
+### Reasonix 1.x（上游）
 
-1.x CLI 在任意支持的平台上都可以通过 npm 安装，macOS 也可以使用 Homebrew：
+1.x 线位于上游仓库；其渠道从上游安装，任意支持的平台可用 npm，macOS 可用 Homebrew：
 
 ```sh
 npm i -g reasonix                  # 任意系统;自动拉取对应平台的原生二进制
@@ -144,12 +147,12 @@ Windows 安装器使用 Certum 代码签名证书签名。
 
 ### 从源码构建
 
-克隆仓库；`studio` 构建 2.x，`main-v2` 构建 1.x：
+克隆本仓库；`studio` 是其唯一分支并构建 2.x（上游 1.x 线位于
+[esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)）：
 
 ```sh
-git clone https://github.com/esengine/DeepSeek-Reasonix.git
-cd DeepSeek-Reasonix
-git switch studio
+git clone https://github.com/1012905/DeepSeek-Reasonix-rs.git
+cd DeepSeek-Reasonix-rs
 ```
 
 #### CLI
@@ -171,6 +174,18 @@ make studio
 ```
 
 各平台的 webview 依赖和 Linux 构建标签见 [Studio 构建指南](desktop/README.md#prerequisites)。
+
+#### Studio Tauri 外壳（desktop-tauri）
+
+Tauri 外壳是目标桌面技术栈（Rust + Vue），过渡期与 Electron 外壳并存。需要
+Node 24+、pnpm 10 与稳定版 Rust 工具链；Linux 上 cargo 还需要 Tauri 系统库
+（`libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libayatana-appindicator3-dev`、
+`librsvg2-dev`）。
+
+```sh
+make studio-tauri-test            # 前端构建 + vitest wire 对齐见证
+make studio-tauri-check           # Rust 外壳的 cargo check
+```
 
 ## 快速开始
 
