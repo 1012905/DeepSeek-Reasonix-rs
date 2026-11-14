@@ -1,11 +1,13 @@
 name: Deploy crash worker
 
+# The Cloudflare credentials this job needs are not configured in this
+# repository, so the automatic trigger stays off: a push-triggered deploy
+# would fail on the missing secret. Set CLOUDFLARE_API_TOKEN, then restore
+# the push trigger below:
+#   push:
+#     branches: [studio]
+#     paths: ['workers/crash-report/**', '.github/workflows/deploy-crash-worker.yml']
 on:
-  push:
-    branches: [main-v2]
-    paths:
-      - 'workers/crash-report/**'
-      - '.github/workflows/deploy-crash-worker.yml'
   workflow_dispatch:
 
 permissions:

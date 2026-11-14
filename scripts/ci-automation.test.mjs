@@ -35,7 +35,7 @@ test("the PR automation never executes pull-request code", () => {
 
 test("the PR version label names all three release lines, matching the issue forms", () => {
   const script = job(workflow("pr-gate-and-labels"), "version-label");
-  assert.match(script, /v1: 'v1', 'main-v2': 'v2', studio: 'v3'/);
+  assert.match(script, /v1: 'v1', studio: 'v3'/);
 });
 
 test("the issue automation splits the two labelers across the edited boundary", () => {

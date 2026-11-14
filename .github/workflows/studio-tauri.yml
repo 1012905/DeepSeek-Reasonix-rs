@@ -8,7 +8,7 @@ name: studio-tauri
 # is tested against.
 on:
   push:
-    branches: [main-v2, studio]
+    branches: [studio]
     paths:
       - "desktop-tauri/**"
       - "crates/contract/src/eventwire/**"
@@ -16,7 +16,7 @@ on:
       - "tools/wiremanifest/**"
       - ".github/workflows/studio-tauri.yml"
   pull_request:
-    branches: [main-v2, studio]
+    branches: [studio]
     paths:
       - "desktop-tauri/**"
       - "crates/contract/src/eventwire/**"
@@ -67,5 +67,11 @@ jobs:
         run: |
           go run ./tools/wiremanifest "$RUNNER_TEMP/eventwire_manifest.json"
           diff -u crates/contract/src/eventwire_manifest.json "$RUNNER_TEMP/eventwire_manifest.json"
+      # Tauri's Linux sys-crates (glib, gtk, webkit2gtk) compile pkg-config
+      # build scripts that fail without the system libraries present.
+      - name: Install Tauri Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
       - name: cargo check
         run: cargo check --manifest-path desktop-tauri/src-tauri/Cargo.toml

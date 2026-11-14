@@ -16,7 +16,6 @@ body:
       description: Which line are you running?
       options:
         - "2.x — Reasonix Studio, studio branch (active development)"
-        - "1.x — main-v2 branch (maintenance / stable)"
         - "0.x — legacy TypeScript (maintenance only)"
     validations:
       required: true

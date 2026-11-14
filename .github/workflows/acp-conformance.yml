@@ -5,7 +5,7 @@ name: acp-conformance
 # it runs when the ACP frontend or the harness changes, and on request.
 on:
   pull_request:
-    branches: [main-v2, studio]
+    branches: [studio]
     paths:
       - "internal/frontend/acp/**"
       - "tools/acp-conformance/**"

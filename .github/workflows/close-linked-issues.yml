@@ -6,7 +6,7 @@ name: Close linked issues
 on:
   pull_request_target:
     types: [closed]
-    branches: [main-v2]
+    branches: [studio]
 
 permissions:
   issues: write
