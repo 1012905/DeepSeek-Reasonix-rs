@@ -24,7 +24,9 @@ export interface KernelPort {
 
 export const kernelPort: KernelPort = {
   connected: async () => (await invoke("kernel_connected") as { connected: boolean }).connected,
-  get: async <T>(path: string) => (await invoke("kernel_get", { path })) as T,
+  // Kernel API responses are JSON; the IPC body is text, so the port is
+  // where the parse happens — stores receive typed values, not wire text.
+  get: async <T>(path: string) => JSON.parse((await invoke("kernel_get", { path })) as string) as T,
   post: async <T>(path: string, body: unknown) =>
     (await invoke("kernel_post", { path, body: JSON.stringify(body) })) as T,
 };
