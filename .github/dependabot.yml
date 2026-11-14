@@ -26,6 +26,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # jsdom 31's Range.getClientRects throws internally (its textRange
+      # helper lacks the method); occlusion.ts and the interaction tests
+      # call it. Revisit when upstream fixes the range implementation.
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]

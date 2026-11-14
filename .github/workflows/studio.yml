@@ -410,15 +410,20 @@ jobs:
               arm64=true
             fi
           fi
+          # The three legs carry the required check names, so they are present
+          # on every event: a pull request that cannot affect packaging runs
+          # them with steps=false, where each leg reports success on an ubuntu
+          # runner without touching packaging. Pruning them left two required
+          # checks "expected" forever and blocked the merge.
           legs='[
-            {"os":"macos-latest","arch":"arm64","platform":"darwin"},
-            {"os":"ubuntu-22.04","arch":"amd64","platform":"linux"},
-            {"os":"windows-latest","arch":"amd64","platform":"windows","ebarch":"x64"}
+            {"os":"macos-latest","arch":"arm64","platform":"darwin","steps":"true"},
+            {"os":"ubuntu-22.04","arch":"amd64","platform":"linux","steps":"true"},
+            {"os":"windows-latest","arch":"amd64","platform":"windows","ebarch":"x64","steps":"true"}
           ]'
           if [ "$platform" = false ]; then
-            legs="$(jq -c 'map(select(.platform == "linux"))' <<<"$legs")"
+            legs="$(jq -c 'map(.steps = "false")' <<<"$legs")"
           elif [ "$arm64" = true ]; then
-            legs="$(jq -c '. + [{"os":"windows-11-arm","arch":"arm64","platform":"windows","ebarch":"arm64"},{"os":"ubuntu-22.04-arm","arch":"arm64","platform":"linux"}]' <<<"$legs")"
+            legs="$(jq -c '. + [{"os":"windows-11-arm","arch":"arm64","platform":"windows","ebarch":"arm64","steps":"true"},{"os":"ubuntu-22.04-arm","arch":"arm64","platform":"linux","steps":"true"}]' <<<"$legs")"
           else
             legs="$(jq -c . <<<"$legs")"
           fi
@@ -438,8 +443,12 @@ jobs:
   package:
     name: package (${{ matrix.os }})
     needs: [scope, frontend]
-    runs-on: ${{ matrix.os }}
+    # The three required legs always report: a pull request that cannot
+    # affect packaging runs them on an ubuntu runner with every step skipped.
+    runs-on: ${{ matrix.steps == 'false' && 'ubuntu-latest' || matrix.os }}
     timeout-minutes: 45
+    env:
+      RUN_STEPS: ${{ matrix.steps == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
@@ -448,19 +457,23 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.RUN_STEPS == 'true'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        if: env.RUN_STEPS == 'true'
         with:
           go-version-file: desktop/go.mod
           cache: true
           cache-dependency-path: desktop/go.sum
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: env.RUN_STEPS == 'true'
         with:
           version: 10
           run_install: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: env.RUN_STEPS == 'true'
         with:
           node-version: "24"
           cache: pnpm
@@ -469,13 +482,13 @@ jobs:
       # electron-builder shells out to dpkg-deb through fakeroot for the .deb and
       # to rpmbuild for the .rpm.
       - name: Install Linux packaging deps
-        if: runner.os == 'Linux'
+        if: env.RUN_STEPS == 'true' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y fakeroot rpm cpio xvfb xauth policykit-1
 
       # The fpm electron-builder carries is an x86_64 program, so on an ARM64
       # runner the .deb and .rpm are built with one installed from RubyGems.
       - name: Use a native fpm on ARM64 Linux
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        if: env.RUN_STEPS == 'true' && runner.os == 'Linux' && runner.arch == 'ARM64'
         run: |
           sudo apt-get install -y ruby ruby-dev build-essential
           sudo gem install --no-document fpm -v 1.16.0
@@ -486,6 +499,7 @@ jobs:
       # The artifact carries the dist directory's contents at its root, so the
       # download path ends at dist.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.RUN_STEPS == 'true'
         with:
           name: studio-spa-dist
           path: desktop/frontend-next/dist
@@ -494,6 +508,7 @@ jobs:
       # toolchain's, so a runner whose Go or Node is the other architecture
       # fails here rather than shipping a mislabelled package.
       - name: Build the kernel the shell speaks to
+        if: env.RUN_STEPS == 'true'
         working-directory: desktop/electron
         env:
           REASONIX_GOARCH: ${{ matrix.platform == 'windows' && matrix.arch || '' }}
@@ -504,12 +519,14 @@ jobs:
       # guarded here: the one place it must not be forgotten is the one place
       # it does anything.
       - name: Stage the Linux package payload
+        if: env.RUN_STEPS == 'true'
         working-directory: desktop/electron
         run: pnpm run build:linux-payload
 
       # No identity on a runner, and none wanted here: auto-discovery would make
       # this job fail for the one reason it is not testing.
       - name: Package
+        if: env.RUN_STEPS == 'true'
         working-directory: desktop/electron
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -519,6 +536,7 @@ jobs:
       # The release vocabulary is GOARCH. electron-builder's own is not, and the
       # rename that reconciles them runs here rather than in the manifest.
       - name: Artifacts carry the release architecture
+        if: env.RUN_STEPS == 'true'
         run: |
           ls -la dist
           if [ -n "$(find dist -maxdepth 1 -name '*-x64*' -print -quit)" ]; then
@@ -534,7 +552,7 @@ jobs:
       # starts proves nothing about its architecture: every PE image in the
       # bundle has to be built for the one the package is named for.
       - name: Every PE image is built for the package's architecture
-        if: matrix.platform == 'windows'
+        if: env.RUN_STEPS == 'true' && matrix.platform == 'windows'
         run: |
           dir=$(find dist -maxdepth 1 -type d -name 'win*-unpacked' | head -1)
           test -n "$dir"
@@ -546,7 +564,7 @@ jobs:
       # desktop shortcut has to still be the same file, pointing at a path with
       # no version in it, or every update costs the user their pin.
       - name: An update keeps the shortcuts and they name no version
-        if: matrix.platform == 'windows'
+        if: env.RUN_STEPS == 'true' && matrix.platform == 'windows'
         shell: pwsh
         run: |
           $installer = (Get-ChildItem dist -Filter 'ReasonixStudio-windows-*-installer.exe' | Select-Object -First 1).FullName
@@ -567,7 +585,7 @@ jobs:
       # elevate.exe, every PE image's architecture) is exercised on pull
       # requests and not first by a release.
       - name: The packages read back against the bundle they were made from
-        if: matrix.platform == 'windows'
+        if: env.RUN_STEPS == 'true' && matrix.platform == 'windows'
         shell: bash
         env:
           ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.arch == 'arm64' && 'BCJ' || '' }}
@@ -588,7 +606,7 @@ jobs:
           ls -la ../../packed
 
       - name: verify-windows-package.ps1 accepts them
-        if: matrix.platform == 'windows'
+        if: env.RUN_STEPS == 'true' && matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -607,7 +625,7 @@ jobs:
       # package is installed where it is meant to run, its tree checked, and
       # removed.
       - name: The package installs, runs and uninstalls
-        if: matrix.platform == 'windows'
+        if: env.RUN_STEPS == 'true' && matrix.platform == 'windows'
         shell: pwsh
         run: |
           ./scripts/install-smoke.ps1 `
@@ -615,7 +633,7 @@ jobs:
             -Architecture ${{ matrix.arch }}
 
       - name: Keep the arm64 installer for the x64 refusal check
-        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        if: env.RUN_STEPS == 'true' && matrix.platform == 'windows' && matrix.arch == 'arm64'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: studio-arm64-installer-ci
@@ -628,6 +646,7 @@ jobs:
       # channel's differential index and carries the release prefix, so it also
       # inflates the count the release uses to refuse a partial publish.
       - name: No electron-updater metadata
+        if: env.RUN_STEPS == 'true'
         run: |
           if [ -n "$(find dist -maxdepth 1 -type f \( -iname 'latest*.yml' -o -iname 'beta*.yml' -o -iname 'alpha*.yml' \) -print -quit)" ]; then
             echo "::error::electron-updater metadata was published beside the manifest channel"
@@ -642,6 +661,7 @@ jobs:
       # off disk, so both have to be resources. Found rather than asserted at a
       # path, because the unpacked directory is named by the builder.
       - name: The kernel and the page are resources, not archive members
+        if: env.RUN_STEPS == 'true'
         run: |
           host=$(find dist -type f -path '*/bin/reasonix-studio-host*' ! -path '*app.asar*' | head -1)
           page=$(find dist -type f -path '*/frontend-next/dist/index.html' ! -path '*app.asar*' | head -1)
@@ -650,21 +670,21 @@ jobs:
           test -n "$host" -a -n "$page"
 
       - name: Linux packages carry their declared architecture and update payload
-        if: runner.os == 'Linux'
+        if: env.RUN_STEPS == 'true' && runner.os == 'Linux'
         run: bash scripts/verify-linux-package.sh "dist/ReasonixStudio-linux-${{ matrix.arch }}.deb" "dist/ReasonixStudio-linux-${{ matrix.arch }}.rpm" "${{ matrix.arch }}"
 
       - name: The Linux package installs, runs, reinstalls and uninstalls
-        if: runner.os == 'Linux'
+        if: env.RUN_STEPS == 'true' && runner.os == 'Linux'
         run: bash scripts/linux-install-smoke.sh "dist/ReasonixStudio-linux-${{ matrix.arch }}.deb" "${{ matrix.arch }}" 0.0.0-ci
 
       - name: The AppImage carries its architecture, the kernel and the page
-        if: runner.os == 'Linux'
+        if: env.RUN_STEPS == 'true' && runner.os == 'Linux'
         run: bash scripts/verify-linux-appimage.sh "dist/ReasonixStudio-linux-${{ matrix.arch }}.AppImage" "${{ matrix.arch }}"
 
       # Recorded, not asserted: the real bundle layout, so later work argues
       # from what electron-builder produced rather than from its documentation.
       - name: Record the macOS bundle layout
-        if: runner.os == 'macOS'
+        if: env.RUN_STEPS == 'true' && runner.os == 'macOS'
         run: |
           app=$(find dist -maxdepth 2 -name '*.app' | head -1)
           echo "app: $app"
@@ -677,6 +697,7 @@ jobs:
       # writes latest.json into the directory and logs to stdout, so the check
       # reads the file -- captured output would match its own progress line.
       - name: studio-manifest resolves the platform this runner is
+        if: env.RUN_STEPS == 'true'
         working-directory: desktop
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
