@@ -61,8 +61,8 @@ try {
     const selected = await measure();
     // TEMP DIAGNOSTIC: dump the layout facts that decide `available` so the
     // regression behind the 207-vs-220 miss can be read from CI logs alone.
-    const probe = await form.evaluate((root) => {
-      const input = root.querySelector('.ml-row input[aria-label^="Context window"]');
+    const probe = await page.evaluate(() => {
+      const input = document.querySelector('.ml-row input[data-value="model-window"]');
       const unit = input.closest(".unit-field");
       const unitStyle = getComputedStyle(unit);
       const unitI = unit.querySelector("i");
