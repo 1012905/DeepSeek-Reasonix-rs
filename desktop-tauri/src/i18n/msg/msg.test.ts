@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AREAS, KEY, MESSAGES } from ".";
 
@@ -9,13 +10,10 @@ const SOURCES = import.meta.glob(["../../**/*.ts", "../../**/*.tsx", "../../**/*
 }) as Record<string, string>;
 // The i18n directory's own tables of wording (kernel codes, notices) name keys too.
 const WORDING = import.meta.glob(["../*.ts", "!../en*.ts", "!../*.test.ts"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
-// Components still written in React name their keys there; a key is not rot
-// while the screen that asks for it has not been ported yet.
-const REFERENCE = import.meta.glob(["../../../../desktop/frontend-next/src/**/*.{ts,tsx}", "!**/*.test.*"], {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
+// The wording the retired React app still named, frozen so the tables cannot
+// lose a message while its Vue replacement is undecided. A key leaves this
+// list when a Vue source names it or the message is removed on purpose.
+const REFERENCE = JSON.parse(readFileSync(new URL("./oracle-named.json", import.meta.url), "utf8")) as string[];
 const TABLES = import.meta.glob(["./*.ts", "!./*.test.ts", "!./index.ts", "!./types.ts"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
 const HAN = /[一-鿿]/;
@@ -81,7 +79,8 @@ describe("the message tables", () => {
   // source names it as a string counts as asking for it.
   it("carry nothing the interface no longer asks for", () => {
     const named = new Set<string>();
-    for (const body of [...Object.values(SOURCES), ...Object.values(WORDING), ...Object.values(REFERENCE)]) for (const m of body.matchAll(/["'`]([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)["'`]/g)) named.add(m[1]);
+    for (const body of [...Object.values(SOURCES), ...Object.values(WORDING)]) for (const m of body.matchAll(/["'`]([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)["'`]/g)) named.add(m[1]);
+    for (const key of REFERENCE) named.add(key);
     expect(Object.keys(MESSAGES).filter((key) => !asked.has(key) && !named.has(key))).toEqual([]);
   });
 
@@ -101,5 +100,6 @@ describe("the message tables", () => {
   it("reads the sources it is meant to be guarding", () => {
     expect(Object.keys(SOURCES).length).toBeGreaterThan(30);
     expect(Object.keys(TABLES).length).toBe(Object.keys(AREAS).length);
+    expect(REFERENCE.length).toBeGreaterThan(0);
   });
 });

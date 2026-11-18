@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse, compileScript, compileTemplate } from "vue/compiler-sfc";
 import ts from "typescript";
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
 const names = ["App", "Pane", "Transcript", "Composer"] as const;
-const source = (name: string) => readFileSync(`${root}desktop/frontend-next/src/ui/${name}.tsx`, "utf8");
-const target = (name: string) => readFileSync(`${root}desktop-tauri/src/ui/${name}.vue`, "utf8");
+const target = (name: string) => readFileSync(new URL(`./${name}.vue`, import.meta.url), "utf8");
+const contract = JSON.parse(readFileSync(new URL("./parity-contract.json", import.meta.url), "utf8")) as {
+  attributes: Record<string, string[]>;
+  actions: Record<string, string[]>;
+  props: Record<string, string[]>;
+};
 
 function tree(text: string) {
   return ts.createSourceFile("component.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -43,17 +45,9 @@ describe("window and conversation Vue port contracts", () => {
   for (const name of names) {
     it(`${name} passes compiler-sfc and TypeScript syntax validation`, () => { script(name); });
     it(`${name} keeps every original data/ARIA attribute and action identity`, () => {
-      const attributes = new Set<string>();
-      const actions = new Set<string>();
-      visit(tree(source(name)), (node) => {
-        if (!ts.isJsxAttribute(node)) return;
-        const key = node.name.getText();
-        if (/^(data-|aria-)/.test(key)) attributes.add(key);
-        if (key.startsWith("data-action") && node.initializer && ts.isStringLiteral(node.initializer)) actions.add(node.initializer.text);
-      });
       const strings = new Set<string>();
       visit(tree(script(name)), (node) => { if (ts.isStringLiteral(node)) strings.add(node.text); });
-      for (const key of [...attributes, ...actions]) expect(strings, key).toContain(key);
+      for (const key of [...contract.attributes[name], ...contract.actions[name]]) expect(strings, key).toContain(key);
     });
     it(`${name} has no React runtime or ignored watcher cleanup`, () => {
       visit(tree(script(name)), (node) => {
@@ -69,9 +63,8 @@ describe("window and conversation Vue port contracts", () => {
   }
   for (const name of ["Composer", "Transcript", "Pane"] as const) {
     it(`${name} retains its original prop names`, () => {
-      const original = name === "Pane" ? readFileSync(`${root}desktop/frontend-next/src/ui/panetypes.ts`, "utf8") : source(name);
-      const contract = name === "Pane" ? "PaneProps" : "Props";
-      expect(interfaceProps(script(name), contract)).toEqual(interfaceProps(original, contract));
+      const written = name === "Pane" ? "PaneProps" : "Props";
+      expect(interfaceProps(script(name), written)).toEqual(contract.props[name]);
     });
   }
   it("Pane keeps the reducer, history, submit, draft and decision owners", () => {
