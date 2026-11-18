@@ -19,6 +19,19 @@ function entryNames(tgz: Buffer): string[] {
   return names;
 }
 
+function workspaceOverride(name: string): string | undefined {
+  const lines = readFileSync(new URL("../pnpm-workspace.yaml", import.meta.url), "utf8").split(/\r?\n/);
+  const start = lines.findIndex((line) => /^overrides\s*:\s*$/.test(line));
+  if (start < 0) return undefined;
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === "" || line.trimStart().startsWith("#")) continue;
+    if (!/^\s+/.test(line)) break;
+    const match = /^\s+([^:#]+):\s*(.*?)\s*$/.exec(line);
+    if (match && match[1].trim() === name) return match[2];
+  }
+  return undefined;
+}
+
 describe("a package vendored for installs on Windows", () => {
   const dir = new URL("../vendor/", import.meta.url);
 
@@ -35,8 +48,7 @@ describe("a package vendored for installs on Windows", () => {
     expect(names).toContain("package/dist/redos-detector.js");
   });
 
-  it("is the one package.json points the override at", () => {
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    expect(pkg.pnpm.overrides["redos-detector"]).toBe("file:./vendor/redos-detector-6.1.4.tgz");
+  it("is the one the workspace points the override at", () => {
+    expect(workspaceOverride("redos-detector")).toBe("file:./vendor/redos-detector-6.1.4.tgz");
   });
 });

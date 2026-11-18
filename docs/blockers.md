@@ -279,30 +279,29 @@ reviewed: 2026-11-17
   端到端任务才 cutover（RUST_MIGRATION 决策 5）。安装 cargo-deny 等补跑供应链门。
 - **状态**：blocked（cutover）；内核合并本身已完成并验证，2026-11-18 记录。
 
-### B16 —— pinia 死依赖无法最小化删除：pnpm-lock 与 package.json 长期脱钩
+### B16 —— pnpm 旧配置位置阻塞 `tauri dev`：已重同步（resolved）
 
-- **试了什么**：D5 脚注的清理 —— 从 `desktop-tauri/package.json` 删除无 import 的
-  `pinia ^3.0.0`，并同步 lockfile。
-- **被什么挡住**：`pnpm-lock.yaml` 与 `package.json` 严重脱钩。HEAD 的 lock `importers`
-  只声明 4 个依赖（`@tauri-apps/api`、`naive-ui`、`pinia`、`vue`），而 package.json 已演化到
-  ~50 个（codemirror/a2ui/pdfjs 等，且**不含 naive-ui**）。`pnpm install --lockfile-only`
-  会把整张 lock 重新解析对齐 package.json：实测 diff **4663 增／676 删**，其中
-  (1) 补全 importers；(2) 剪掉 package.json 未声明的 `naive-ui` 及其整条依赖树
-  （css-render/@emotion/async-validator/date-fns/lodash/highlight.js 等）；(3) 把 `^` 范围
-  重新解析到较新补丁版（如 `@babel/parser` 8.1.0→8.1.2）。这远超「删一个死依赖」，
-  属一次依赖图变更，违反最小 diff 与「不擅自升级依赖」。
-- **实测安全性**：`grep -rn naive-ui src/` 与 `grep -rn pinia src/` 均为空 —— 二者都无
-  import；node_modules 里 naive-ui 是多余物、pinia 是死重量。故重解析对运行中的 app 无害，
-  但补丁版 bump 与 naive-ui 剪枝仍是 D5 之外的改动，且 `--lockfile-only` 不动 node_modules，
-  无法在不重装的前提下真实验证新 lock 的 frozen 安装。
-- **恢复**：package.json 的 pinia 行已还原（净零改动）；lockfile 已恢复到 HEAD 基线
-  （`git show HEAD:… > …`，diff 归零）。**留痕**：恢复前的 worktree lock 是波次间累积的
-  脱钩产物，已被本次重解析覆盖、不可逐字节复原；HEAD 是可恢复的干净基线，node_modules
-  （实际运行依据）全程未动，故运行态不受影响。
-- **解锁条件**：把 lock↔package.json 的重对齐作为**独立、经评审的任务**做（决定 naive-ui
-  去留、接受补丁版 bump、`pnpm install --frozen-lockfile` 真实回归），再在其上删 pinia。
-  不把它 bundled 进死重量清理。
-- **状态**：skipped（D5 清理搁置），lock 脱钩记为待评审的独立缺陷，2026-11-18 记录。
+- **触发（2026-11-19）**：`pnpm -C desktop-tauri tauri dev` 报
+  `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` —— node_modules 与 lockfile 脱钩，且安装会丢掉
+  `pnpm.overrides`，因为 pnpm 12.10.1 不再读取 package.json 的 `pnpm` 字段。
+- **处置**：把 `pnpm.overrides`（redos-detector → `file:./vendor/redos-detector-6.1.4.tgz`）
+  移入 `pnpm-workspace.yaml` 的顶层 `overrides:`；`pnpm install` 重同步。lock diff
+  **+4286/−206**：补全 importers、剪除 package.json 未声明的 naive-ui 子树、`^` 范围内
+  前移 3 个直接依赖（dompurify 3.4.17→3.4.18、@testing-library/user-event 14.6.10→14.6.12、
+  @vue/test-utils 2.5.1→2.6.0；+23/−15 包），**无大版本变更**。即此前记为「待评审独立
+  任务」的那次重对齐，但由用户的实际运行触发，而非 bundled 进 D5。
+- **守卫更新（owning layer）**：`src/vendor-windows-names.test.ts` 第三条改读 workspace
+  的结构化 `overrides` 条目（原读 package.json 的 `pnpm.overrides`），3/3 绿。
+- **回归**：vue-tsc 0；全量 vitest **304 文件 / 2250 测试全绿**；
+  `pnpm … tauri --version` → tauri-cli 2.12.4 EXIT 0。满负载下一例
+  `Pane.turn.interaction` 等待超时（单跑 3/3 过），已把该用例的 20s 等待放宽到 60s
+  吸收负载——测试自身的时序假设，非产品改动。
+- **附带发现（B1）**：`tauri dev` 现可走完 pnpm 校验、编译、Go host 启动与握手；
+  窗口创建在**本代理进程内**仍确定性失败（0x800700AA；换空数据目录后 0x8000FFFF 且
+  新目录未创建），而壳日志显示用户 04:58 的自触发运行**没有** `startup failed` 行——
+  疑为代理宿主对 GUI/COM 的限制，待用户在自己终端复跑确认。Electron 版 Studio 正在运行，
+  共用 `~/.reasonix` 锁（chmod 警告，不致命）。
+- **状态**：resolved（2026-11-19）；D5（删 pinia）自此可单独执行。
 
 ## Closed
 

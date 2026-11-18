@@ -10,7 +10,8 @@ reviewed: 2026-11-18
 续跑时先读这一份。每个波次结束都要更新它；不许让它描述的树比真实的树旧。
 
 最后更新：2026-11-19（波次 11：B12-core/B11-Files/B14-runtime/B10b agent-runs 工作台落地＋
-B13/B10c/B10d/B14-kept/B14-moveTo/B12-ticket 有界裁决 D15，全门绿 304/2250，debt 83）。
+B13/B10c/B10d/B14-kept/B14-moveTo/B12-ticket 有界裁决 D15，全门绿 304/2250，debt 83；
+同日依赖重同步 B16 → resolved，`tauri dev` 可通过 pnpm 校验）。
 
 > 本文每个数字都来自下方「已验证基线」里的命令。没有命令支撑的判断标「未验证」。
 > 波次 5 的 284 文件 / 2140 测试 / 16 命令 / 129 孤儿已被本波次实测取代。
@@ -192,6 +193,16 @@ $ grep -c '^  \["src/' src/orphan.test.ts                      # 83
 useAgentRequest 8 两文件、WorkbenchPanel.interaction +1 接线测，＋B12/B11/B14-runtime
 邻域测）。孤儿债务 **83**（波次 10 记录 88，本波次实测 83；useBranchSession、panels/Files、
 panels/derive、useAgentTabs 等转 reached 移出 KNOWN_ORPHANS）。Go/Rust 门本波次未触发（零改动）。
+
+**波次 11 补记（依赖重同步，B16 resolved）**：用户实际运行 `pnpm -C desktop-tauri tauri dev`
+触发 B16 —— pnpm 12.10.1 不再读 package.json 的 `pnpm` 字段。`pnpm.overrides` 移入
+`pnpm-workspace.yaml` 顶层 `overrides:`，`pnpm install` 重同步（lock **+4286/−206**；
+3 个直接依赖在 `^` 范围内前移：dompurify 3.4.18、user-event 14.6.12、test-utils 2.6.0；
+无大版本变更）。`vendor-windows-names` 守卫改读 workspace 的结构化条目。回归：
+vue-tsc 0；全量 **304 文件 / 2250 测试绿**；`tauri --version` → 2.12.4 EXIT 0。
+`tauri dev` 在本代理进程内仍卡 WebView2（B1：0x800700AA；换空数据目录后 0x8000FFFF
+且新目录未创建）——用户 04:58 的自跑日志没有 `startup failed` 行，疑为代理宿主限制，
+待其终端复跑确认。另把 `Pane.turn.interaction` 的 20s 等待放宽到 60s 以吸收满负载偶发。
 
 ## 波次 6 改了什么
 
