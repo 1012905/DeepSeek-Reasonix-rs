@@ -632,5 +632,8 @@ acp/tui/testkit/session/config）8–11 行 skeleton；apps 90 行。M1 契约�
    删除动作待用户确认后执行（见 `migration-plan.md` D4 顺序）。
 4. **真实窗口验证**：见 `blockers.md` B1。拿到一次成功启动前，只在 WebView2 里才看得出
    差异的东西都是未验证（原生子 WebView 隔离、拖放合成、登录/证书/挑选）。macOS/Linux 未在本机运行。
-5. **Electron 退役**：`migration-plan.md` 的退役顺序仍只有 D4 原则；须先把对照表 partial
-   变 done（Vue 子系统 + Rust 内核 parity + 真实窗口），再按模块列退役顺序。
+5. **Electron 退役**：顺序已写入 `migration-plan.md`（7 项）。波次 12 已完成第 3、4 项
+   （oracle 对照冻结为 `parity-contract.json`/`oracle-named.json`；Makefile 默认切 Tauri，
+   Electron 保留冻结目标）。**待用户决策**：Tauri 打包（`bundle.active=false`）、Tauri 发布
+   工作流、Electron 三条 CI/部署工作流的删除与网页版去留；均确认后再执行删除 `desktop/`
+   （2423 文件）。在此之前 Electron 只读冻结，Tauri 是唯一开发目标。

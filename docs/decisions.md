@@ -502,3 +502,11 @@ Rust 和 Go 共存）」。窗口由用户在本机终端验证可打开（B1 �
 **验证（主 Agent 重跑）**：`vue-tsc -b --force` EXIT 0；全量 `vitest run` **311 文件 / 2297
 测试**全绿 EXIT 0（基线 304/2250）；定向 16 文件 / 145 测试；orphan debt **81**（83→81：
 jobcancel、sessionswitch 转 reached）。Go/Rust 门未触发（零改动）。
+
+**退役准备（同日，进行中）**：`App.port.test.ts` 的 oracle 对照冻结为
+`src/ui/parity-contract.json`（属性/动作/props），`msg.test.ts` 的 React 键引用冻结为
+`src/i18n/msg/oracle-named.json`（620 个仅 React 命名的键——Vue 一旦命名或按需删除即自然清空）；
+Makefile `studio`→`pnpm -C desktop-tauri tauri dev`（新增 `studio-electron` 冻结目标），
+`test`→`studio-tauri-test`。删除 `desktop/`（2423 文件）、Electron 三条工作流、Tauri 打包与
+发布（`bundle.active=false`）以及 web 部署去向属产品决策；已向用户提问未答，**删除动作未
+执行**，顺序见 migration-plan.md 的退役表。
