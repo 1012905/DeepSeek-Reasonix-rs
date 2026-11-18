@@ -5,14 +5,22 @@
 mod badge;
 mod boot;
 mod bridge;
+mod browser;
+mod capture;
 mod client;
 mod commands;
+#[cfg(windows)]
+mod dropwin;
+mod graphics;
 mod host;
 mod layout;
 mod links;
 mod logs;
 mod prefs;
+mod procmem;
 mod reveal;
+mod shortcut;
+mod textmenu;
 mod theme;
 
 /// A per-test directory under target/, which every runner can write to.
@@ -36,12 +44,14 @@ fn main() {
             boot::show_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
                 .build(),
         )
         .manage(boot::Lease::default())
+        .manage(textmenu::TextMenuState::default())
         .invoke_handler(tauri::generate_handler![
             commands::window_minimise,
             commands::window_toggle_maximise,
@@ -59,6 +69,21 @@ fn main() {
             commands::prefs_save,
             commands::sync_theme,
             commands::set_unread_badge,
+            capture::window_capture,
+            graphics::shell_graphics,
+            shortcut::shell_global_shortcut,
+            shortcut::shell_set_global_shortcut,
+            procmem::shell_process_memory,
+            textmenu::text_context_menu,
+            browser::browser_show,
+            browser::browser_hide,
+            browser::browser_freeze,
+            browser::browser_control,
+            browser::browser_navigate,
+            browser::browser_trust_certificate,
+            browser::browser_answer_login,
+            browser::browser_pick,
+            browser::browser_pick_cancel,
         ])
         .setup(|app| {
             boot::start(app.handle().clone());
@@ -67,7 +92,11 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("building the Reasonix Studio shell");
     app.run(|app, event| match event {
-        tauri::RunEvent::Exit => app.state::<boot::Lease>().release(),
+        tauri::RunEvent::Exit => {
+            shortcut::close(app);
+            browser::shutdown(app);
+            app.state::<boot::Lease>().release();
+        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => boot::show_main(app),
         _ => {}

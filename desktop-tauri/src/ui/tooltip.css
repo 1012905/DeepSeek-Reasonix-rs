@@ -1,0 +1,23 @@
+.icon-tooltip {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(340px, calc(100vw / var(--zoom, 1) - 12px));
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--float);
+  color: var(--text);
+  box-shadow: var(--shadow-float);
+  font: var(--w-med) var(--fs-ui) var(--ui);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.icon-tooltip kbd {
+  color: var(--faint);
+  font: inherit;
+  font-weight: var(--w-reg);
+  white-space: nowrap;
+}

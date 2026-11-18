@@ -19,6 +19,21 @@ fn main() {
         "prefs_save",
         "sync_theme",
         "set_unread_badge",
+        "window_capture",
+        "shell_graphics",
+        "shell_global_shortcut",
+        "shell_set_global_shortcut",
+        "shell_process_memory",
+        "text_context_menu",
+        "browser_show",
+        "browser_hide",
+        "browser_freeze",
+        "browser_control",
+        "browser_navigate",
+        "browser_trust_certificate",
+        "browser_answer_login",
+        "browser_pick",
+        "browser_pick_cancel",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("running tauri-build");

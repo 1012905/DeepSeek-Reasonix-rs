@@ -1,0 +1,429 @@
+# Token law
+
+`tokens.css` declares the vocabulary the rest of the interface is written in.
+The stylesheet itself carries no commentary, so the constraints behind its
+values live here. Each entry states what holds now; where a gate enforces it,
+the gate is named.
+
+## Registered properties
+
+- `--rail-w` / `--side-w` are registered as `<length>` so collapsing a column
+  can tween. An unregistered custom property only jumps, and
+  `grid-template-columns` cannot interpolate a track containing `minmax()`.
+  `--rail-open` / `--side-open` are the expanded widths, written by the drag
+  onto `.app`'s inline style.
+- `--win-ar` is registered so a bad write falls back to 16:10 instead of making
+  `aspect-ratio` invalid, which collapses every box using it to zero height.
+- `interpolate-size: allow-keywords` lets `height: auto` take part in a
+  transition; engines without it jump, which is the prior behaviour.
+
+## Theme packs
+
+- A pack's values are the declarations of one generated rule,
+  `:root:root[data-pack]`, in a `<style id="pack-theme">` appended to `<head>`
+  when a pack is first applied and left where it is.
+- Nothing is written to the root's inline style: a stylesheet of equal
+  specificity added later wins without `!important`, and one already present
+  loses the tie.
+- The selector ties the contrast tiers (`:root[data-theme][data-contrast]`) and
+  beats them by order. With no pack there is no element: the tiers alone carry
+  the inks, and the reader's contrast is theirs.
+- A pack's own inks take normal/strong as relative-colour lightness offsets
+  inside that rule. Unset and soft preserve the author's baseline: arbitrary
+  inks and grounds may already meet AA only narrowly, so a blind negative
+  offset is not safe. This is not an accessibility guarantee for user packs.
+- `--ok --warn --err --net --deleg --add --del --focus` are not in the pack
+  vocabulary and are never written.
+- Decoration that is not a status has its own tokens, which a pack may set
+  (see Decorative roles). A pack that names `net` or `deleg` has them dropped
+  with a warning by the kernel; the frontend has no entry that could write them.
+
+## Decorative roles
+
+`net` and `deleg` say what the agent is doing: running, connected, delegated
+out. A hyperlink, the product accent and a hover halo are not that, so they read
+their own tokens. Each default is the status colour it replaces, in both schemes
+and at every contrast step, so nothing paints differently until a pack sets one.
+
+| Pack key | Variable | Default | Job |
+| --- | --- | --- | --- |
+| `link` | `--link` | `--net` | Hyperlinks and URLs: `.md a`, `.fbk a`, `.lk`, `.hit-row .u` |
+| `brand` | `--brand` | `--net` | The product's own tint: toolbar icons, info notes, feedback status chips and the current step of their timeline, skill chips, the selected option and the open workspace's bar |
+| `halo` | `--halo` | `--net` | Hover and drag-over emphasis: card hover, screenshot hover, the reference-drop ring |
+| `labelAgent` | `--label-agent` | `--deleg` | An agent's name: `.who` labels and sub-agent chips |
+| derived | `--brand-wash` | `--net-wash` | Tint behind `brand`; a pack that sets `brand` derives it at 12% over its ground, as `--accent-wash` follows `accent` |
+| derived | `--label-agent-wash` | `--deleg-wash` | Tint behind `labelAgent`, derived the same way |
+
+- `--halo` is not `--glow`: `--glow` is the running compose ring's own local
+  variable, set to `--net` while a turn runs, and stays a status.
+- The running compose ring, call lines, pips, carets and the delegated nest keep
+  `net` and `deleg`.
+
+## Composer guidance
+
+- Composer guidance keeps its theme-owned `--ghost` ink at full opacity. The
+  Appearance visibility preference suppresses the placeholder text at its
+  choice owner, not by lowering contrast or changing shared neutral inks.
+- `perf/composer-placeholder.mjs` checks the default-on preference, live
+  visibility changes and reload persistence through Appearance, alongside
+  entered text, focus, IME, submission and queued guidance.
+
+## Elevation
+
+| Pack key | Variable | Default | Job |
+| --- | --- | --- | --- |
+| `shadowFloat` | `--shadow-float`, `--shadow-pack` | per scheme, as in `tokens.css` | What menus, popovers and dialogs cast |
+
+- The kernel accepts `none`, or up to four layers of an optional `inset`, two to four `px` lengths and a hex colour.
+- The blur cannot be negative.
+- Nothing paints differently until a pack sets it.
+- `--shadow-pack` is for the light menus that keep their own default; they read it and fall back to that default.
+
+## Faces
+
+Weights are 500 / 600 / 700 on every language (`--w-reg` / `--w-med` / `--w-semi`); the light setting steps down to 400 / 500 / 600 and the heavy one up to 600 / 700 / 700. The input box text is `--fs-lead`, not the transcript reading dial.
+
+The interface ships its own faces. On Windows it otherwise resolved to Segoe UI
+and Microsoft YaHei, neither of which carries a 500 or a 600: CSS then rounds
+`--w-reg` (500) down to 400 and `--w-med` (600) up to 700, collapsing three
+weights into two and thinning the body text. Both shipped files are variable, so
+every step exists on every platform. Licences sit beside them (both OFL 1.1).
+
+Reply-menu buttons use normal letter spacing, including copy controls portaled
+outside `.flow`. `perf/selection-menu.mjs` checks typography and copy/quote interactions.
+
+The Chinese face is subset to GB2312 plus the interface's own characters —
+1.6MB instead of 14MB. A character outside the subset falls through the stack
+rather than disappearing.
+
+The shipped mono face has no geometric shapes (U+25xx) and no `✗`; those fall to
+the installed Noto Sans SC, so the shape is the same cross-platform but the
+advance is not a monospace cell. A mark that has to stand in the same column as
+`✓` must be `×`, which is in the face and shares its width.
+
+`--mono` names the shipped Chinese face because terminal output and diffs carry
+Chinese and none of the monospaced faces has a Han glyph — the character fell
+through to whatever the OS picked, a serif on Windows. Alignment is unchanged: a
+Han glyph is 1em against a 0.6em Latin cell either way, so it was never a 2:1
+grid to break.
+
+## Surfaces
+
+- Studio's default light palette separates the frame (`#F0F0ED`), reading
+  surface (`#FAFAF8`) and composer (`--raised`). Its composer uses a short
+  `--compose-shadow`; installed packs retain their existing surface recipe.
+- `--float` / `--float-hi` exist apart from `--raised`. In dark, `--raised` and
+  what it covers are nearly the same lightness, and a black shadow on a
+  near-black ground paints nothing, so a menu read as transparent. A floating
+  layer is one step lighter, carries an inner highlight, and throws a deeper,
+  wider shadow; all three together are what separate it.
+- `--face-sunk` and `--face-code` are two faces because machine output and a set
+  listing are two things. One mix served both and stepped down from `--raised`
+  while the column actually lays `--surface`: measured, the step came to 2.7 L
+  in dark, just past the line where a layer is visible.
+- Clipped tool output fades its own content with an alpha mask on `.out-body`.
+  Result lists and terminal blocks have different grounds, so no coloured
+  overlay may cover either one or the Show all control. Long lines retain
+  native horizontal scrolling without an edge overlay.
+
+## Hues
+
+- A hue used as a surface and as text on a tint of itself needs two values. The
+  `*-ink` token is the reading value on a tint of the hue; the base stays the
+  fill. In dark the two coincide, because there the tint is darker than the hue.
+  The light `--accent` base was once dark enough to carry white (#A76200, white
+  on it at 4.4977 — not 4.5, with nothing left over); a fill that dark is brown,
+  and it is the largest saturated area the light scheme has. It is the hue
+  itself now, with dark ink on it. `--err` carries its own ink for the same
+  reason: a danger button borrowed `--accent-fg`, which held only while the two
+  hues happened to share a lightness.
+- Text takes the ink, never the base.
+  - Light `--warn` reads 4.58:1 on white and 3.86:1 on the floating layer, under
+    the 4.5 line.
+  - A label, count or note coloured `--warn`, `--ok` or `--err` uses
+    `--warn-ink`, `--ok-ink` or `--err-ink`.
+  - Borders, washes and glyph marks (status symbols, check ticks, hover icons)
+    stay on the base: a graphic needs 3:1, which the base clears.
+  - `ink-text.test.ts` fails a bare hue as `color` outside its glyph list.
+- An ink is read on every tint it lands on, not only the lightest one. The
+  light `--accent-ink` cleared the popover's own surface at 6.4:1 and the
+  selected row inside it — that same surface with 7% text mixed in — at 4.40,
+  under the line the rest of the scheme holds. The darkest surface an ink lands
+  on is the one that sets its value.
+- One colour, one job. `accent` = needs you · `net` = running on its own ·
+  `deleg` = delegated out · `ok` = succeeded · `warn` = allowed, with a cost ·
+  `err` = broken or destructive · `ghost` = a neutral fact. `focus` is its own
+  token: a focus ring must not share a colour's meaning with "running".
+- `accent` and `warn` were the same hex, so "needs you" and "risky but allowed"
+  were indistinguishable on screen. `warn` sits at H45 — amber is "your turn",
+  orange is "this step has a cost". Measured against `accent`'s tier: dark
+  8.14:1 and light ink 5.83:1, beside `accent`'s 8.35 and 5.77.
+- `--cat-1` … `--cat-5` are categorical, not status.
+  - Borrowing deleg/net/accent/ok/faint spends five status positions on
+    something that is not a status.
+  - That borrowed set failed four of the six checks a categorical palette must
+    pass. Worst: "tool output" (grey) against "model reply" (green) at ΔE 12.0
+    for normal vision, under the floor of 15, while those are the second and
+    fourth largest areas in the window.
+  - The current set was chosen against all six and verified in both schemes:
+    lightness band, chroma floor, adjacent-pair colour-vision separation
+    (ΔE ≥ 8), normal-vision floor (≥ 15), and contrast with the ground.
+  - In light, four segments fall below 3:1 and rely on the legend's text labels.
+  - Chart series take `--cat-1` … `--cat-5` by index. A sixth series onward
+    repeats the ramp with a second channel (dash for lines, hatch for bars,
+    lower opacity for slices) because five distinguishable hues is the ceiling,
+    and every chart carries a legend or a data table so colour is never the only
+    way to read a series.
+- `--lights-w` / `--lights-h` are the window corner macOS draws its controls
+  over, and they are zero everywhere the shell does not hand that corner to the
+  page. Whichever element occupies the corner reserves them, so a layout change
+  that moves what sits there does not have to rediscover the measurement.
+- `--call-sym` / `--call-gap` are the transcript gutter: the symbol cell and the
+  space after it. Anything that has to line up with a card reads them instead of
+  restating the sum, and `.nest-bd` redefines them rather than re-specifying the
+  grid.
+- `--io-up` / `--io-down` alias the categorical set, not the status one: sent
+  and received are two kinds of one quantity, not two healths, so `net` or `ok`
+  there would read as "running" or "succeeded". `--io-down` is `--cat-5`, which
+  already is this figure — the context bar's output segment.
+
+## Shape
+
+`--chev` masks one stroked polyline wherever a corner is drawn, with the colour
+still coming from `currentColor`. Tree corners were stroked polylines while
+disclosure arrows were the font's solid triangles: one meaning, two shapes.
+
+Radii were 1/2/3/4 — near square, and every container in the window is stroked,
+so square read as table cells rather than operable surfaces. The whole tier was
+raised with its ratios kept.
+
+A pack's `recipes.corners` is a factor on that tier rather than a radius of its
+own: `square` is 0, `soft` leaves the four radii as written, `round` is 1.5. A
+pack states a shape, never a number the layout has to agree with.
+
+The four steps are 5 / 7 / 10 / 15 px and the pill: a segment's button or a small
+tag, a field or a notice, a menu or a medium button, a card or a dialog. Two sizes
+of button only — a small one with the pill, a medium one with `--r-md`.
+
+## Motion
+
+- Three durations for three weights: `--t-line` (120ms) a line, `--t-card`
+  (180ms) a card, `--t-panel` (260ms) a panel. `--m-*` bundles the duration with its easing, because a
+  weight decides both; `--m-step` is choreography — how far apart a batch of
+  elements is staggered.
+- `--t-live` (.6s) is not a weight. A meter or a fill reports work that is
+  running, and reports it by growing, so this tier drives a fill's own geometry
+  and never answers a click — at .6s it would answer late.
+- `--tip-delay` (.3s) is how long a pointer rests before a hint is drawn: VS Code
+  waits 250ms by default, and an instant hint flashes on every pass across a
+  column of icons. Keyboard focus is not hovering and is never delayed. It is a
+  wait, not motion, so reduced motion keeps it: dropping it would bring the flash back.
+- `--t-press` (.06s) is contact itself; anything slower reads as the interface
+  thinking it over. What a press looks like is a token, so reduced motion
+  answers for every control by changing one value.
+- `--ease-spring` is the overshoot tier; the other three are monotonic, so
+  everything lands the same way and nothing has weight. Use it only where an
+  action has just settled.
+- Motion describes a state transition, never an element's lifetime. Mount and
+  remount are not causes. A live fact may enter once; replay and virtualization
+  do not replay motion. Navigation moves the containing view, not every child
+  mounted beneath it. Held by `src/ui/motion.test.tsx`, including against this
+  stylesheet, because the tempting rule and the correct one differ by a
+  selector.
+- Under reduced motion a press is still answered, but not by displacement. The
+  wash stays: colour is not motion.
+
+## Space
+
+- Layout spacing is eight steps, 2 / 4 / 6 / 8 / 10 / 12 / 16 / 24px. The floor
+  is 2px, below which a gap stops reading as a gap, and 24px is the ceiling:
+  past it the distance is layout rather than spacing.
+- Which step a surface takes belongs to that surface: 2px between a mark and
+  its label, 4px between a control's own parts, 6px inside a chip, 8px between
+  rows, 10px inside a dense card, 12px inside a card, 16px between blocks, 24px
+  between sections.
+- A distance off the scale takes the nearer step; a tie takes the lower one,
+  because an off-scale distance is a step with air added by hand, and the tie
+  returns the air and nothing else.
+
+| Written | 3 | 5 | 7 | 9 | 11 | 14 | 20 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Takes | 2 | 4 | 6 | 8 | 10 | 12 | 16 |
+
+- A surface that still writes a distance has not been migrated yet; it is not
+  an exception the scale allows.
+- `--y-line` / `--y-card` / `--y-panel` are the same three weights in space.
+  With only the durations tiered, a one-file read and a call carrying twenty
+  lines of output weighed the same, and a long turn had no readable sections.
+- `--y-say` sets the reply's own margins. Machine activity sits 22px apart, a
+  reply against machine activity 32px, two utterances 42px — the ladder's
+  direction was right and its steps were too small to read as a change of
+  speaker.
+- `--y-close` / `--close-h` are the close: what a card's last line sits above
+  the action that ends it, and how tall that action is. The close is one step
+  below `--y-line`, because an action belongs to the sentence it acts on rather
+  than standing apart from it; a card that ends must read as finished, not as
+  waiting for something that was never laid out.
+- That action is present for the whole life of the card. A control that appears
+  only under a pointer is one nobody finds, and on touch it does not appear at
+  all; it rests at `--muted` and comes forward on hover.
+- A pack's `recipes.density` scales `--pane-gutter`, `--call-gap`, `--call-sym`
+  and `--close-h`: `compact` is 0.85, `comfortable` leaves them as written.
+- Density moves a distance or a control's own height, never a type size and
+  never a panel's width. How large the interface reads is the reader's setting,
+  and a panel's width is layout rather than rhythm.
+
+## Type
+
+- Picker panels follow the board "Spec-Pickers": 300px (340 with long
+  descriptions, 600 for the two-column model panel), `--r-md` corners, a 13px
+  bold title, 13px medium rows with 12px descriptions, selection as a neutral
+  fill and a `--net-ink` check, and only the rows scroll.
+- The composer scope covers work mode, workspace, permissions, model and effort.
+  Search results wrap long names; large lists scroll within the viewport. Other
+  pickers retain their own density.
+- Workspace controls share the branch slot in the composer's bottom toolbar,
+  including its pill radius, hover surface and narrow-pane label folding.
+  Runtime statistics remain below the input card.
+- Git labels inherit the toolbar control's font and line-height. Mode, effort
+  and branch wrappers use flex layout so inline baselines do not shift their
+  labels when interface text is enlarged.
+- Empty phone toolbars keep their compact geometry when a control receives
+  focus, so a pointer press and release target the same button. Draft content,
+  attachments and open menus expand the toolbar.
+
+- The scale carried 24 sizes, 442 uses of them inside the four steps between 10
+  and 11.5px. Half a pixel is not a level; it reads as nothing quite matching.
+  Six steps now, widening as they go. The floor is 11px: dense Han strokes lose
+  their counters there first, and AA's large-text exemption starts at 18.66px.
+  Above 24px is off the scale — a brand moment is one size for one thing.
+- `--read` is the conversation body's own size, separate from interface zoom, so
+  "I cannot read this" adjusts one thing. The value here is the first-frame
+  fallback; the real default is `look.ts`'s `readDefault()`.
+- Execution content derives size from `--read`. Appearance also projects
+  `--read-scale` as the selected body size divided by the language's default.
+- The root's `--activity-scale` multiplies that ratio by the interface text scale.
+  Activity groups inherit the product as their local `--fs-scale`, including
+  work folded at turn completion.
+- Composing at the root avoids self-reference and prevents nested activity
+  groups from multiplying the scale again.
+- Activity title, running, failed and action counts retain one 11px/500 scale,
+  1.5 line-height and the running chip's 2px vertical padding. Interface and
+  body-size changes scale all four equally; the common 500 weight stays fixed.
+  Tool rows and input details retain reading/weight preferences.
+- Labels use `--ui`; tool names, paths and input use `--mono`.
+- `--column` is the reading column's width. The composer is laid at it in
+  every measure; the transcript takes it through `--doc`.
+- `--doc` is the column the transcript is laid in: `--column`, or the whole
+  pane in the full measure. Cards, prose and the composer share its edges.
+- The column's floor is its narrowest block: 80 columns of IBM Plex Mono at
+  `--fs-ui` is 624px, and the transcript's indent and padding want 82px more.
+- Line length moves with `--read`: about 80 Latin characters at 15px, about 36
+  Han characters at 16px. Column width and body size are one reading.
+- `--srail-w` is the locator rail's own column. It is a `pointer-events: auto`
+  strip laid over the transcript's right edge, so content that clears it must
+  reference the same number.
+- Tracking varies with size rather than staying constant: large sizes need the
+  air between letters pulled back, small caps need it opened or the word packs
+  together. The Chinese tier is zeroed by `:lang(zh)` at the top of `app.css` —
+  negative tracking squeezes a Han character's em box, not the air between
+  letters.
+
+## Settings text
+
+- Every text run in the settings pages is one of nine roles, declared in
+  `settings-type.css`.
+- Sizes are `--fs-meta`, `--fs-ui`, `--fs-lead`, `--fs-title` and
+  `--fs-display`; weights are `--w-reg` and `--w-semi`; neutral colours are
+  `--text` and `--muted`.
+- Semantic colours (error, success, warning, accent) mark state and are not
+  part of the count.
+- Roles: group title (lead, semi, text); page title (title, semi, text);
+  emphasis (ui, semi, text); label (ui, reg, text); description (ui, reg,
+  muted); caption (meta, reg, muted); control (meta, reg, text); metric
+  (display, semi, text). The usage hero figure keeps its own larger size.
+- Inside `.prefs-col` the file re-points `--fs-micro` to `--fs-meta`.
+- It also re-points `--faint` and `--ghost` to `--muted`, and `--w-med` to
+  `--w-semi`, so a rule written against any of them lands on a role unedited.
+- The settings pages therefore have two neutral text tiers where the rest of
+  the interface has three. `--muted` is the darker of the tiers it replaces,
+  so the AA floor below still holds.
+- A walk over the 16 pages found 43 combinations of size, weight and colour
+  across 10 sizes, 4 weights and 11 colours. It is now 23 across 5 sizes, 3
+  weights and 9 colours, the 7 non-neutral ones being semantic.
+- Monospace is a family, not a role: a path in code type takes the role of the
+  text around it.
+- `tools/settings-type-sweep.mjs` reads computed styles from a running build
+  and fails on a size outside the scale.
+- `settings-type.test.ts` holds the stylesheet to tokens, so a literal size or
+  colour cannot be added to it.
+- The neutral ink the roles set on buttons would land on a primary action's
+  fill, where the component pairs `--accent-fg` with `--accent`; an enabled
+  `[data-primary]` button therefore keeps `--accent-fg` and carries its
+  `--accent` fill with it, so a container with no fill rule of its own never
+  shows light text on no fill. Nothing else is recoloured.
+
+## Weight and contrast
+
+- Default and plain-palette light Studio replies use `--w-read: 400` for prose only. Headings,
+  emphasis and small UI text keep their existing weights. A chosen weight,
+  illustrated/sky pack or dark scheme falls back to `--w-reg`.
+- `--default-*` holds the canonical Studio preview palette independently of
+  the active pack. Default surfaces and the default picker card share it.
+- `--accent-ink` is text on ordinary or tinted surfaces, distinct from
+  `--accent-fg` on filled controls. Packs may set `accentInk`; legacy packs
+  derive it by mixing their accent towards their body text colour.
+- `background.textGlow: none` paints `--flow-text-shadow: none` through the
+  pack sheet. The backdrop transcript rule defaults to its 2px shadow and 7px
+  halo when this variable is absent. The choice affects text only; the frosted
+  backing remains. Reduced effects overrides the text shadow.
+- `background.surfaceOpacity.{light,dark}` paints `--bg-{nav,rail,chrome,side,compose}-background`
+  through the pack sheet, only for a backdrop. Omitted values keep existing paint.
+- Shell opacity mixes `--page`; composer opacity mixes `--raised`. Existing
+  Studio scheme-specific overrides and blur remain the defaults.
+
+- Stroke weight is an axis beside contrast, not part of it: however bright the
+  colour, 400 Han at 11px is thin. Han strokes are dense and blur at a size
+  Latin still holds, so the Chinese interface starts at medium.
+- The `heavy` tier steps further for Chinese, whose default is already the Latin
+  bold tier, and stops at 700: above it a Han character's closed strokes fill in.
+- The proposed decision for #12019 retains **soft** as a lower-contrast built-in
+  body/muted palette. Unlike the previous contract, the body end now moves.
+- Unset, normal and strong remain unchanged. Pack-authored inks keep their
+  baseline for soft, as described under Theme packs.
+- Every text ink, including 10–11px faint/ghost, must clear 4.5:1 on its actual
+  grounds; these sizes do not qualify for the large-text exemption. Applicable
+  non-text graphics still need 3:1. No semantic colours or graphics are softened.
+- Faint/ghost keep the default AA floor: light is only 4.532:1 on `--overlay`,
+  dark only 4.504:1 on `--float-hi`. Softening them would fail AA despite passing
+  on page. `--ghost` equals `--faint` in every tier.
+- Light soft previously made faint/ghost stronger than unset; it now preserves
+  the actual default instead.
+- `perf/tiers.mjs` measures Chromium colours on page, surface, raised, overlay,
+  float and float-hi. It pins unset/normal/strong and requires softer body/muted,
+  stable faint/ghost, and AA. The higher tiers keep their stepped-palette floors.
+- `perf/contrast.mjs` and `tools/contrast-sweep.mjs` also audit rendered text and
+  composited grounds.
+- `prefers-contrast: more` is followed when the user has not chosen a tier.
+  Light and dark are judged separately: a manual dark choice under a light
+  system scheme would otherwise paint the light theme's dark body text onto a
+  dark ground.
+
+### Soft contrast decision measurements
+
+Chromium, canonical Studio palette, WCAG sRGB relative luminance. Each cell is
+**page / surface**, rounded to three decimals; thresholds use unrounded ratios.
+These are small-text measurements, not large-text exemptions.
+
+| Scheme / tier | text | muted | faint | ghost |
+| --- | --- | --- | --- | --- |
+| Light / unset (unchanged) | 12.496 / 13.653 | 5.445 / 5.949 | 4.831 / 5.279 | 4.831 / 5.279 |
+| Light / previous soft | 12.496 / 13.653 | 7.695 / 8.407 | 5.815 / 6.353 | 5.815 / 6.353 |
+| Light / soft | 9.324 / 10.187 | 5.140 / 5.616 | 4.831 / 5.279 | 4.831 / 5.279 |
+| Light / normal (unchanged) | 14.198 / 15.513 | 10.316 / 11.271 | 7.933 / 8.668 | 7.933 / 8.668 |
+| Light / strong (unchanged) | 18.018 / 19.686 | 13.669 / 14.934 | 10.510 / 11.483 | 10.510 / 11.483 |
+| Dark / unset and previous soft | 14.730 / 14.314 | 8.934 / 8.682 | 5.722 / 5.560 | 5.722 / 5.560 |
+| Dark / soft | 10.822 / 10.516 | 7.411 / 7.202 | 5.722 / 5.560 | 5.722 / 5.560 |
+| Dark / normal (unchanged) | 16.125 / 15.670 | 10.065 / 9.781 | 7.565 / 7.352 | 7.565 / 7.352 |
+| Dark / strong (unchanged) | 18.099 / 17.588 | 13.163 / 12.792 | 9.916 / 9.636 | 9.916 / 9.636 |
+

@@ -1,0 +1,14 @@
+.vrow .vn { grid-column: 3; grid-row: 1; text-decoration: none }
+.vrow .sa { display: inline-flex; align-items: baseline; gap: 8px }
+.vrow .sa-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.vrow .sa .lnk { flex: none; text-decoration: none }
+.vnotes { grid-column: 1 / -1; margin: 0 0 8px; padding: 10px 12px; border-left: 2px solid var(--hair); font-size: var(--fs-ui); overflow-wrap: anywhere }
+.vnotes .md-noimg { color: var(--muted) }
+.vnotes-lang { display: flex; margin-bottom: 8px }
+@container versions (max-width: 600px) {
+  .vrow .vn { grid-column: 1 / -1; grid-row: auto; justify-self: start; margin-top: 4px }
+  @media (hover: hover) {
+    .vrow[data-open] .sa:not([data-keep]) { position: static; translate: none; grid-column: 1 / -1; grid-row: auto; margin-top: 4px; max-width: 100% }
+    .vrow[data-open]:has(> .sa:not([data-keep])):is(:hover, :focus-within) :is(.ds, .sc) { visibility: visible }
+  }
+}

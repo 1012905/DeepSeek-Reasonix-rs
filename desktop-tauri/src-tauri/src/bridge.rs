@@ -38,6 +38,60 @@ const TEMPLATE: &str = r#"(() => {
   };
   const text = (value) => String(value ?? "");
   const bytesOf = (value) => (value instanceof Uint8Array ? value : new Uint8Array(value));
+  const LISTEN = "plugin:event|listen";
+  const UNLISTEN = "plugin:event|unlisten";
+  const onEvent = (event, handler) => {
+    const ipc = window.__TAURI_INTERNALS__;
+    if (!ipc) return () => {};
+    const handlerId = ipc.transformCallback(handler);
+    let eventId = null;
+    let active = true;
+    invoke(LISTEN, { event, target: { kind: "Any" }, handler: handlerId })
+      .then((id) => { eventId = id; if (!active) invoke(UNLISTEN, { event, eventId: id }); })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (eventId === null) return;
+      const internals = window.__TAURI_EVENT_PLUGIN_INTERNALS__;
+      if (internals) internals.unregisterListener(event, eventId);
+      invoke(UNLISTEN, { event, eventId }).catch(() => {});
+    };
+  };
+
+  // The native drop target hands the window paths and coordinates, never File
+  // objects; the page's drop zones read DOM DragEvents, so each native event is
+  // rebuilt as the DOM event the zone already listens for, at the point given.
+  const fireDrag = (type, position, transfer) => {
+    const x = position && typeof position.x === "number" ? position.x : 0;
+    const y = position && typeof position.y === "number" ? position.y : 0;
+    const el = document.elementFromPoint(x, y) || document.body;
+    el.dispatchEvent(new DragEvent(type, {
+      bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: transfer,
+    }));
+  };
+  const typed = (types) => {
+    const dt = new DataTransfer();
+    for (const t of types) dt.setData(t, "");
+    return dt;
+  };
+  const dropListeners = new Set();
+  onEvent("tauri://drag-enter", (e) => fireDrag("dragover", e.payload.position, typed(["Files"])));
+  onEvent("tauri://drag-over", (e) => fireDrag("dragover", e.payload.position, typed(["Files"])));
+  onEvent("tauri://drag-leave", () => fireDrag("dragleave", null, typed(["Files"])));
+  onEvent("tauri://drag-drop", (e) => {
+    const paths = Array.isArray(e.payload.paths) ? e.payload.paths : [];
+    fireDrag("drop", e.payload.position, typed(["Files"]));
+    for (const listener of dropListeners) listener(paths);
+  });
+  onEvent("reasonix://drag-enter", (e) => fireDrag("dragover", e.payload.position, typed(e.payload.types || [])));
+  onEvent("reasonix://drag-over", (e) => fireDrag("dragover", e.payload.position, typed(e.payload.types || [])));
+  onEvent("reasonix://drag-leave", () => fireDrag("dragleave", null, typed(["Files"])));
+  onEvent("reasonix://drag-drop", (e) => {
+    const dt = new DataTransfer();
+    for (const entry of e.payload.entries || []) dt.setData(entry[0], entry[1]);
+    fireDrag("drop", e.payload.position, dt);
+  });
+
   const host = {
     shell: "tauri",
     platform: __PLATFORM__,
@@ -56,11 +110,33 @@ const TEMPLATE: &str = r#"(() => {
     revealWorkspace: (root) => invoke("reveal_workspace", { root: text(root) }),
     revealLogs: () => invoke("reveal_logs"),
     openWorkspace: (root) => invoke("open_workspace", { root: text(root) }),
-    pathForFile: () => "",
     saveText: (name, content) => invoke("save_text", { name: text(name), content: text(content) }),
     saveBytes: (name, bytes) =>
       invoke("save_bytes", bytesOf(bytes), { headers: { "x-reasonix-name": encodeURIComponent(text(name)) } }),
     pickFolder: (startIn) => invoke("pick_folder", { startIn: text(startIn) }),
+    captureWindow: () =>
+      invoke("window_capture").then((b) => (b && b.byteLength ? new Uint8Array(b) : null)).catch(() => null),
+    graphics: () => invoke("shell_graphics"),
+    globalShortcut: () => invoke("shell_global_shortcut"),
+    setGlobalShortcut: (binding) => invoke("shell_set_global_shortcut", { binding: text(binding) }),
+    processMemory: () => invoke("shell_process_memory"),
+    showTextContextMenu: (request) => invoke("text_context_menu", { request }),
+    onDropPaths: (listener) => {
+      dropListeners.add(listener);
+      return () => dropListeners.delete(listener);
+    },
+    showBrowserView: (target, rect) => invoke("browser_show", { target: text(target), rect }),
+    hideBrowserView: () => invoke("browser_hide"),
+    freezeBrowserView: () => invoke("browser_freeze"),
+    controlBrowserView: (target, action) => invoke("browser_control", { target: text(target), action: text(action) }),
+    navigateBrowserView: (target, address) => invoke("browser_navigate", { target: text(target), address: text(address) }),
+    onBrowserLoadState: (listener) => onEvent("browser://load-state", (e) => listener(e.payload)),
+    onBrowserLogin: (listener) => onEvent("browser://login", (e) => listener(e.payload)),
+    answerBrowserLogin: (id, username, password) =>
+      invoke("browser_answer_login", { id: text(id), username: text(username), password: text(password) }),
+    trustBrowserCertificate: (target) => invoke("browser_trust_certificate", { target: text(target) }),
+    pickBrowserElement: (target, labels) => invoke("browser_pick", { target: text(target), labels }),
+    cancelBrowserPick: (target) => invoke("browser_pick_cancel", { target: text(target) }),
   };
   Object.defineProperty(window, "reasonixHost", { value: Object.freeze(host), enumerable: false, configurable: false, writable: false });
 

@@ -4,7 +4,7 @@
 // refusal — and the window may only ever be that origin.
 use crate::client::{KernelClient, TOKEN_COOKIE};
 use crate::logs::Logs;
-use crate::{bridge, commands, host, layout, prefs, theme};
+use crate::{bridge, commands, graphics, host, layout, prefs, theme};
 use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -208,10 +208,14 @@ fn credential(token: &str) -> cookie::Cookie<'static> {
 }
 
 fn grant(app: &AppHandle, origin: &str) -> tauri::Result<()> {
+    // Bound to the main webview alone: the agent's child webviews share this
+    // window's label but must never reach the shell's verbs or its events.
     let mut capability = CapabilityBuilder::new("kernel-page")
         .remote(format!("{origin}/*"))
         .local(false)
-        .window(MAIN);
+        .window(MAIN)
+        .webview(MAIN)
+        .permission("core:event:default");
     for name in commands::NAMES {
         capability = capability.permission(format!("allow-{}", name.replace('_', "-")));
     }
@@ -281,6 +285,16 @@ fn open_window(
             .hidden_title(true)
             .traffic_light_position(tauri::LogicalPosition::new(11.0, 20.0));
     }
+    // Only Windows can apply the choice; elsewhere the launch keeps its GPU and
+    // says so, rather than reporting an override it never made.
+    let off = graphics::disable_gpu(&saved);
+    #[cfg(windows)]
+    if off {
+        builder = builder.additional_browser_args("--disable-gpu");
+    }
+    app.manage(graphics::GraphicsState {
+        launched_off: off && cfg!(windows),
+    });
     grant(app, origin)?;
     let window = builder.build()?;
     window.set_cookie(credential(&handshake.token))?;
@@ -292,6 +306,15 @@ fn open_window(
     commands::apply_theme(&window, &app.state::<commands::Shell>());
     window.show()?;
     let _ = window.set_focus();
+    crate::shortcut::init(app);
+    crate::browser::start(
+        app.clone(),
+        app.state::<commands::Shell>().client.clone(),
+        origin.to_string(),
+        layout.config.join("browser"),
+    );
+    #[cfg(windows)]
+    crate::dropwin::install(app, &window);
     Ok(())
 }
 

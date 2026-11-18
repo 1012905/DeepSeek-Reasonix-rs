@@ -1,0 +1,630 @@
+import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
+import { PLAN_ACTIONS, type PlanAction } from "./session";
+import type { AccountState, AgentPort, ChipCall, CompactionSettings, Completion, DeviceGrant, UpdateProgress, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, MemoryEntry, UsageQuery, UsageReport, UploadReport, Queue, Queued, NotifyPrefs, TrayPrefs, WorkspaceInfo } from "./port";
+import type { MemoryProactive, MemorySuggestion } from "./memory";
+import { HttpError, type CommitProposal, type CommitRequest, type CommitResult, type WorkspaceFile, type WorkspaceFiles } from "./port";
+import { SseTerminal } from "./sse_terminal";
+import type { StoragePlan, StorageQuery, StorageState } from "./storage";
+import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
+import { host } from "./host";
+import { current } from "../i18n";
+import { subscribeStream } from "./sse_subscribe";
+
+// The running project is the default, so its requests stay the bare path they
+// have always been and only a cross-project read carries the folder.
+// Install progress rides its own channel: it is the shell reporting on itself,
+// not something the kernel emitted into the conversation.
+// Fast enough that a download bar moves, slow enough that an open panel is not
+// a load. The read is one small JSON body and answers from memory.
+const UPDATE_POLL_MS = 500;
+
+export class SsePort extends SseTerminal implements AgentPort {
+  status() {
+    return this.get<SessionStatus>("/status");
+  }
+
+  async balance(): Promise<WalletReading | null> {
+    const res = await fetch(this.base + "/balance", { credentials: "same-origin" });
+    // 204 is a provider that has no wallet at all. Nothing to show, nothing
+    // wrong — the failures come back coded instead.
+    if (res.status === 204) return null;
+    if (!res.ok) await SsePort.fail("/balance", res);
+    return (await res.json()) as WalletReading;
+  }
+
+  async providerSetup(): Promise<ProviderSetup | null> {
+    const res = await fetch(this.base + "/provider-setup", { credentials: "same-origin" });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`/provider-setup: ${res.status}`);
+    return (await res.json()) as ProviderSetup;
+  }
+
+  saveProviderKey(apiKey: string) {
+    return this.post("/provider-setup", { apiKey });
+  }
+
+  async models(answers?: "chat" | "decision" | "all") {
+    const r = await this.get<{ models?: ModelEntry[] }>(answers ? `/models?answers=${answers}` : "/models");
+    return r.models ?? [];
+  }
+
+  complete(line: string, cursor: number, signal?: AbortSignal) {
+    // The kernel renders the built-in verbs, and the language it would pick is
+    // the process's. Only this window knows what it is drawing in.
+    const q = new URLSearchParams({ line, cursor: String(cursor), lang: current() });
+    return signal ? this.getUntil<Completion>("/complete?" + q, signal) : this.get<Completion>("/complete?" + q);
+  }
+
+  async refinePrompt(draft: string, signal?: AbortSignal) {
+    const res = await fetch(this.base + "/prompt/refine", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ draft }),
+      signal,
+    });
+    if (!res.ok) await SsePort.fail("/prompt/refine", res);
+    return ((await res.json()) as { text: string }).text;
+  }
+
+  usage(days: number, source?: string): Promise<UsageReport>;
+  usage(query: UsageQuery): Promise<UsageReport>;
+  usage(query: number | UsageQuery, source?: string) {
+    const q = new URLSearchParams();
+    if (typeof query === "number") {
+      q.set("days", String(query));
+      if (source && source !== "all") q.set("source", source);
+    } else if ("days" in query) {
+      q.set("days", String(query.days));
+      if (query.source && query.source !== "all") q.set("source", query.source);
+    } else {
+      q.set("from", query.from);
+      q.set("to", query.to);
+      if (query.source && query.source !== "all") q.set("source", query.source);
+    }
+    return this.get<UsageReport>("/usage?" + q);
+  }
+  uploadUsage(days: number) {
+    return this.get<UploadReport>(`/usage/upload?days=${days}`);
+  }
+  memories() {
+    return this.get<MemoryCatalog>("/memory");
+  }
+
+  prepareFileRevert(path: string) {
+    return this.post0<RewindPlan>("/rewind/file/prepare", { path });
+  }
+  commitFileRevert(planId: string, resolution?: string) {
+    return this.post0<RewindResult>("/rewind/file/commit", { planId, resolution });
+  }
+  saveMemory(edit: MemoryEdit) {
+    return this.post("/memory/save", edit);
+  }
+  forgetMemory(name: string) {
+    return this.post("/memory/forget", { name });
+  }
+  confirmMemory(name: string) {
+    return this.post("/memory/confirm", { name });
+  }
+  async memoryProactive() {
+    const r = await this.get<{ mode: MemoryProactive }>("/memory/proactive");
+    return r.mode;
+  }
+  async setMemoryProactive(mode: MemoryProactive) {
+    await this.post("/memory/proactive", { mode });
+  }
+  async memorySuggestions() {
+    const r = await this.get<{ suggestions: MemorySuggestion[] }>("/memory/suggestions");
+    return r.suggestions ?? [];
+  }
+  acceptMemorySuggestion(id: string, edit?: { title?: string; description?: string; body?: string }) {
+    return this.post("/memory/suggestions/accept", { id, ...edit });
+  }
+  dismissMemorySuggestion(id: string) {
+    return this.post("/memory/suggestions/dismiss", { id });
+  }
+  async memoryRevisions(name: string) {
+    const r = await this.get<{ revisions: MemoryEntry[] }>("/memory/revisions?name=" + encodeURIComponent(name));
+    return r.revisions ?? [];
+  }
+  restoreMemory(name: string, revision: number) {
+    return this.post("/memory/restore", { name, revision });
+  }
+
+  async welcomeSeen(): Promise<boolean> {
+    const res = await this.get<{ seen: boolean }>("/welcome");
+    return !!res.seen;
+  }
+
+  markWelcomed() {
+    return this.post("/welcome", {});
+  }
+
+  roles() {
+    return this.get<RoleAssignments>("/roles");
+  }
+
+  setRole(role: string, ref: string, effort?: string) {
+    return this.post("/roles", { role, ref, effort });
+  }
+
+  roleOverrides() {
+    return this.get<Record<string, RoleOverride[]>>("/roles/overrides");
+  }
+
+  clearRoleOverride(role: string, key: string) {
+    return this.post("/roles/overrides/clear", { role, key });
+  }
+
+  storage(query?: StorageQuery) {
+    const q = query?.layout ? "?layout=1" : query?.root ? "?root=" + encodeURIComponent(query.root) : "";
+    return this.get<StorageState>("/storage" + q);
+  }
+
+  // Both answer with a plan: a refused move is reported in the body rather
+  // than as a failed request, because its refusals are what the panel shows.
+  planStorageMove(root: string, dir: string) {
+    return this.post0<StoragePlan>("/storage/plan", { root, dir });
+  }
+
+  moveStorage(root: string, dir: string) {
+    return this.post0<StoragePlan>("/storage/move", { root, dir });
+  }
+
+  // Which build runs belongs to the application, not to a pane: a remote pane's
+  // base names another machine, whose version is not the one this window would
+  // install. So these two ignore this port's base, the way the tray does.
+  async versions(refresh = false): Promise<VersionHub> {
+    const res = await fetch(refresh ? "/studio/versions?refresh=1" : "/studio/versions", { credentials: "same-origin" });
+    if (!res.ok) await SsePort.fail("/studio/versions", res);
+    return (await res.json()) as VersionHub;
+  }
+
+  // The icon belongs to the window, not to a pane, so these two are the one
+  // pair that ignores this port's base: a remote pane's base names another
+  // machine, and the status icon there is not the one on this screen.
+  async trayPrefs(): Promise<TrayPrefs | null> {
+    return this.trayCall(await fetch("/tray/prefs", { credentials: "same-origin" }));
+  }
+
+  async setTrayPrefs(icon: boolean, closeToTray: boolean): Promise<TrayPrefs | null> {
+    return this.trayCall(
+      await fetch("/tray/prefs", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ icon, closeToTray }),
+      }),
+    );
+  }
+
+  async versionNotes(version: string, retry = false): Promise<VersionNotes> {
+    const path = `/studio/versions/${encodeURIComponent(version)}/notes${retry ? "?retry=1" : ""}`;
+    const res = await fetch(path, { credentials: "same-origin" });
+    if (!res.ok) await SsePort.fail(path, res);
+    return (await res.json()) as VersionNotes;
+  }
+
+  async studioLogs(): Promise<StudioLogs> {
+    const res = await fetch("/studio/logs", { credentials: "same-origin" });
+    if (!res.ok) await SsePort.fail("/studio/logs", res);
+    return (await res.json()) as StudioLogs;
+  }
+
+  async pinVersion(version: string): Promise<void> {
+    const res = await fetch("/studio/pin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ version }),
+    });
+    if (!res.ok) await SsePort.fail("/studio/pin", res);
+  }
+
+  // Answered as soon as the move is under way. It cannot be answered when the
+  // move is done: an install that worked ends by ending the kernel this asked.
+  async goToVersion(version: string): Promise<void> {
+    const res = await fetch("/update/install", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ version }),
+    });
+    if (!res.ok) await SsePort.fail("/update/install", res);
+  }
+
+  // Answered once the kernel has stopped the download and discarded its
+  // partial bytes, so starting it again cannot race the abandoned attempt.
+  async cancelVersion(version: string): Promise<void> {
+    const res = await fetch("/update/cancel", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ version }),
+    });
+    if (!res.ok) await SsePort.fail("/update/cancel", res);
+  }
+
+  async restartToVersion(version: string, force: boolean): Promise<void> {
+    const res = await fetch("/update/restart", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ version, force }),
+    });
+    if (!res.ok) await SsePort.fail("/update/restart", res);
+  }
+
+  // Failure is silent on purpose. Nothing the user asked for is happening here,
+  // there is nothing for them to do about it, and the two ordinary answers are
+  // both non-events: a kernel with no update capability has no route, and a
+  // launch that booted from no update has nothing to retire.
+  async acknowledgeLaunchHealth(): Promise<void> {
+    try {
+      // The CSRF guard refuses a POST that is not application/json, and refuses
+      // it the way a missing route answers — so leaving the header off made this
+      // a call that could never land and, being silent, never said so.
+      await fetch("/update/health", { method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin" });
+    } catch {
+      // Offline, or the kernel went away. The next launch asks again.
+    }
+  }
+
+  // Pulled, not subscribed. Progress is a projection: a missed frame costs
+  // nothing the next read does not restore, and the last thing an install does
+  // is end the process that would have been streaming it. A subscription would
+  // have to promise delivery across the restart it is itself causing.
+  onUpdateProgress(cb: (p: UpdateProgress) => void): () => void {
+    let stopped = false;
+    const read = async () => {
+      try {
+        const res = await fetch("/update/install", { credentials: "same-origin" });
+        if (!stopped && res.ok) cb((await res.json()) as UpdateProgress);
+      } catch {
+        // The kernel going away mid-install is the successful case, not an
+        // error to render: the next launch is what reports the outcome.
+      }
+    };
+    void read();
+    const timer = setInterval(read, UPDATE_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }
+
+  account() {
+    return this.get<AccountState>("/account");
+  }
+
+  accountLogin() {
+    return this.post0<DeviceGrant>("/account/login");
+  }
+
+  // A kernel with no window registers no tray routes at all, which is what a
+  // browser tab reads as "there is no icon here" — the same null this panel
+  // has always had to render.
+  async notifyPrefs(): Promise<NotifyPrefs | null> {
+    return this.notifyCall(await fetch("/notifications", { credentials: "same-origin" }));
+  }
+
+  async setNotifyPrefs(next: NotifyPrefs): Promise<NotifyPrefs | null> {
+    return this.notifyCall(
+      await fetch("/notifications", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(next),
+      }),
+    );
+  }
+
+  // 404 is "this kernel has no window", which is a fact about the host and not
+  // a failure: the panel draws nothing rather than an error.
+  private async notifyCall(res: Response): Promise<NotifyPrefs | null> {
+    if (res.status === 404) return null;
+    if (!res.ok) await SsePort.fail("/notifications", res);
+    return (await res.json()) as NotifyPrefs;
+  }
+
+  private async trayCall(res: Response): Promise<TrayPrefs | null> {
+    if (res.status === 404) return null;
+    if (!res.ok) await SsePort.fail("/tray/prefs", res);
+    return (await res.json()) as TrayPrefs;
+  }
+
+  accountPoll(deviceCode: string) {
+    return this.post0<{ status: "pending" | "complete"; slowDown?: boolean }>("/account/poll", { deviceCode });
+  }
+
+  accountLogout() {
+    return this.post("/account/logout");
+  }
+
+  workspaces() {
+    return this.get<WorkspaceInfo>("/workspaces");
+  }
+
+  setWorkspace(path: string) {
+    return this.post("/workspace", { path });
+  }
+
+  isolateWorkspace(selection?: import("./workspace").WorktreeSelection) {
+    return this.post("/workspace", { isolate: true, worktree: selection });
+  }
+
+  worktreeSources() {
+    return this.get<import("./workspace").WorktreeSources>("/workspace/worktree-sources");
+  }
+
+  prepareWorktree(id: string, selection: import("./workspace").WorktreeSelection) {
+    return this.post0<import("./workspace").WorktreePreparation>("/workspace/prepare", { id, selection });
+  }
+
+  worktreePreparation(id: string) {
+    return this.get<import("./workspace").WorktreePreparation>(`/workspace/prepare/${encodeURIComponent(id)}`);
+  }
+
+  cancelWorktreePreparation(id: string) {
+    return this.post0<import("./workspace").WorktreePreparation>(`/workspace/prepare/${encodeURIComponent(id)}/cancel`);
+  }
+
+  async openInEditor(): Promise<{ editor: string; root: string }> {
+    return this.post0<{ editor: string; root: string }>("/workspace/editor");
+  }
+
+  async openDocument(path: string): Promise<void> {
+    await this.post0("/workspace/open-document", { path });
+  }
+
+  revealsFiles() {
+    return host().revealsFiles();
+  }
+
+  async revealInFileManager(path: string) {
+    const why = await host().revealPath(this.base, path);
+    if (why) throw new HttpError(0, why.error || "not shown", why, !!(why.code || why.error));
+  }
+
+  async openExternal(url: string): Promise<void> {
+    await host().openExternal(url);
+  }
+
+  async pickFolder(): Promise<string | null> {
+    // Which workspace is running is the kernel's to answer, so it is read here
+    // and handed to the shell rather than kept by either shell -- a picker that
+    // opened on a folder the window remembered would be a second copy of it.
+    const startIn = await this.workspaces()
+      .then((w) => w.current)
+      .catch(() => "");
+    return host().pickFolder(startIn);
+  }
+
+  sessions() {
+    return this.get<SessionEntry[]>("/sessions");
+  }
+
+  // /resume swaps the session file on the same controller — serve drives one
+  // session at a time by design ("multiple browser tabs share it").
+  resume(path: string) {
+    return this.post("/resume", { path });
+  }
+
+  markSessionViewed() { return this.post("/sessions/viewed"); }
+
+  newSession() {
+    return this.post("/new");
+  }
+
+  deleteSession(name: string) {
+    return this.post("/delete-session", { name });
+  }
+
+  async proposeCommit(signal?: AbortSignal, repo?: string) {
+    const res = await fetch(this.base + "/commit/propose" + (repo ? `?repo=${encodeURIComponent(repo)}` : ""), {
+      method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: "{}", signal,
+    });
+    if (!res.ok) await SsePort.fail("/commit/propose", res);
+    return (await res.json()) as CommitProposal;
+  }
+
+  async commitStaged(req: CommitRequest) {
+    return this.post0<CommitResult>("/commit", req);
+  }
+
+  workspaceFiles(path = "", query = "", hidden = false) {
+    const params = new URLSearchParams();
+    if (path) params.set("path", path);
+    if (query) params.set("q", query);
+    if (hidden) params.set("hidden", "1");
+    return this.get<WorkspaceFiles>(`/workspace/files${params.size ? `?${params}` : ""}`);
+  }
+
+  workspaceFile(path: string, root?: string) {
+    return this.get<WorkspaceFile>(`/workspace/file?path=${encodeURIComponent(path)}${root ? `&root=${encodeURIComponent(root)}` : ""}`);
+  }
+
+  async workspacePreviewInfo(ref: import("./workspace").FileRef, signal?: AbortSignal) {
+    const query = new URLSearchParams({ path: ref.path, ...(ref.root ? { root: ref.root } : {}) });
+    const res = await fetch(`${this.base}/workspace/preview/info?${query}`, { credentials: "same-origin", signal });
+    if (!res.ok) await SsePort.fail("/workspace/preview/info", res);
+    return await res.json() as import("./workspace").PreviewInfo;
+  }
+
+  async workspacePreviewContent(ref: import("./workspace").FileRef, signal?: AbortSignal) {
+    const query = new URLSearchParams({ path: ref.path, ...(ref.root ? { root: ref.root } : {}) });
+    const res = await fetch(`${this.base}/workspace/preview/content?${query}`, { credentials: "same-origin", signal });
+    if (!res.ok) await SsePort.fail("/workspace/preview/content", res);
+    return { data: await res.arrayBuffer(), version: res.headers.get("X-Preview-Version") ?? "" };
+  }
+
+  workspaceImageURL(path: string, root?: string) {
+    return `${this.base}/workspace/image?path=${encodeURIComponent(path)}${root ? `&root=${encodeURIComponent(root)}` : ""}`;
+  }
+  saveWorkspaceFile(file: WorkspaceFile) {
+    return this.put0<WorkspaceFile>("/workspace/file", file);
+  }
+
+  trajectory() {
+    return this.get<TrajectoryRead>("/trajectory");
+  }
+
+  executionGraph() {
+    return this.get<ExecutionGraphRead>("/execution-graph");
+  }
+
+  history() {
+    return this.get<HistoryMessage[]>("/history");
+  }
+
+  historyPage(cursor?: string) {
+    return this.get<import("./session").HistoryPage>("/history/page" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""));
+  }
+
+  todos() {
+    return this.get<HostTodo[]>("/todos");
+  }
+
+  checkpoints() {
+    return this.get<Checkpoint[]>("/checkpoints");
+  }
+
+  prepareRewind(turn: number, scope: RewindScope) {
+    return this.post0<RewindPlan>("/rewind/prepare", { turn, scope });
+  }
+
+  commitRewind(planId: string) {
+    return this.post0<RewindResult>("/rewind/commit", { planId });
+  }
+
+  async branchAt(turn: number, name: string) {
+    return (await this.post0<{ path: string }>("/branch/at", { turn, name })).path;
+  }
+  continueFromTail(path: string) {
+    return this.post0<{ path: string; dropped: number }>("/session/tail", { path });
+  }
+  availableUndo() { return this.get<RewindUndo | null>("/rewind/undo"); }
+
+  undoRewind(transactionId: string) {
+    return this.post("/rewind/undo", { transactionId });
+  }
+
+  /** The kernel's events in order, with no holes it did not announce; see
+   *  subscribeStream for how a gap, a bootstrap and a paused connection work. */
+  subscribe(onEvent: (ev: WireEvent) => void, onGap?: () => void, bootstrap?: () => Promise<number>) {
+    const lane = this.mux && this.rt && this.base === `/rt/${this.rt}` ? this.rt : undefined;
+    return subscribeStream(this.base, onEvent, onGap, bootstrap, lane);
+  }
+
+  submit(text: string, chips?: ChipCall) {
+    return this.postMaybe<Queued>("/submit", { input: text, ...chips });
+  }
+  steer(text: string) {
+    return this.post0<Queued>("/inbox/items", { input: text, intent: "steer" });
+  }
+  queueFollowup(text: string, chips?: ChipCall) {
+    return this.post0<Queued>("/inbox/items", { input: text, intent: "followup", ...chips });
+  }
+  async cancelQueued(itemId: string) {
+    await this.del("/inbox/items/" + encodeURIComponent(itemId));
+  }
+  async queue() {
+    const q = await this.get<Queue>("/inbox");
+    // An empty queue arrives as null, not []: that is what a Go nil slice
+    // encodes to. Normalising here is what keeps every reader from having to
+    // know it — and one that forgets only fails when the queue runs dry.
+    return { ...q, items: q.items ?? [] };
+  }
+  async browserTabs() {
+    return (await this.get<BrowserTab[] | null>("/browser/tabs")) ?? [];
+  }
+  browserOpen(url: string, newTab: boolean) {
+    return this.post0<BrowserTab>("/browser/open", { url, newTab });
+  }
+  browserClose(tab: string) {
+    return this.post("/browser/close", { tab });
+  }
+  async readQueued(itemId: string) {
+    const r = await this.get<{ envelope?: { displayText?: string } }>("/inbox/items/" + encodeURIComponent(itemId));
+    // Every stored entry has a body — the kernel refuses an empty one at
+    // enqueue — so an absent field is an answer we do not understand, not an
+    // empty instruction. Returning "" for it hands the editor a blank page.
+    if (typeof r.envelope?.displayText !== "string") {
+      throw new Error(`inbox item ${itemId}: answer carried no body`);
+    }
+    return r.envelope.displayText;
+  }
+  editQueued(itemId: string, text: string) {
+    return this.patch("/inbox/items/" + encodeURIComponent(itemId), { input: text });
+  }
+  moveQueued(itemId: string, toIndex: number) {
+    return this.post("/inbox/move", { id: itemId, toIndex });
+  }
+  retryQueued(itemId: string) {
+    return this.post("/inbox/items/" + encodeURIComponent(itemId) + "/retry");
+  }
+  refreshQueued(itemId: string) {
+    return this.post("/inbox/items/" + encodeURIComponent(itemId) + "/refresh");
+  }
+  setQueuePaused(paused: boolean) {
+    return this.post(paused ? "/inbox/pause" : "/inbox/resume");
+  }
+  cancel() {
+    return this.postAcked("/cancel");
+  }
+  // Approve(id, allow, session, persist) — "always" is a session grant, not a
+  // persisted config change.
+  planDecision(id: string, action: PlanAction) {
+    return this.postAcked("/plan-decision", { id, action: PLAN_ACTIONS[action] });
+  }
+
+  approve(id: string, verdict: ApprovalVerdict) {
+    return this.postAcked("/approve", {
+      id,
+      allow: verdict !== "deny",
+      // A rule written down also covers the rest of this session, so the answer
+      // holds before the file does.
+      session: verdict === "session" || verdict === "always",
+      persist: verdict === "always",
+    });
+  }
+  answer(id: string, answers: { questionId: string; selected: string[]; value?: Record<string, unknown> }[]) {
+    return this.postAcked("/answer", {
+      id,
+      answers: answers.map((a) => ({ QuestionID: a.questionId, Selected: a.selected, ...(a.value !== undefined ? { Value: a.value } : {}) })),
+    });
+  }
+  surfaceAction(request: SurfaceActionRequest) {return this.post0<Queued>("/surfaces/action",request);}
+  surfaceActionState(callId: string) {return this.get<SurfaceActionRecord>("/surfaces/"+encodeURIComponent(callId)+"/action");}
+  engageQuestion(id: string) { return this.postAcked("/answer", { id, engage: true }); }
+  setPlanMode(on: boolean) {
+    return this.post("/plan", { on });
+  }
+  setApprovalMode(mode: ApprovalMode) {
+    return this.post("/tool-approval-mode", { mode });
+  }
+  decideWorkspaceTrust(trust: "trusted" | "declined") {
+    return this.post("/workspace-trust", { trust });
+  }
+  setPreset(preset: Preset) {
+    return this.post("/preset", { preset });
+  }
+  setModel(ref: string) {
+    return this.post("/model", { ref });
+  }
+  setDefaultModel(ref: string) {
+    return this.post("/default-model", { ref });
+  }
+  setEffort(effort: string) {
+    return this.post("/effort", { effort });
+  }
+  setModelMode(mode: string) {
+    return this.post("/model-mode", { mode });
+  }
+  compaction() {
+    return this.get<CompactionSettings>("/compaction");
+  }
+  setGoal(text: string) {
+    return this.post("/goal", { goal: text });
+  }
+}
