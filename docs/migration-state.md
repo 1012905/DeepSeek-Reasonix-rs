@@ -9,9 +9,8 @@ reviewed: 2026-11-18
 
 续跑时先读这一份。每个波次结束都要更新它；不许让它描述的树比真实的树旧。
 
-最后更新：2026-11-19（波次 11：B12-core/B11-Files/B14-runtime/B10b agent-runs 工作台落地＋
-B13/B10c/B10d/B14-kept/B14-moveTo/B12-ticket 有界裁决 D15，全门绿 304/2250，debt 83；
-同日依赖重同步 B16 → resolved，`tauri dev` 可通过 pnpm 校验）。
+最后更新：2026-11-19（波次 12：D15 收口——job 查看器、Transcript focus、Plan、conversation-files、
+kept versions、move-to、并发开排序；全门绿 **311/2297**，debt 81；D5 删 pinia 完成）。
 
 > 本文每个数字都来自下方「已验证基线」里的命令。没有命令支撑的判断标「未验证」。
 > 波次 5 的 284 文件 / 2140 测试 / 16 命令 / 129 孤儿已被本波次实测取代。
@@ -203,6 +202,47 @@ vue-tsc 0；全量 **304 文件 / 2250 测试绿**；`tauri --version` → 2.12.
 `tauri dev` 在本代理进程内仍卡 WebView2（B1：0x800700AA；换空数据目录后 0x8000FFFF
 且新目录未创建）——用户 04:58 的自跑日志没有 `startup failed` 行，疑为代理宿主限制，
 待其终端复跑确认。另把 `Pane.turn.interaction` 的 20s 等待放宽到 60s 以吸收满负载偶发。
+
+## 波次 12 改了什么（D15 收口）
+
+用户指令：窗口已验证可开、提交、D5、D15、以完成 Vue/TS/Tauri 重构作为 Electron 退役前提
+（Rust+Go 共存不变）。Go/Rust 内核零改动。共四路并行研究（只读）＋三路并行实现（新文件）
+＋主 Agent 接线/裁决/收口重跑。
+
+- **D5（done）**：删 pinia（无 import；lock −91 行），提交 `d3683628c`。
+- **B10c job 查看器（done）**：`Pane` 提供 JobsLive（jobs+endedJobs、cancel、open→openJob），
+  `WorkbenchPanel` 对 job Surface 渲染既有 `JobRunView`；工具卡 BackgroundNote 打开按钮可达。
+  `jobcancel.ts` 转 reached（debt 82）。
+- **B10d 回到分组（done）**：`Transcript` 真正消费 `focus`——隐藏持有、跨压实折叠/activity
+  切片/关闭 details 逐层展开后居中滚动、按 n 一次消费；`Pane` 持有 landAt 并转 `onShowCall`。
+  `Transcript.focus.test.ts` 4 例。
+- **B11 Plan + conversation-files（done）**：新增 `ui/Plan.vue`（Metrics ORDER 增 `plan`，
+  Pane 传 `s.plan`/`blocked`）；新增 `ui/useConversationFiles.ts`（一次性 request、授权夹、
+  GRANTED 图片、LocalRefs 八成员、右键菜单、platform），Pane 并入 reply 并承载
+  WorkbenchFileMenu；`WorkbenchPanel` 接 `fileRequest`（挂载即消费）与 `onActiveFile`，
+  读视图 Markdown 拿 `documentRefs`。测：Plan 6 + convfiles 11 + 工作台链接 1。
+- **B14 kept versions + move-to（done）**：`SessionMenu` 增 kept/move 项；`Sidebar` spread 集合
+  ＋新 `KeptRows.vue`（versions/copies 整段打开、内联确认后 `hub.removeSession`+reload）；
+  `useSessionMoveTo.ts`＋`MoveSessionDialog.vue`（remembered 非源项目、note/reason、持有中禁移）。
+  动作名按 census：菜单 `session.move-to-start`、提交 `session.move-to`。测 10 + 6。
+- **B12 并发开排序（done）**：`useSessionSwitch` 进 `openPane`（opening 早退、begin 取票、
+  flights 合并、current 决定 active/landed、end 收尾）；聚焦/切 tab 调 `cancel()`；
+  Sidebar 增 `opening`/`openingPending`；`newSession(root)` 保留 root。`sessionswitch.ts`
+  转 reached（debt 81）。测 4 + App 契约。
+- **终态保留**：B13（停靠列架构）、`sidebaropen.ts`（D13 内联）、`openCards.ts`（另一条
+  card-opening 链）。
+
+**波次 12 验证（主 Agent 重跑）**：
+
+```
+$ cd desktop-tauri && ./node_modules/.bin/vue-tsc -b --force   # EXIT 0
+$ ./node_modules/.bin/vitest run                               # 311 文件 / 2297 测试全绿; EXIT 0
+$ 定向（sidebar 家族 + e2e + App.port + orphan + workbench + focus + convfiles +
+    Plan + sessionswitch + move-session + background-job）    # 16 文件 / 145 测试绿
+$ grep -c '^  \["src/' src/orphan.test.ts                      # 81
+```
+
+基线 304/2250 → **311/2297**（+7 文件 / +47 测试）；debt 83 → **81**。Go/Rust 门未触发（零改动）。
 
 ## 波次 6 改了什么
 
@@ -412,15 +452,15 @@ vue-tsc 0；全量 **304 文件 / 2250 测试绿**；`tauri --version` → 2.12.
 |---|---|---|
 | Go 内核（`internal/`、`cmd/`） | 完成，未被改写 | `go build ./...` 退出 0；`go vet ./...` 零行输出；`git status` 对这两处零改动 |
 | Tauri 壳（`src-tauri`） | 可用 | `cargo check`/`clippy --all-targets -D warnings`/`fmt --check` 退出 0；`cargo test` 90 绿；`NAMES` 31 条命令 |
-| Vue 前端（`desktop-tauri/src`） | **partial** | typecheck 0；304 文件 / 2250 测试全绿；build 0；324 `.vue` / 790 `.ts` |
+| Vue 前端（`desktop-tauri/src`） | **partial（剩余为终态裁决）** | typecheck 0；311 文件 / 2297 测试全绿；build 0；327 `.vue` / 799 `.ts` |
 | Electron 界面（`desktop/`） | 完成，基准冻结 | 未改动；Tauri 对等后才退役（D4） |
 | Rust 内核（`crates/`＋`apps/`＋`xtask/`） | **partial（M2，进行中）** | D14 采纳上游 B；`cargo test` 572 绿、fmt/clippy/xtask parity(563 行)/deps 全 0；账本 69 done／493 todo；host 仍 stub，未 cutover（B15） |
 
-Vue 前端为什么是 partial：`orphan.test.ts` 用 83 条具名记录量出来的（波次 5 是 129，
-波次 7 削 35→94：Welcome 1 + 文档预览簇 7 + 图表簇 5 + 运行时重载 1 + 远程感知 boot 2 + 链接路由 1 + 活动 pane 存活 1 + Await 重试线 1 + 反馈未读 1 + 此前 15；波次 9–11 续削至 83：
-B9 查看器、会话菜单 export/info/move 助手、B12-core/B11-Files/B10b 的 useBranchSession/panels/Files/panels/derive/useAgentTabs 等转 reached）。这 83 个文件类型检查通过、单测通过，
-但从 `main.ts` / `testsetup.ts` 出发没有任何 import 路径能到达它们。分类见「已落地但未接线」
-与 blockers.md（B13 架构分歧终态裁决、B10c/B10d/B14-kept/B14-moveTo/B12-ticket 有界暂缓，D15）。
+Vue 前端为什么是 partial：`orphan.test.ts` 用 81 条具名记录量出来的（波次 5 是 129，
+波次 7 削 35→94；波次 9–11 续削至 83；波次 12 再削 2（jobcancel、sessionswitch）至 81）。
+这 81 个文件类型检查通过、单测通过，但从 `main.ts` / `testsetup.ts` 出发没有任何 import
+路径能到达它们；其中没有未落地的用户可见子系统——分布是冗余内联（D13）、测试夹具与终态裁决
+（B13 架构分歧、`sidebaropen.ts` 内联、`openCards.ts` 另一条链）。详见 blockers/decisions D16。
 
 波次 5 的第二处缺口（`ShellBridge` 33 方法对 `bridge.rs` 16）已收口：`ShellBridge` 现声明
 34 个方法，`bridge.rs` 注入 33 个，唯一缺的 `pathForFile` 是刻意移除（见上）。残差见
@@ -471,9 +511,8 @@ $ grep -c '^  \["src/' desktop-tauri/src/orphan.test.ts
 114
 ```
 
-孤儿债务条数口径：`grep -c '^  \["src/' src/orphan.test.ts` = **83**（波次 11 实测；波次 10
-记录 88，本波次 useBranchSession/panels/Files/panels/derive/useAgentTabs 等转 reached；
-波次 6 快照 114，波次 5 是 129）。
+孤儿债务条数口径：`grep -c '^  \["src/' src/orphan.test.ts` = **81**（波次 12 实测；波次 11
+记录 83，本波次 jobcancel.ts/sessionswitch.ts 转 reached；波次 6 快照 114，波次 5 是 129）。
 `bridge.rs` 注入方法数用逐名 grep 核对：34 个 `ShellBridge` 方法里 33 个命中，
 `pathForFile` 命中 0（刻意移除）。
 
@@ -587,13 +626,10 @@ acp/tui/testkit/session/config）8–11 行 skeleton；apps 90 行。M1 契约�
    账本未收敛、host 仍 stub 前，Go host 保持 live，不切换。
 2. **补跑供应链门**：安装 `cargo-deny`（＋nextest/machete）后跑 `cargo deny check` 等；
    本机未装，当前 skipped（B15）。`deny.toml` 策略已随 B 采纳。
-3. **Vue 前端**：可忠实移植的子系统已尽（波次 11：agent-runs 工作台 B10b、pane-opening
-   核心 B12-core、Files rail B11、会话菜单运行时动作 B14）。剩余 83 孤儿＝冗余内联（D13，
-   非缺口）＋测试夹具＋**有界裁决/暂缓**（D15：B13 浏览器标签改名架构分歧终态移出范围；
-   B10c job 查看器、B10d onShowCall/Transcript focus、B14 kept-versions/onMoveTo、
-   B12 并发 ticket 排序、B11 Plan/conversation-files 链依赖未移植子系统，诚实缺席非半措施）。
-   进一步消债需移植这些整条子系统（落在主 Agent 所有的 App/Pane/Transcript 汇合文件，
-   blast radius 大），或维持 D15 裁决。**当前无简单接线可消债**。
+3. **Vue 前端**：D15 已收口（波次 12）。剩余 81 孤儿＝冗余内联（D13）＋测试夹具＋
+   **终态裁决**（B13 架构分歧；`sidebaropen.ts` 内联；`openCards.ts` 另一条链）。无未落地
+   的用户可见子系统；Electron 退役的用户面前提已满足（窗口由用户验证可开），退役本身的
+   删除动作待用户确认后执行（见 `migration-plan.md` D4 顺序）。
 4. **真实窗口验证**：见 `blockers.md` B1。拿到一次成功启动前，只在 WebView2 里才看得出
    差异的东西都是未验证（原生子 WebView 隔离、拖放合成、登录/证书/挑选）。macOS/Linux 未在本机运行。
 5. **Electron 退役**：`migration-plan.md` 的退役顺序仍只有 D4 原则；须先把对照表 partial

@@ -476,3 +476,29 @@ Transcript.subagents）5 文件/30 测试绿；orphan debt **83**。基线由波
 
 **边界**：D5（pinia 死依赖）仍 blocked B16（pnpm-lock↔package.json 脱钩需专门 resync，
 不擅自升级依赖）；B15（Rust cutover）按用户指令不推进；真实窗口验证仍 B1。
+
+## D16 —— 波次 12：D15 收口，前端 parity 清单归零（B13 除外）
+
+用户指令：「1可以了，2提交，D5，D15，Electron 退役（需要你完成 Vue + TypeScript + Tauri 重构，
+Rust 和 Go 共存）」。窗口由用户在本机终端验证可打开（B1 的用户侧解除）；本波次把 D15 的暂缓项
+全部落地或保留为终态裁决，Go/Rust 内核零改动（维持共存，不推进 cutover）。
+
+**落地（done）**：
+
+| 项 | 内容 | 证据 |
+|---|---|---|
+| D5 | 删 pinia（lock −92 行，无 import） | 提交 `d3683628c`；全量绿 |
+| B10c | Pane 提供 JobsLive、工作台 job 面渲染 JobRunView、工具卡 BackgroundNote 可达 | job tab + note 3 例 |
+| B10d | Transcript 真正消费 focus（隐藏持有、折叠/切片/details 展开、按 n 一次消费）＋ Pane onShowCall | Transcript.focus 4 例 |
+| B11 | Plan 面板（Metrics ORDER + Pane s.plan/blocked）；useConversationFiles（一次性 request/授权夹/GRANTED 图片/菜单/documentRefs） | Plan 6、convfiles 11、工作台链接 1 |
+| B14 | kept versions（KeptRows + removeSession + 内联确认）；move-to（useSessionMoveTo + 对话框，持有中禁移） | keptversions 10、move-session 6 |
+| B12 | useSessionSwitch 接入 openPane（ticket/flights/cancel/opening 反馈）；保留 root 的新会话；Sidebar 行标记与 aria-busy | sessionswitch 4 + App 契约 |
+
+**保留的终态裁决**：B13 浏览器标签改名维持移出范围（Vue 是停靠浏览器列，browser-only 改名
+结构性不可达）；`sidebaropen.ts` 维持 D13 冗余孤儿（语义已内联在 `openSession`）；
+`openCards.ts` 是另一条 card-opening 链，与运行面无关，保留孤儿。动作名按 `actions.ts` census
+校准：菜单 `session.move-to-start`、对话框提交 `session.move-to`。
+
+**验证（主 Agent 重跑）**：`vue-tsc -b --force` EXIT 0；全量 `vitest run` **311 文件 / 2297
+测试**全绿 EXIT 0（基线 304/2250）；定向 16 文件 / 145 测试；orphan debt **81**（83→81：
+jobcancel、sessionswitch 转 reached）。Go/Rust 门未触发（零改动）。

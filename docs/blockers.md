@@ -163,16 +163,16 @@ reviewed: 2026-11-17
   `useAgentRequest`/`AgentRunView`/`SubagentGroup` 转 reached，从 `KNOWN_ORPHANS` 移除
   `useAgentTabs`（debt 84→83）。组件测 17（agent-run-tab 9 + useAgentRequest 8）＋
   工作台接线测 1，主 Agent 重跑全绿（vue-tsc 0；定向 5 文件/30 测试）。
-- **余项（精确缺口，有界裁决见 D15，非半措施）**：
-  - **B10c job 查看器**：`useAgentRequest.openJob` 已落地但 Vue 无发起 job-open 的调用点
-    （无后台 job Surface 来源），`JobRunView` 未移植。runs 路径是 live 的那条；job 查看器
-    待一个 job-opening 调用点才有意义，裁决移出当前范围。
-  - **B10d 「回到分组」onShowCall**：依赖 Transcript 的 focus-scroll 子系统
-    （land/revealNested/scrollIntoView）。Vue `Transcript.vue` 声明 `focus` prop 但从不读它
-    （inert），故 back-to-call 无法生效。`AgentRunView` 以 `onShowCall` 可选门控——缺则
-    **不画**返回按钮（诚实缺席，非 inert 按钮），Pane 暂不供给。裁决待 focus-scroll 移植。
-  - **openCards.ts**：另一条 card-opening 链（非 agent-runs 工作台），仍孤儿，本波次未触。
-- **状态**：partial —— 核心 done（2026-11-19）；B10c/B10d/openCards 有界裁决（D15），跳过。
+- **B10c job 查看器（done，波次 12）**：`Pane.vue` 提供 JobsLive（`status.jobs + endedJobs`、
+  cancel→`cancelJob`、open→`agentRuns.openJob`），`WorkbenchPanel` 对 job Surface 渲染既有
+  `JobRunView`；工具卡的 BackgroundNote 打开按钮因此可达（`jobcancel.ts` 转 reached）。
+  测：job tab 渲染读输出 + BackgroundNote 打开/无开启者/已结束 3 例。
+- **B10d 回到分组（done，波次 12）**：`Transcript.vue` 真正消费 `focus`——按
+  `data-item`/`data-call` 定位，跨压实折叠、activity 切片与关闭的 details 逐层展开后
+  `scrollIntoView`；隐藏时持有请求直到可见，成功后按 n 只消费一次。`Pane` 持有 landAt 并经
+  `WorkbenchPanel` 转 `onShowCall`。`Transcript.focus.test.ts` 4 例。
+- **openCards.ts**：另一条 card-opening 链，仍孤儿；与运行面无关，D16 记录。
+- **状态**：resolved（2026-11-19 波次 12）；openCards 单独保留孤儿记录。
 
 ### B11 —— Files rail 面板已挂载；Plan 面板仍未移植
 
@@ -181,11 +181,15 @@ reviewed: 2026-11-17
   subagentPhase)`（`panels/derive`）并把 `rail.changes`/`tree`/`yolo` 喂给 analysis 视图的
   Metrics。`panels/Files.vue`/`panels/derive.ts` 转 reached，从 `KNOWN_ORPHANS` 移除。
   「工作树改动」rail 面板遂在分析页显示，git 权威 tree 过滤已撤销改动。
-- **仍缺（精确缺口）**：`Plan` 面板（React `ui/Plan.tsx`）Vue 未落地，Metrics ORDER 无
-  `plan` 段；`useConversationFiles`（filelinks/grantedfiles/WorkbenchFileMenu/Markdown
-  LocalRefs 整条文件链接→工作台预览链）未移植，Files 的 `onOpen`(openPreview) 未接该链。
-- **状态**：partial —— Files rail done（2026-11-19）；Plan 面板与 conversation-files 链
-  blocked（依赖整条子系统），跳过。
+- **B11 Plan 与 conversation-files（done，波次 12）**：新增 `ui/Plan.vue`（now/done 派生、
+  进度条、缩进步行、paused 标记，复用 `PlanSteps` 助手与既有 CSS），`Metrics` ORDER 增
+  `plan` 段并由 `Pane` 传 `s.plan`/`blocked`。新增 `ui/useConversationFiles.ts`（一次性
+  request 按身份清除、授权文件夹、GRANTED 图片、LocalRefs 八成员、右键菜单、platform），
+  `Pane` 把它并入 reply（files/activeFile/openDeliveredFile/revealDeliveredFile）并承载
+  WorkbenchFileMenu；`WorkbenchPanel` 接收 `fileRequest`（挂载即消费一次）、回报
+  `onActiveFile`，读视图的 Markdown 拿到 `documentRefs`。测：Plan 6、useConversationFiles 11、
+  工作台文件链接 1。
+- **状态**：resolved（2026-11-19 波次 12）。
 
 ### B12 —— pane-opening 核心已落地；sidebar-open 内联，并发 ticket 排序未移植
 
@@ -196,12 +200,14 @@ reviewed: 2026-11-17
   落在源 root 旁）。**sidebar-open-to-flow 行为已内联**在 `openSession`（:318-328）：
   重点击已开会话 `active=held.id` + `requestView(held.id,"flow")`，正是 useSidebarOpen
   的语义——按 D13 冗余内联，`sidebaropen.ts` 保留孤儿（功能已在，非缺口）。
-- **仍缺（精确缺口）**：`sessionswitch.ts`（useSessionSwitch 的并发开 ticket 排序
-  begin/current/landed/end/cancel）未移植——Vue 用串行 busy 守卫 openPane，无并发 ticket
-  消费点，仍孤儿。`useOpenPane.ts`/`useOpenRemotePane.ts` 助手未抽出（openPane/openRemote
-  内联在 App）。
-- **状态**：partial —— 核心 + sidebar-open-to-flow done（2026-11-19，后者内联 D13）；
-  并发 ticket 排序 blocked（Vue 串行开 pane，无消费点），有界裁决见 D15，跳过。
+- **并发开排序（done，波次 12）**：`useSessionSwitch` 接入 `App.vue`——`openPane` 以
+  `opening` 早退、`begin` 取票、同 path 的 flights 合并、`current` 决定是否 `active`/`landed`、
+  `end` 收尾；聚焦其它 pane 或 tab 选择调用 `cancel()`，被取代的打开不再抢焦点。
+  `Sidebar` 增 `opening`/`openingPending`（行标记 + 根 aria-busy），`newSession(root)` 把
+  workspace root 传下去（`startConversation(root)`），workspace「+」不再开在默认 root。
+  `sessionswitch.ts` 转 reached（debt 82→81），`sessionswitch.test.ts` 4 例 + App 契约守卫。
+  `sidebaropen.ts` 按 D13 保留孤儿（path 分支语义已内联在 `openSession`）。
+- **状态**：resolved（2026-11-19 波次 12）。
 
 ### B13 —— 工作台浏览器标签改名：架构分歧，已裁决移出 Vue 范围
 
@@ -244,17 +250,17 @@ reviewed: 2026-11-17
   `:on-pause/:on-close-conversation/:on-branch`（:489-491）经 `take(pauseTarget/closeTarget/
   branchTarget)` 路由到 `onPauseSession/onCloseSession/onBranchSession`；branch 经
   `useBranchSession`→`openPane` 落在源 root 旁（B12 核心解了此前置）。
-- **仍缺（精确架构原因，非半措施，有界裁决见 D15）**：
-  - `kept-versions`（保留版本展开）：依赖 versions+copies 分散 UI，Vue 未移植。
-  - `onMoveTo`（移动到别的项目）：Vue 无 `useSessionMoveTo` 助手＋项目选择对话框。
-  这些项在组件里以可选回调门控（缺则不画），是诚实缺席而非半接线。
-- **验证（主 Agent 重跑，波次 11）**：vue-tsc -b --force EXIT 0；全套 vitest **304 文件/
-  2250 测试**绿；vite build EXIT 0（3292 模块）；orphan debt **83**。波次 10 的可达切片
-  验证（SessionMenu 11 + sidebarSessionMenu 9 + sidebarReachable 6 + orphan 3）仍绿。
-- **解锁条件（余项）**：移植 kept-versions 子系统、`useSessionMoveTo`＋项目选择对话框；
-  或经裁决把这些项移出 Vue 范围（D15 已记）。
-- **状态**：partial —— 可达切片（波次 10）＋运行时动作（波次 11）done；kept-versions/
-  onMoveTo 有界裁决（D15），跳过。
+- **kept-versions 与 move-to（done，波次 12）**：`SessionMenu` 增 kept 项（`session.kept`，
+  `aria-expanded`，仅有 versions/copies 时出现）与 move-to 项；`Sidebar` 维护 spread 集合、
+  在行下渲染 `ui/sidebar/KeptRows.vue`（versions/copies 行、整段打开、内联确认后
+  `hub.removeSession`+reload，复用 SessionBatch 的 `.wsconfirm` 模式）；`ui/useSessionMoveTo.ts`
+  ＋`ui/MoveSessionDialog.vue`（remembered 且非源 root 的项目、busy/error/note、
+  `session.the_conversation_was_moved_but`、失败经 `reason`），持有中的会话禁移动。
+  动作名按 census 校准：菜单项 `session.move-to-start`，对话框提交 `session.move-to`。
+  测：keptversions 交互 10 + move-session 6。
+- **验证（主 Agent 重跑，波次 12）**：vue-tsc 0；定向 16 文件 / 145 测试绿；orphan debt 81；
+  全量套件见 migration-state 波次 12。
+- **状态**：resolved（波次 10 可达切片 + 波次 11 运行时动作 + 波次 12 kept/move-to，2026-11-19）。
 
 ### B15 —— Rust 内核未对等，不能从 Go cutover；部分供应链门本机未装
 
