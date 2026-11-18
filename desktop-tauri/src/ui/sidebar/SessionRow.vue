@@ -11,6 +11,9 @@ export interface SessionRowProps {
   archived: boolean;
   pinned: boolean;
   isolated?: boolean;
+  /** The window is opening this conversation right now. A mark, not a selection:
+   *  which pane is focused is a separate answer. */
+  opening?: boolean;
   /** The search word, so the matching part of the title is marked. */
   needle: string;
   onOpen: (path: string) => void;
@@ -103,6 +106,7 @@ function onContext(event: MouseEvent) {
     :aria-selected="active"
     :data-target="sessionPath"
     :data-on="active ? '' : undefined"
+    :data-opening="opening ? '' : undefined"
     :data-unread="unread && !active ? '' : undefined"
     :data-busy="editing ? '' : undefined"
     tabindex="-1"

@@ -42,6 +42,7 @@ import { useWindowKeys, type Shortcut } from "./windowkeys";
 import { useZoomKeys } from "./zoomkeys";
 import { useLinkRouting } from "./links";
 import { useBranchSession } from "./useBranchSession";
+import { useSessionSwitch } from "./sessionswitch";
 import { rememberActivePane, savedActivePane } from "./activepane";
 import Sky from "./Sky.vue";
 import StopHint from "./StopHint.vue";
@@ -71,6 +72,8 @@ export default defineComponent((props: Props) => {
   const runtimes = ref<RuntimeView[]>([]);
   const tree = ref<TreeWorkspace[]>([]);
   const active = ref(savedActivePane());
+  const sw = useSessionSwitch();
+  const flights = new Map<string, ReturnType<HubPort["open"]>>();
   const error = ref("");
   const busy = ref(true);
   const rail = ref(true);
@@ -302,10 +305,10 @@ export default defineComponent((props: Props) => {
   // merge they overlapped and the slower answer overwrote the newer tree.
   const refresh = singleFlight(readAll);
 
-  async function startConversation(): Promise<void> {
+  async function startConversation(root?: string): Promise<void> {
     busy.value = true;
     try {
-      const rt = await props.hub.open({});
+      const rt = await props.hub.open(root ? { root } : {});
       await refresh();
       active.value = rt.id;
     } catch (e) {
@@ -330,14 +333,28 @@ export default defineComponent((props: Props) => {
   /** Opening a pane by workspace and session file. A branch lands here with the
    *  root it was cut from, so the new conversation opens beside its source. */
   async function openPane(target: { root?: string; sessionPath: string }): Promise<void> {
+    const wanted = target.sessionPath;
+    if (wanted && sw.opening(wanted)) return;
+    const ticket = sw.begin(wanted);
     busy.value = true;
     try {
-      const rt = await props.hub.open(target);
+      let flight = flights.get(wanted);
+      if (!flight) {
+        flight = props.hub.open(target);
+        flights.set(wanted, flight);
+        const done = () => { if (flights.get(wanted) === flight) flights.delete(wanted); };
+        void flight.then(done, done);
+      }
+      const rt = await flight;
+      if (sw.current(ticket)) {
+        active.value = rt.id;
+        sw.landed(ticket);
+      }
       await refresh();
-      active.value = rt.id;
     } catch (e) {
       fail(e);
     } finally {
+      sw.end(ticket);
       busy.value = false;
     }
   }
@@ -585,8 +602,10 @@ export default defineComponent((props: Props) => {
             active: active.value,
             activeSessionPath: activeRuntime.value?.sessionPath,
             busy: busy.value,
+            opening: sw.path,
+            openingPending: sw.pending,
             onOpenSession: (path: string) => void openSession(path),
-            onNewSession: () => void startConversation().catch(fail),
+            onNewSession: (root?: string) => void startConversation(root).catch(fail),
             onAddWorkspace: () => adder.add(),
             onArchiveWorkspace: (root: string) => void archiveWorkspace(root),
             onRenameSession: (path: string, title: string) => void renameSession(path, title),
@@ -618,12 +637,12 @@ export default defineComponent((props: Props) => {
           h(PaneTabs, {
             runtimes: ordered.value,
             active: active.value,
-            onSelect: (id: string) => { active.value = id; },
+            onSelect: (id: string) => { sw.cancel(); active.value = id; },
             onClose: (id: string) => void closePane(id),
             onNew: () => void startConversation().catch(fail),
             onReorder: reorderPane,
           }),
-          h("div", { class: "panes", "aria-busy": busy.value || undefined }, runtimes.value.length === 0
+          h("div", { class: "panes", "aria-busy": busy.value || sw.pending || undefined }, runtimes.value.length === 0
             ? [h("div", { class: "panes-empty" }, [
                 h("span", { class: "mk", "aria-hidden": "true" }, [h(StudioIcon, { name: "chat" })]),
                 h("p", { class: "t" }, t("app.no_session_open")),
@@ -643,7 +662,7 @@ export default defineComponent((props: Props) => {
                   active: rt.id === active.value,
                   sideHost: null,
                   side: false,
-                  onFocus: () => { active.value = rt.id; },
+                  onFocus: () => { sw.cancel(); active.value = rt.id; },
                   visible: rt.id === active.value,
                   onReport,
                   onSessionChanged: refresh,

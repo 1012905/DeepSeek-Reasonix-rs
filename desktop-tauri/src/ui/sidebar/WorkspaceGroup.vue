@@ -27,6 +27,10 @@ export interface WorkspaceGroupProps {
   rows: TreeSession[];
   needle: string;
   activePath?: string;
+  /** The conversation the window is opening right now. */
+  opening?: string;
+  /** The conversations whose kept versions and copies are spread open. */
+  spread?: ReadonlySet<string>;
   busy: boolean;
   locked: boolean;
   onFold: (root: string, shut: boolean) => void;
@@ -36,6 +40,8 @@ export interface WorkspaceGroupProps {
   onRename?: (path: string, title: string) => void;
   onArchive?: (path: string) => void;
   onDelete?: (path: string) => void;
+  /** Deletes one kept version or recovery copy, behind the row's own question. */
+  onDeleteKept: (path: string) => void;
   onSessionMenu: (path: string, trigger: HTMLElement) => void;
 }
 </script>
@@ -45,6 +51,7 @@ import { computed, ref } from "vue";
 import { t } from "../../i18n";
 import StudioIcon from "../StudioIcon.vue";
 import { UnreadCount } from "../UnreadMark.vue";
+import KeptRows from "./KeptRows.vue";
 import SessionRow from "./SessionRow.vue";
 import { rowLabel } from "./workspaceTree";
 
@@ -134,23 +141,32 @@ function onContext(event: MouseEvent) {
       </span>
     </div>
     <div v-if="!shut" class="kids">
-      <SessionRow
-        v-for="row in rows"
-        :key="row.path"
-        :session-path="row.path"
-        :label="rowLabel(row)"
-        :active="row.path === activePath"
-        :unread="!!row.unread"
-        :archived="!!row.archived"
-        :pinned="!!row.pinned"
-        :isolated="row.isolated"
-        :needle="needle"
-        :on-open="onOpen"
-        :on-rename="onRename"
-        :on-archive="onArchive"
-        :on-delete="onDelete"
-        :on-menu="onSessionMenu"
-      />
+      <template v-for="row in rows" :key="row.path">
+        <SessionRow
+          :session-path="row.path"
+          :label="rowLabel(row)"
+          :active="row.path === activePath"
+          :opening="row.path === opening"
+          :unread="!!row.unread"
+          :archived="!!row.archived"
+          :pinned="!!row.pinned"
+          :isolated="row.isolated"
+          :needle="needle"
+          :on-open="onOpen"
+          :on-rename="onRename"
+          :on-archive="onArchive"
+          :on-delete="onDelete"
+          :on-menu="onSessionMenu"
+        />
+        <KeptRows
+          v-if="spread?.has(row.path)"
+          :versions="row.versions"
+          :copies="row.copies"
+          :opening="opening"
+          :on-open="onOpen"
+          :on-delete="onDeleteKept"
+        />
+      </template>
       <!-- Not a button: this window has no page left to ask for, so the line says
            what would find the rest rather than offering a press that does nothing. -->
       <p v-if="more > 0" class="sessnote">{{ t("session.n_older_conversations_use_search", { n: more }) }}</p>

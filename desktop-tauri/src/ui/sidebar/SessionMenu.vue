@@ -31,6 +31,13 @@ export interface SessionMenuProps {
   onBranch?: () => void;
   onMove?: (direction: -1 | 1) => void;
   canMove?: { up: boolean; down: boolean };
+  /** Opens the choice of another project; absent where a conversation cannot
+   *  move at all. A held conversation offers it locked, not absent. */
+  onMoveTo?: () => void;
+  /** How many earlier versions and recovery copies this conversation kept. */
+  keptCount?: number;
+  keptOpen?: boolean;
+  onKept?: () => void;
 }
 </script>
 
@@ -141,6 +148,13 @@ defineExpose({
       <div class="session-pop-divider" />
     </template>
     <div class="session-pop-group">
+      <button v-if="(keptCount ?? 0) > 0 && onKept" role="menuitem" data-action="session.kept" :data-target="path" :aria-expanded="keptOpen" @click="take(onKept!)">
+        <StudioIcon name="clock" /><span>{{ t("session.earlier_versions_n", { n: keptCount ?? 0 }) }}</span>
+      </button>
+      <button v-if="onMoveTo" role="menuitem" :aria-label="t('session.move_to_a_project')" :aria-describedby="held ? 'session-move-why' : undefined"
+        data-action="session.move-to-start" :data-target="path" :disabled="held" @click="take(onMoveTo!)">
+        <StudioIcon name="folder" /><span>{{ t("session.move_to_a_project") }}<small v-if="held" class="session-pop-why" id="session-move-why">{{ t("session.close_this_conversation_first_then") }}</small></span>
+      </button>
       <button role="menuitem" data-action="session.archive" :data-target="path" :data-value="archived ? 'restore' : 'archive'" :disabled="held && live" @click="take(onArchive)">
         <StudioIcon name="archive" /><span>{{ t(archived ? "common.unarchive" : "common.archive_session") }}</span>
       </button>

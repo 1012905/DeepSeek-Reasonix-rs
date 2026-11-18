@@ -38,6 +38,8 @@ import {
   workspaceOf,
 } from "./sidebar/workspaceTree";
 import { useSessionMove } from "./useSessionMove";
+import { useSessionMoveTo } from "./useSessionMoveTo";
+import MoveSessionDialog from "./MoveSessionDialog.vue";
 import { saveSessionFile } from "./sessionExport";
 import { sessionInfoText } from "./sessionInfo";
 import { copyText } from "./CopyButton.vue";
@@ -63,7 +65,7 @@ const previewRows = computed(() => recentRows(props.tree));
 const empty = computed(() => props.tree.length === 0);
 
 const commands = computed<Command[]>(() => [
-  { id: "new", label: t("common.start_a_new_session"), icon: "plus", keywords: "new session chat 新建 会话", run: () => props.onNewSession() },
+  { id: "new", label: t("common.start_a_new_session"), icon: "plus", keywords: "new session chat 新建 会话", run: () => props.onNewSession?.() },
   { id: "add", label: t("session.add_a_workspace"), icon: "folder", keywords: "add project folder workspace 添加 项目 工作区", run: () => props.onAddWorkspace() },
   { id: "recent", label: t("session.recent_sessions"), icon: "clock", keywords: "recent history 最近 历史", run: () => { recentOpen.value = true; } },
   { id: "fold", label: t(allShut.value ? "session.expand_all_projects" : "session.collapse_all_projects"), icon: "layers", keywords: "fold collapse expand projects 折叠 展开 项目", run: () => toggleAll() },
@@ -103,7 +105,7 @@ function openSession(path: string) {
 
 function newSession(root: string) {
   if (folded.value.has(root)) fold(root, false);
-  props.onNewSession();
+  props.onNewSession?.(root);
 }
 
 /* ── Menus ────────────────────────────────────────────────────────────────── */
@@ -220,6 +222,19 @@ function branchTarget() {
 // the kernel owns the list, so each asks for the tree again afterwards. A move
 // has no order to walk while a search narrows the list, which canMove answers.
 const order = useSessionMove(() => props.hub, () => props.reload(), props.onError, searching);
+// Moving a conversation into another project: the composable owns the question,
+// its refusal and the re-read; the column owns which row asked it.
+const moveTo = useSessionMoveTo({
+  hub: props.hub,
+  tree: () => props.tree,
+  reload: () => props.reload(),
+  label: rowLabel,
+  addProject: props.onAddWorkspace,
+});
+// Which conversations have their kept versions and copies drawn inline. It is
+// the column's own reading of the tree, not a fact the kernel keeps.
+const spread = ref<Set<string>>(new Set());
+const keptCount = computed(() => (menuSession.value?.versions?.length ?? 0) + (menuSession.value?.copies?.length ?? 0));
 const exporting = ref<string | null>(null);
 const naming = ref<string | null>(null);
 const menuSessionWorkspace = computed(() => {
@@ -265,6 +280,30 @@ function moveTarget(direction: -1 | 1) {
   if (session) void order.move(session, direction);
 }
 
+function keptTarget() {
+  const session = menuSession.value;
+  if (!session) return;
+  const path = session.path;
+  const next = new Set(spread.value);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  spread.value = next;
+}
+
+// The question is asked from the row it belongs to: the project it leaves is
+// the one the tree files it under, never a guess from the path.
+function moveToTarget() {
+  const session = menuSession.value;
+  const from = session?.workspaceRoot || menuSessionWorkspace.value?.root || "";
+  if (session && from) moveTo.request(session, from);
+}
+
+// A kept version or copy is a whole conversation the kernel already holds, so
+// the kernel's own delete is what removes it, and the tree is read again after.
+function deleteKept(path: string) {
+  void props.hub.removeSession(path).then(() => props.reload()).catch(props.onError);
+}
+
 function archiveWorkspaceTarget() {
   const at = menuAt.value;
   if (at?.of === "workspace") props.onArchiveWorkspace(at.root);
@@ -294,7 +333,7 @@ function onWindowKey(event: KeyboardEvent) {
   }
   if (event.altKey && !mod && event.key.toLowerCase() === "n") {
     event.preventDefault();
-    props.onNewSession();
+    props.onNewSession?.();
     return;
   }
   if (event.key === "Escape" && menuAt.value) {
@@ -339,7 +378,7 @@ const workspaceName = (workspace: { name: string; root: string }) => workspace.n
 </script>
 
 <template>
-  <aside class="rail" :aria-label="t('app.workspaces')">
+  <aside class="rail" :aria-label="t('app.workspaces')" :aria-busy="openingPending ? 'true' : undefined">
     <div class="railscroll">
       <div class="studio-rail-head">
         <button
@@ -348,7 +387,7 @@ const workspaceName = (workspace: { name: string; root: string }) => workspace.n
           data-action="session.new"
           :aria-label="t('common.start_a_new_session')"
           :title="t('common.start_a_new_session')"
-          @click="onNewSession"
+          @click="onNewSession?.()"
         >
           <span aria-hidden="true"><StudioIcon name="plus" /></span>
           <b class="studio-label">{{ t("common.start_a_new_session") }}</b>
@@ -428,6 +467,8 @@ const workspaceName = (workspace: { name: string; root: string }) => workspace.n
           :rows="workspace.sessions"
           :needle="query.trim().toLowerCase()"
           :active-path="activeSessionPath"
+          :opening="opening"
+          :spread="spread"
           :busy="!!busy"
           :locked="!!workspace.missing"
           :on-fold="fold"
@@ -437,6 +478,7 @@ const workspaceName = (workspace: { name: string; root: string }) => workspace.n
           :on-rename="onRenameSession"
           :on-archive="onArchiveSession"
           :on-delete="onDeleteSession"
+          :on-delete-kept="deleteKept"
           :on-session-menu="openSessionMenu"
         />
       </div>
@@ -486,6 +528,10 @@ const workspaceName = (workspace: { name: string; root: string }) => workspace.n
         :on-copy-info="() => take(copyInfoTarget)"
         :on-export="(format) => take(() => exportTarget(format))"
         :on-move="(direction) => take(() => moveTarget(direction))"
+        :kept-count="keptCount"
+        :kept-open="spread.has(menuSession.path)"
+        :on-kept="() => take(keptTarget)"
+        :on-move-to="() => take(moveToTarget)"
         :on-pause="onPauseSession ? () => take(pauseTarget) : undefined"
         :on-close-conversation="onCloseSession ? () => take(closeTarget) : undefined"
         :on-branch="onBranchSession && menuSession.runtimeId ? () => take(branchTarget) : undefined"
@@ -500,6 +546,8 @@ const workspaceName = (workspace: { name: string; root: string }) => workspace.n
         @close="closeMenu()"
       />
     </Teleport>
+
+    <MoveSessionDialog v-if="moveTo.dialog.value" v-bind="moveTo.dialog.value" />
 
     <Palette
       :open="paletteOpen"

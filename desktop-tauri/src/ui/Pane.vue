@@ -43,6 +43,8 @@ import { useBroughtResults } from "./useBroughtResults";
 import { useAgentRequest } from "./useAgentRequest";
 import { AgentRunOpener } from "./cards/SubagentGroup.vue";
 import { JobsLiveContext, type JobsLive } from "./JobRunView.vue";
+import { useConversationFiles } from "./useConversationFiles";
+import WorkbenchFileMenu from "./workbench/WorkbenchFileMenu.vue";
 import { jobName } from "./panels/JobName.vue";
 import { cancelJob } from "./jobcancel";
 import { useOnBump } from "./useOnBump";
@@ -258,6 +260,25 @@ export default defineComponent((props: PaneProps) => {
   });
   provide(JobsLiveContext, jobsLive);
 
+  const workspaceRoot = computed(() => status.value?.workspaceRoot ?? props.rt.root);
+  const files = useConversationFiles(
+    () => props.port,
+    workspaceRoot,
+    () => !!props.rt.host,
+    () => props.visible && view.value === "flow",
+    () => openColumn("files"),
+    (e) => fail(e, "files"),
+  );
+  const previewFile = ref<string | undefined>(undefined);
+  const activeFile = computed(() => (props.visible && workbench.value ? previewFile.value : undefined));
+  const fileReply = computed(() => ({
+    ...reply.reply.value,
+    files: files.refs.value,
+    activeFile: activeFile.value,
+    openDeliveredFile: !props.rt.host && props.port.opensFiles() ? (path: string) => props.port.openDocument(path) : undefined,
+    revealDeliveredFile: !props.rt.host && props.port.revealsFiles() ? (path: string) => props.port.revealInFileManager(path) : undefined,
+  }));
+
   // Find is the pane's own bar over its own scroller: the chord opens it on the
   // pane that has focus, never on every open session at once.
   const findOpen = ref(false);
@@ -407,6 +428,18 @@ export default defineComponent((props: PaneProps) => {
     // property of the flow view, not of the person having opened the browser.
     // `data-full` is the other direction — the pages take the whole canvas and
     // the conversation's column is hidden.
+    files.menu.value ? h(WorkbenchFileMenu, {
+      key: files.menu.value.id,
+      menu: files.menu.value,
+      root: workspaceRoot.value,
+      platform: files.platform.value,
+      revealable: !props.rt.host && props.port.revealsFiles(),
+      onOpen: !props.rt.host && props.port.opensFiles()
+        ? (path: string) => { void props.port.openFile(path).catch((e: unknown) => fail(e, "files")); }
+        : undefined,
+      onReveal: (path: string) => { void props.port.revealInFileManager(path).catch((e: unknown) => fail(e, "files")); },
+      onClose: files.closeMenu,
+    }) : null,
     h("div", { class: "pbody", ref: flow, "data-dock": view.value === "flow" ? "" : undefined, "data-full": view.value === "browser" ? "" : undefined }, [
       h("div", { class: "pviews" }, [
         view.value === "analysis" ? h("div", { class: "scroll", "data-pane": "analysis" }, [
@@ -418,6 +451,8 @@ export default defineComponent((props: PaneProps) => {
             changes: rail.value.changes,
             tree: tree.value,
             yolo: yolo.value,
+            plan: s.value.plan,
+            paused: blocked.value,
             onError: (e: unknown) => fail(e, "metrics"),
             onOpenSettings: props.onSettings,
           }),
@@ -448,7 +483,7 @@ export default defineComponent((props: PaneProps) => {
           onExtInvoke: gate.onExtInvoke,
           onExtSubmit: gate.onExtSubmit,
           takeovers: s.value.takeovers,
-          reply: reply.reply.value,
+          reply: fileReply.value,
           onResend: reply.onResend,
           onWithdraw: queueActions.onQueueCancel,
           checkpoints: paired.value,
@@ -495,6 +530,8 @@ export default defineComponent((props: PaneProps) => {
         visible: props.visible && workbench.value && column.value === "files",
         agentRequest: agentRuns.request.value,
         onShowCall: (call: string) => { landAt.value = { call, n: (landAt.value?.n ?? 0) + 1 }; },
+        fileRequest: files.request.value,
+        onActiveFile: (path: string | undefined) => { previewFile.value = path; },
       }),
       h(TerminalView, {
         port: props.port,

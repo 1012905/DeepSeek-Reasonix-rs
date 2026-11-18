@@ -83,6 +83,23 @@ describe("the workbench panel", () => {
     await waitFor(() => expect(container.querySelector("iframe.document-html")).not.toBeNull());
   });
 
+  it("takes a file link once and reports the file it put on screen", async () => {
+    const port = new MockPort();
+    vi.spyOn(port, "workspaceFiles").mockResolvedValue({ files: ["a.ts"], directories: [] });
+    vi.spyOn(port, "workspaceFile").mockResolvedValue({ path: "a.ts", text: "x", truncated: false, binary: false } as never);
+    const consumed = vi.fn();
+    const onActiveFile = vi.fn();
+    const { container } = render(WorkbenchPanel, {
+      props: {
+        port, root: "/w", onError: () => {}, onClose: () => {}, visible: true,
+        fileRequest: { path: "a.ts", consumed }, onActiveFile,
+      },
+    });
+    await waitFor(() => expect(container.querySelector('[data-key="file:a.ts"]')).not.toBeNull());
+    expect(consumed).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onActiveFile).toHaveBeenCalledWith("a.ts"));
+  });
+
   it("opens a background job as a workbench tab and reads its output", async () => {
     const port = new MockPort();
     const read = vi.spyOn(port, "jobOutput").mockResolvedValue({ text: "ok\n", status: "completed", bytes: 3, truncated: false });

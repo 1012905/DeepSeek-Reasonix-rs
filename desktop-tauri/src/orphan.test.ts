@@ -190,7 +190,6 @@ const KNOWN_ORPHANS = new Map<string, string>([
   ["src/ui/railfilter.ts", "nothing imports it — exports RailFilterContext"],
   ["src/ui/railgeom.ts", "nothing imports it — One drawn thing on the message rail"],
   ["src/ui/roots.ts", "nothing imports it — Where Studio's user inputs are found, once"],
-  ["src/ui/sessionswitch.ts", "nothing imports it — The row being opened; empty when nothing is, or when what opens has no row yet"],
   ["src/ui/settings-intents.ts", "nothing imports it — What people type when they look for a setting, and where it lives"],
   ["src/ui/sidebaropen.ts", "nothing imports it — Picking a conversation that is already on screen brings it back into view"],
   ["src/ui/speed.ts", "nothing imports it — Seconds until the latest measured round's first output"],

@@ -76,7 +76,9 @@ describe("window and conversation Vue port contracts", () => {
   }
   it("Pane keeps the reducer, history, submit, draft and decision owners", () => {
     const pane = script("Pane");
-    for (const path of ["../state/session", "./useHistoryPages", "./usesubmit", "./gates", "./queueactions", "./surface-replay", "../port/streambudget"]) expect(pane).toContain(`"${path}"`);
+    for (const path of ["../state/session", "./useHistoryPages", "./usesubmit", "./gates", "./queueactions", "./surface-replay", "../port/streambudget", "./useConversationFiles"]) expect(pane).toContain(`"${path}"`);
+    expect(pane).toContain("reply: fileReply.value");
+    expect(pane).toContain("fileRequest: files.request.value");
     expect(script("Composer")).toContain('"./useDraft"');
   });
   it("App keeps the rail's feedback unread honest from the local machine", () => {
@@ -87,5 +89,12 @@ describe("window and conversation Vue port contracts", () => {
     expect(app).toContain("runtimes.value.find((rt) => !rt.host)");
     expect(app).toContain("feedbackUnread: feedbackUnread.value");
     expect(app).toContain("unread: feedbackUnread.value");
+  });
+  it("App orders concurrent session opens and lets a focused pane cancel one", () => {
+    const app = script("App");
+    expect(app).toContain('"./sessionswitch"');
+    for (const step of ["sw.opening(wanted)", "sw.begin(wanted)", "sw.current(ticket)", "sw.landed(ticket)", "sw.end(ticket)"]) expect(app).toContain(step);
+    expect(app).toContain("sw.cancel()");
+    expect(app).toContain("startConversation(root)");
   });
 });

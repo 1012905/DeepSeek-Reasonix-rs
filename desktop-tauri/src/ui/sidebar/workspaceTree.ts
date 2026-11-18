@@ -15,8 +15,15 @@ export interface SidebarProps {
   /** The conversation that pane drives, when it drives one. */
   activeSessionPath?: string;
   busy?: boolean;
+  /** The conversation the window is opening right now. Its row is marked, never
+   *  selected: selection stays the focused pane's own answer. */
+  opening?: string;
+  /** An open is in flight, so the column as a whole says it is busy. */
+  openingPending?: boolean;
   onOpenSession: (path: string) => void;
-  onNewSession: () => void;
+  /** A conversation to start in the named project, or in the window's own root
+   *  when the press named none. */
+  onNewSession?: (root?: string) => void;
   onAddWorkspace: () => void;
   onArchiveWorkspace: (root: string) => void;
   onRenameSession?: (path: string, title: string) => void;

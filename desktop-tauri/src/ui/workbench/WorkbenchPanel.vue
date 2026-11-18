@@ -12,6 +12,9 @@ export interface WorkbenchPanelProps {
   /** A request to open sub-agent runs or background jobs as tabs. */
   agentRequest?: AgentRequest;
   onShowCall?: (callId: string) => void;
+  /** A file link in the conversation, to be taken once. */
+  fileRequest?: { path: string; consumed: () => void };
+  onActiveFile?: (path: string | undefined) => void;
 }
 </script>
 
@@ -25,7 +28,7 @@ import type { WorkspaceChange, WorkspaceFile } from "../../port/port";
 import { setShowsHiddenFiles, showsHiddenFiles } from "../../state/prefs";
 import { locate } from "../../state/gittree";
 import { useGlance } from "../glance";
-import { parseGrantedFile } from "../grantedfiles";
+import { parseGrantedFile, documentRefs } from "../grantedfiles";
 import { pinToViewport } from "../place";
 import { readRecentFiles, rememberFile } from "../recentFiles";
 import ExplorerResize from "../ExplorerResize.vue";
@@ -360,8 +363,18 @@ const openFile = (path: string) => {
   selected.value = `file:${path}`;
 };
 
+watch(filePath, (path) => props.onActiveFile?.(path || undefined), { immediate: true });
+
+const readRefs = computed(() => (filePath.value ? documentRefs(filePath.value, props.port, openFile) : undefined));
+
 const recentFiles = ref<string[]>([]);
 watch(() => props.root, (root) => { recentFiles.value = readRecentFiles(root); }, { immediate: true });
+
+watch(() => props.fileRequest, (request) => {
+  if (!request) return;
+  openFile(request.path);
+  request.consumed();
+}, { immediate: true });
 
 const openChanges = () => {
   changesOpen.value = true;
@@ -740,7 +753,7 @@ const canSave = computed(() => !buffer.value.loading && !buffer.value.file?.read
           </div>
 
           <div v-else-if="mode === 'read' && buffer.file" class="workbench-read" tabindex="0">
-            <LazyMarkdown :text="buffer.draft" />
+            <LazyMarkdown :text="buffer.draft" :local="readRefs" />
           </div>
 
           <div v-else class="workbench-editor">
