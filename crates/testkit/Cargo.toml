@@ -1,0 +1,10 @@
+[package]
+name = "reasonix-testkit"
+description = "Shared test utilities (test-only; never linked into shipped binaries)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

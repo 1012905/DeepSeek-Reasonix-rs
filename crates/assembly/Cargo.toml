@@ -1,0 +1,11 @@
+[package]
+name = "reasonix-assembly"
+description = "Composition root wiring the kernel into runnable binaries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+reasonix-cli.workspace = true

@@ -1,0 +1,392 @@
+{
+ "configMaps": [
+  {
+   "PASSWORD": "fixture-secret",
+   "author": "neutral",
+   "ENDPOINT": "https://host/mcp?%74oken=fixture-secret"
+  },
+  {
+   "token": "abc",
+   "TOKEN_URL": "https://h/mcp?x-token=abc",
+   "username": "u",
+   "api_key": "k"
+  },
+  {
+   "DSN": "postgres://user:secretpw@db.internal:5432/prod?sslmode=require",
+   "LOG_LEVEL": "info"
+  },
+  {},
+  {
+   "UPPER": "MixedCase Value",
+   "mixed": "https://host/a%20b",
+   "pwd": "/current/dir"
+  },
+  {
+   "apiKey": "sk-123",
+   "x-api-key": "v",
+   "sessionid": "42",
+   "Session-Id": "s"
+  }
+ ],
+ "argVectors": [
+  [
+   "echo",
+   "hello world"
+  ],
+  [
+   "-v",
+   "--help"
+  ],
+  [
+   "https://user:fixture-secret'private@host/mcp"
+  ],
+  [
+   "--endpoint=https://user:fixture-secret'private@host/mcp"
+  ],
+  [
+   "-H",
+   "Authorization: Basic fixture-secret"
+  ],
+  [
+   "--header",
+   "X-Custom: fixture-secret"
+  ],
+  [
+   "--env",
+   "CUSTOM=fixture-secret"
+  ],
+  [
+   "--headers={\"X-Custom\":\"fixture-secret\"}"
+  ],
+  [
+   "-e",
+   "KEY=fixturesecret"
+  ],
+  [
+   "Authorization: Bearer fixturesecret"
+  ],
+  [
+   "node",
+   "--env",
+   "KEY=fixturesecret"
+  ],
+  [
+   "node",
+   "--header",
+   "Authorization: Bearer fixturesecret"
+  ],
+  [
+   "node",
+   "--header",
+   "Authorization: Bearer fixturesecret",
+   "&&",
+   "true"
+  ],
+  [
+   "-eKEY=fixturesecret",
+   "ordinary",
+   "https://host/clean"
+  ],
+  [
+   "-H=Authorization:Basic fixturesecret"
+  ],
+  [
+   "HX-Custom:fixturesecret",
+   "keep"
+  ],
+  [
+   "curl",
+   "-sS",
+   "-H",
+   "X-Secret: abc123",
+   "https://host/mcp"
+  ],
+  [
+   "docker",
+   "run",
+   "-e",
+   "PASSWORD=hunter2",
+   "-e",
+   "TERM=xterm",
+   "alpine"
+  ],
+  [
+   "-entropy=high",
+   "next-arg"
+  ],
+  [
+   "Basic",
+   "dXNlcjpwYXNz"
+  ],
+  [
+   "bearer",
+   "tok"
+  ],
+  [
+   "-H"
+  ],
+  [
+   "--env",
+   "FLAG"
+  ],
+  [
+   "node --env 'KEY=fixturesecret'"
+  ],
+  [
+   "node --header 'Authorization: Bearer fixture-secret' && true"
+  ],
+  [
+   "--header 'X-Custom: fixture-secret'"
+  ],
+  [
+   "--env 'KEY=fixturesecret'"
+  ],
+  [
+   "--header 'X-Custom: fixturesecret'"
+  ]
+ ],
+ "rawEndpoints": [
+  "https://mcp.example.com/sse?a=1;token=abc",
+  "https://host/token/fixturesecret",
+  "https://host/api_key/fixturesecret",
+  "https://host/%74oken/fixturesecret",
+  "https://host/mcp#fixturesecret",
+  "https://host/mcp?token=fixturesecret",
+  "https://host/mcp?%74oken=fixturesecret",
+  "https://host/mcp#token=fixturesecret",
+  "https://user:pass@example.com:8080/p/q?r=1&s=2#frag",
+  "https://host/mcp",
+  "https://host/mcp?author=neutral",
+  "https://host/a%20b",
+  "https://host:8080/mcp?X-API-Key=abc&other=1",
+  "postgres://user:secretpw@db:5432/x",
+  "redis://:password@redis:6379/0",
+  "mailto:admin@host",
+  "https://host/mcp?",
+  "https://host/mcp#access=somewhere",
+  "https://host/session/abc/next",
+  "https://host/private/x",
+  "https://[::1]:8080/mcp?token=x",
+  "https://host/path%20with%20spaces?q=1",
+  "  https://host/mcp?token=x  ",
+  "ftp://user:pw@files.host/pub",
+  "https://host/mcp?alpha=1&beta=2&alpha=3",
+  "https://host/mcp?empty=&x=1",
+  "http://host/mcp?FLAG=a%3Db",
+  "https://host/creds/a/b/c",
+  "https://host/mcp?token=abc&token=def",
+  "https://host/q?session=xyz&author=n"
+ ],
+ "configValues": [
+  {
+   "key": "ordinary",
+   "value": "https://host/mcp"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "prefix https://neutral:head'fixturesecret@host/mcp"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "prefix https://neutral:head\"fixturesecret@host/mcp"
+  },
+  {
+   "key": "ordinary",
+   "value": "Authorization: Basic fixturesecret"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "https://host/mcp Authorization: Bearer fixture-secret"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "https://host/mcp Authorization: Basic fixture-secret"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "https://host/mcp --header 'X-Custom: fixture-secret'"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "https://host/mcp -eKEY=fixturesecret"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "https://host/mcp\tTOKEN=fixturesecret"
+  },
+  {
+   "key": "ORDINARY",
+   "value": "https://host/mcp\nAuthorization: Basic fixturesecret"
+  },
+  {
+   "key": "ordinary",
+   "value": "a=b&token=x"
+  },
+  {
+   "key": "token",
+   "value": "anything"
+  },
+  {
+   "key": "x",
+   "value": "TOKEN=abc"
+  },
+  {
+   "key": "x",
+   "value": "api_key=abc"
+  },
+  {
+   "key": "x",
+   "value": "%74oken=abc"
+  },
+  {
+   "key": "x",
+   "value": "key:nested"
+  },
+  {
+   "key": "x",
+   "value": "secret:value"
+  },
+  {
+   "key": "x",
+   "value": "https://host/mcp?token=abc"
+  },
+  {
+   "key": "x",
+   "value": "echo hello"
+  },
+  {
+   "key": "x",
+   "value": "curl -H 'X-Auth: abc' https://h/m"
+  },
+  {
+   "key": "x",
+   "value": "echo 'broken quote"
+  },
+  {
+   "key": "x",
+   "value": "a=1; b=2"
+  },
+  {
+   "key": "x",
+   "value": ""
+  },
+  {
+   "key": "x",
+   "value": "<redacted>"
+  },
+  {
+   "key": "x",
+   "value": "   "
+  },
+  {
+   "key": "x",
+   "value": "https://host/mcp?author=neutral"
+  },
+  {
+   "key": "x",
+   "value": "postgres://u:p@h:5432/db"
+  },
+  {
+   "key": "x",
+   "value": "Basic dXNlcjpwYXNz"
+  },
+  {
+   "key": "Authorization",
+   "value": "x"
+  },
+  {
+   "key": "x",
+   "value": "curl https://host/mcp -H 'Authorization: Bearer s3cr3t'"
+  },
+  {
+   "key": "x",
+   "value": "a b c"
+  },
+  {
+   "key": "x",
+   "value": "-eKEY=v embedded"
+  },
+  {
+   "key": "x",
+   "value": "access=granted"
+  },
+  {
+   "key": "x",
+   "value": "PWD=/dir"
+  }
+ ],
+ "credentialKeys": [
+  "token",
+  "password",
+  "passwd",
+  "pwd",
+  "oldpwd",
+  "PWD",
+  "OldPwd",
+  "PwD",
+  "secret",
+  "key",
+  "auth",
+  "authorization",
+  "credential",
+  "credentials",
+  "signature",
+  "sig",
+  "session",
+  "cookie",
+  "bearer",
+  "jwt",
+  "apikey",
+  "access",
+  "private",
+  "AccessToken",
+  "ACCESS_TOKEN",
+  "access-token",
+  "apiKey",
+  "API_KEY",
+  "monkey",
+  "donkey",
+  "keyboard",
+  "tokens",
+  "tokem",
+  "my-token",
+  "X-Api-Key",
+  "sessionID",
+  "SESSION_ID",
+  "t%6Fken",
+  "%2574oken",
+  "api%5Fkey",
+  "ｔｏｋｅｎ",
+  "ＡＣＣＥＳＳ_ＴｏｋＥｎ",
+  "Bearer",
+  "AUTHORIZATION",
+  "-e",
+  "--header",
+  "",
+  "  ",
+  "SECRET_VALUE",
+  "signature-value",
+  "x-signature",
+  "accesskey",
+  "Access Key",
+  "jwt_token",
+  "JWT-TOKEN"
+ ],
+ "credentialValues": [
+  "https://host/mcp?token=x",
+  "ordinary",
+  "Authorization: Basic x",
+  "a=b",
+  "PWD=/dir",
+  "https://u:p@h/m",
+  "%74oken=v",
+  "https://host/mcp#key",
+  "Bearer xyz",
+  "echo hi",
+  "-H X: y",
+  "https://host/mcp",
+  "",
+  "postgres://u:p@h/db",
+  "secret"
+ ]
+}

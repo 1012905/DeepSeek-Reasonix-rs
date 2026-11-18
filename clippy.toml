@@ -1,0 +1,4 @@
+# Clippy configuration. Gates run `cargo clippy --workspace --all-targets
+# -- -D warnings` (AGENTS.md 8.6). msrv mirrors [workspace.package]
+# rust-version so version-gated lints pick the same floor everywhere.
+msrv = "1.99.1"

@@ -1,0 +1,5 @@
+# Toolchain pin (AGENTS.md 3.5: Rust stable, exact version fixed).
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

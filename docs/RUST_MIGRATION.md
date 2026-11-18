@@ -12,6 +12,14 @@ Vue + Tauri. It records the decisions the rewrite runs on and the layer mapping
 the port follows. It is not a schedule; the phases live in the task list, this
 file holds what must stay true while they execute.
 
+> **Implementation adopted (D14, 2026-11-18):** the concrete Rust kernel is
+> upstream B (Gitee `rikkarikka/reasonix-studio-rs`, M2), merged into `crates/`
+> + `apps/` + `xtask/`. Its crate layout (`docs/adr/0001`) refines the mapping
+> below; its frozen wire contracts live in `docs/contracts` and its acceptance
+> ledger in `docs/parity/LEDGER.md`. The Go kernel stays the live backend until
+> parity sign-off (decision 5). The earlier A-lineage skeleton is superseded;
+> its `contract` eventwire/pricing golden slices are preserved in `crates/contract`.
+
 ## Decisions
 
 ### 1. The kernel stays a separate process
@@ -133,8 +141,8 @@ set, which grows per layer.
 └───────────────▲───────────────────────────────────────────────┘
                 │ spawns, holds the lease
 ┌───────────────┴───────────────────────────────────────────────┐
-│  reasonix-kernel (Rust bin, crates/kernel)                    │
-│    boot::Build → session::Controller                          │
+│  reasonix-studio-host (Rust bin, apps/reasonix-studio-host)   │
+│    assembly::Build → session::Controller                      │
 │    (same assembly shape the Go CLI uses)                      │
 │    + serve (HTTP/SSE, loopback gate)                          │
 └───────────────────────────────────────────────────────────────┘
@@ -145,25 +153,36 @@ one writer — the kernel — as before.
 
 ## Layer mapping
 
+Upstream B's crate layout (`docs/adr/0001`); `crates/testkit` is test-only.
+
 | Go | Rust |
 | --- | --- |
-| `internal/base/*` (34 pkgs) | `crates/base` (one module per package) |
-| `internal/contract/*` (22 pkgs) | `crates/contract` |
-| `internal/state/*` (24 pkgs) | `crates/state` |
+| `internal/base/*` | `crates/core` |
+| `internal/contract/*` | `crates/contract` |
+| `internal/state/*` | `crates/state` |
 | `internal/safety/*` | `crates/safety` |
-| `internal/model/*` | `crates/model` |
+| `internal/model/*` | `crates/provider` |
 | `internal/tools/*` | `crates/tools` |
-| `internal/runtime/*` | `crates/runtime` |
+| `internal/runtime/*` | `crates/agent` |
 | `internal/session/control` | `crates/session` |
 | `internal/frontend/serve` | `crates/serve` |
-| `internal/frontend/cli`, `tui` | `crates/cli` (`clap` + `ratatui`) |
+| `internal/frontend/cli` | `crates/cli` |
+| `internal/frontend/tui` | `crates/tui` |
 | `internal/frontend/acp` | `crates/acp` |
-| `internal/assembly/boot` | `crates/boot` |
-| `cmd/reasonix-studio-host` | `crates/kernel` (bin `reasonix-kernel`) |
+| `internal/assembly/boot` | `crates/assembly` |
+| `internal/ext/*` | `crates/ext` |
+| `internal/platform/*` | `crates/platform` |
+| config schema | `crates/config` |
+| `cmd/reasonix` | `apps/reasonix` |
+| `cmd/reasonix-studio-host` | `apps/reasonix-studio-host` |
 | `desktop/electron` | `desktop-tauri` (Tauri 2, Rust) |
 | `desktop/frontend-next` | `desktop-tauri` (Vue 3) |
 
 Workspace-wide dependencies are pinned once in the root `Cargo.toml`: one
-edition, one MSRV, `tokio`, `axum`, `rusqlite`, `reqwest`, `serde`,
-`serde_json`. The base layer imports nothing from another layer; only
-frontends and hosts reach `session`; that is the Go layering carried over.
+edition (2024), one MSRV (1.99.1). The frozen contract inventory has entered
+product deps (`serde`, `serde_json`, `sha2`, `thiserror`, `chrono`,
+`encoding_rs`, `fs4`, `regex`, `getrandom`, `hostname`, `caseless`,
+`unicode-*`, `tracing`); the async/HTTP/SQLite stack (`tokio`, `axum`,
+`rusqlite`, `reqwest` with rustls) lands with the `serve` slice (M4), not yet.
+`core` imports no other crate; only frontends and hosts reach `session`; that
+is the Go layering carried over, held by `cargo xtask deps --check`.

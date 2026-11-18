@@ -1,0 +1,4 @@
+# Formatting follows rustfmt defaults; the edition is pinned so stable
+# toolchains format identically. The reference Go tree is gofmt-clean; this
+# workspace is cargo-fmt-clean with stock settings.
+edition = "2024"

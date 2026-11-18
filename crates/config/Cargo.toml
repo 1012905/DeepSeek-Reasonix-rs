@@ -1,0 +1,10 @@
+[package]
+name = "reasonix-config"
+description = "TOML configuration loading, layering, and precedence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
