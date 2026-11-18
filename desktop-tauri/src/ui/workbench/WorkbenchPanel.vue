@@ -39,6 +39,7 @@ import { usePushCard } from "../GitPushCard";
 import { useTerminalTabs } from "../useTerminalTabs";
 import { useAgentTabs, type AgentRequest } from "../useAgentTabs";
 import AgentRunView from "../AgentRunView.vue";
+import JobRunView from "../JobRunView.vue";
 import { keyOf, labelOf, type Surface } from "../workbench_tabs";
 import { treeRows } from "../workbench_tree";
 import type { TextMenuAction } from "../workbench_text_menu";
@@ -674,6 +675,15 @@ const canSave = computed(() => !buffer.value.loading && !buffer.value.file?.read
             <template #below><component :is="push.card.value" /></template>
           </WorkbenchChanges>
         </div>
+
+        <JobRunView
+          v-if="active?.kind === 'job'"
+          :key="active.id"
+          :port="port"
+          :id="active.id"
+          :name="active.name"
+          :shown="visible"
+        />
 
         <AgentRunView
           v-if="active?.kind === 'agent'"

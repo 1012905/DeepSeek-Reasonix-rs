@@ -177,7 +177,6 @@ const KNOWN_ORPHANS = new Map<string, string>([
   ["src/ui/glayout.ts", "nothing imports it — Node boxes are a fixed size, so a lane's geometry follows from its ranks with"],
   ["src/ui/gnode.ts", "nothing imports it — The calls this transcript holds, by the id a node names"],
   ["src/ui/goalusage.ts", "nothing imports it — What the kernel writes today"],
-  ["src/ui/jobcancel.ts", "nothing imports it — Whatever the kernel answers, the list is read again afterwards"],
   ["src/ui/jumpreach.ts", "nothing imports it — Tops are positions in the scroller's content"],
   ["src/ui/listsearch.ts", "nothing imports it — exports listMatcher"],
   ["src/ui/machinebooks.ts", "nothing imports it — Machines whose book this window has read before"],

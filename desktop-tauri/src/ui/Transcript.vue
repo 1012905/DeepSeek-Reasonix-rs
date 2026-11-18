@@ -25,6 +25,7 @@ import { chartOfTool } from "./chart/spec";
 import UserCard from "./cards/UserCard.vue";
 import WorkedLine from "./cards/WorkedLine.vue";
 import SubagentGroup, { workLanes } from "./cards/SubagentGroup.vue";
+import { revealNested } from "./cards/nestreveal";
 import BroughtResults from "./BroughtResults.vue";
 import StudioIcon from "./StudioIcon.vue";
 import type { HistoryPaging } from "./useHistoryPages";
@@ -111,6 +112,54 @@ export default defineComponent((props: Props) => {
   const pageFailed = computed(() => props.historyPaging?.failed.value ?? false);
   const shown = computed(() => (unfolded.value ? props.items : props.items.slice(fold.value.cut)));
   const groups = computed(() => grouped(shown.value));
+
+  const landed = ref(0);
+  const esc = (value: string) => value.replace(/[\\"]/g, (ch) => `\\${ch}`);
+  const selectorOf = (focus: NonNullable<Props["focus"]>) =>
+    "item" in focus ? `[data-item="${esc(focus.item)}"]` : `[data-call="${esc(focus.call)}"]`;
+  const holds = (item: Item, focus: NonNullable<Props["focus"]>) =>
+    "item" in focus
+      ? item.id === focus.item
+      : item.t === "tool" && (item.tool.id === focus.call || item.children.some((child) => child.id === focus.call));
+
+  // A hidden pane has no geometry, so the request is held rather than spent
+  // until this transcript is on screen; mount order then cannot matter either.
+  const landOn = async (focus: NonNullable<Props["focus"]>): Promise<boolean> => {
+    if ("call" in focus) revealNested(focus.call);
+    const root = props.scroll.value;
+    if (!root) return false;
+    const selector = selectorOf(focus);
+    let target = root.querySelector<HTMLElement>(selector);
+    if (!target) {
+      if (!unfolded.value && props.items.some((item) => holds(item, focus))) unfolded.value = true;
+      const host = groups.value.find((group) =>
+        group.kind === "agents" ? group.tasks.some((task) => holds(task, focus))
+          : group.kind === "activity" ? group.items.some((item) => holds(item, focus))
+            : holds(group.item, focus));
+      if (host?.kind === "activity") showEarlier.value = { ...showEarlier.value, [host.key]: true };
+      await nextTick();
+      target = root.querySelector<HTMLElement>(selector);
+    }
+    if (!target) return false;
+    let opened = false;
+    for (let det = target.closest("details"); det; det = det.parentElement?.closest("details") ?? null) {
+      if (!det.open) {
+        det.open = true;
+        opened = true;
+      }
+    }
+    if (opened) await nextTick();
+    target.scrollIntoView({ block: "center" });
+    return true;
+  };
+
+  const tryLand = () => {
+    const focus = props.focus;
+    if (props.hidden || !focus || landed.value === focus.n) return;
+    void landOn(focus).then((done) => { if (done) landed.value = focus.n; });
+  };
+  onMounted(tryLand);
+  watch([() => props.hidden, () => props.focus, () => props.revision], tryLand);
 
   const nearBottom = () => {
     const root = props.scroll.value;

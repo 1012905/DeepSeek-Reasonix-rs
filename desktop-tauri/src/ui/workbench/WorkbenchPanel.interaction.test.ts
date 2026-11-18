@@ -83,6 +83,20 @@ describe("the workbench panel", () => {
     await waitFor(() => expect(container.querySelector("iframe.document-html")).not.toBeNull());
   });
 
+  it("opens a background job as a workbench tab and reads its output", async () => {
+    const port = new MockPort();
+    const read = vi.spyOn(port, "jobOutput").mockResolvedValue({ text: "ok\n", status: "completed", bytes: 3, truncated: false });
+    const { container } = render(WorkbenchPanel, {
+      props: {
+        port, root: "/w", onError: () => {}, onClose: () => {}, visible: true,
+        agentRequest: { jobs: [{ id: "job-1", name: "npm test" }] },
+      },
+    });
+    await waitFor(() => expect(container.querySelector('[data-key="job:job-1"]')).not.toBeNull());
+    expect(read).toHaveBeenCalledWith("job-1");
+    await waitFor(() => expect(container.querySelector(".jobrun")).not.toBeNull());
+  });
+
   it("opens a sub-agent run as a workbench tab, reads it from the kernel, and closes it", async () => {
     const port = new MockPort();
     const run = { ref: "sa_1", name: "audit", kind: "task", model: "deepseek/pro", state: "completed" as const, startedAt: 1, updatedAt: 2 };

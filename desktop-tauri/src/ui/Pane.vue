@@ -1,5 +1,5 @@
 <script lang="ts">
-import { computed, defineComponent, h, onMounted, onUnmounted, provide, ref, watch, type VNodeChild } from "vue";
+import { computed, defineComponent, h, onMounted, onUnmounted, provide, reactive, ref, watch, watchEffect, type VNodeChild } from "vue";
 import { t } from "../i18n";
 import { reason } from "../i18n/kernel";
 import { moneyList } from "../i18n/format";
@@ -42,6 +42,9 @@ import { useBrowserFull } from "./browserfull";
 import { useBroughtResults } from "./useBroughtResults";
 import { useAgentRequest } from "./useAgentRequest";
 import { AgentRunOpener } from "./cards/SubagentGroup.vue";
+import { JobsLiveContext, type JobsLive } from "./JobRunView.vue";
+import { jobName } from "./panels/JobName.vue";
+import { cancelJob } from "./jobcancel";
 import { useOnBump } from "./useOnBump";
 import { useShowView } from "./showview";
 import type { PaneReport } from "./panetypes";
@@ -227,6 +230,7 @@ export default defineComponent((props: PaneProps) => {
   // the pane instance, so a pane remounted for another conversation starts on
   // the pages again.
   const column = ref<Column>("browser");
+  const landAt = ref<{ item: string; n: number } | { call: string; n: number } | null>(null);
   const openColumn = (to: Column) => {
     column.value = to;
     // A closed column draws nothing, so asking for a page has to open it.
@@ -245,6 +249,14 @@ export default defineComponent((props: PaneProps) => {
 
   const agentRuns = useAgentRequest(() => props.port, () => openColumn("files"));
   provide(AgentRunOpener, agentRuns.open);
+
+  const jobsLive = reactive<JobsLive>({ jobs: [] });
+  watchEffect(() => {
+    jobsLive.jobs = [...(status.value?.jobs ?? []), ...(status.value?.endedJobs ?? [])];
+    jobsLive.cancel = (id) => cancelJob(props.port, id, (e) => fail(e, "jobs"), refreshStatus).then(() => undefined);
+    jobsLive.open = (job) => agentRuns.openJob({ id: job.id, name: jobName(job) });
+  });
+  provide(JobsLiveContext, jobsLive);
 
   // Find is the pane's own bar over its own scroller: the chord opens it on the
   // pane that has focus, never on every open session at once.
@@ -424,7 +436,7 @@ export default defineComponent((props: PaneProps) => {
           // throw away the transcript's scroll position or its folds. The CSS
           // already hides a `[data-pane="flow"][hidden]` box.
           hidden: view.value !== "flow",
-          focus: null,
+          focus: landAt.value,
           find: null,
           query: "",
           onApprove: gate.onApprove,
@@ -482,6 +494,7 @@ export default defineComponent((props: PaneProps) => {
         onClose: closeColumn,
         visible: props.visible && workbench.value && column.value === "files",
         agentRequest: agentRuns.request.value,
+        onShowCall: (call: string) => { landAt.value = { call, n: (landAt.value?.n ?? 0) + 1 }; },
       }),
       h(TerminalView, {
         port: props.port,
