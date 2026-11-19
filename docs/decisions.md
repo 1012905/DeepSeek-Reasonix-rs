@@ -615,3 +615,12 @@ Go、Vue 端口/界面）＋主 Agent 接线裁决。契约落在 `workers/remot
 **验证**：Worker `tsc --noEmit` 0；Go build/vet/golangci 0，remotecloud/serve/cmd 全量绿
 （serve 748s）；vue-tsc 0；vitest 303 文件全绿；vite build 成功；repolint clean；
 actionlint 0；路由可达测试绿。浏览器↔桌面端到端与 Worker 部署需用户配置 secrets/KV。
+
+## D22 —— 新 minisign 密钥替代旧密钥
+
+用户裁决「重新生成」。原方案 D3/P3 复用退役发布线的旧密钥（Key ID `AF12CA46F4A9EBB0`），
+改为生成一把新密钥（Key ID `441E92EFE08CA57F`），用于 Release + registry 签名。
+私钥与口令由主 Agent 在仓库外生成，经 `gh secret set` 直接送入两个仓库的 Actions secrets；
+全程不落盘仓库、不回显内容。所有引用点同步轮换：`verify.go` 公钥常量/注释、
+`release-studio-tauri.yml` 发布自验、`update_test.go` 固定 ID、`STUDIO_RELEASE.md` 验签命令，
+以及 registry 仓 `registry.pub`/`README.md`。0.1.0 尚未发布，无历史签名失效代价。

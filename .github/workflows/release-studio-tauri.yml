@@ -257,7 +257,7 @@ jobs:
           keyfile="$(mktemp)"
           trap 'rm -f "$keyfile"' EXIT
           printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$keyfile"
-          pubkey='RWSw66n0RsoSr6Zhh6qt5YO95YkpCayTOCMFVDNUQSjJYwxoYngNVBSq'
+          pubkey='RWR/pYzg75IeRJDyhHJGLGwvQIXX/EbSusBykGrtLdLYSBL7SSzwCxPG'
           for f in dist/ReasonixStudio-*; do
             case "$f" in *.minisig) continue ;; esac
             printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -q -s "$keyfile" -m "$f" -x "$f.minisig"

@@ -316,7 +316,7 @@ Studio and 1.x signing jobs and smoke tests share the concurrency group `certum-
 - `native_packages["linux-<arch>"]` is the `.deb` and has to stay that: every installed client hands it to dpkg.
 - The `.rpm` is `native_packages["linux-<arch>-rpm"]`. No shipped client reads it yet, so an `.rpm` install is updated by downloading the new package.
 - The `.rpm` carries no rpm GPG signature, and `dnf install` of a local file does not check one by default.
-- Its integrity rests on HTTPS and the minisign signature beside it. Verify with `minisign -Vm ReasonixStudio-linux-amd64.rpm -P RWSw66n0RsoSr6Zhh6qt5YO95YkpCayTOCMFVDNUQSjJYwxoYngNVBSq`, the key compiled into `internal/platform/update/verify.go`.
+- Its integrity rests on HTTPS and the minisign signature beside it. Verify with `minisign -Vm ReasonixStudio-linux-amd64.rpm -P RWR/pYzg75IeRJDyhHJGLGwvQIXX/EbSusBykGrtLdLYSBL7SSzwCxPG`, the key compiled into `internal/platform/update/verify.go`.
 - fpm spells the architecture in an `.rpm` name its own way (`x86_64`, `aarch64`); `desktop/electron/packaging/canonical-artifact-names.js` renames it to the release architecture and fails the build on any spelling left over.
 - When a client tries to install a release whose manifest lacks its key (and, on Linux, a matching `native_packages` key), staging fails with `update.no_package` naming the release page; no other architecture's package is substituted. A missing `deltas` entry means the full package is downloaded.
 
