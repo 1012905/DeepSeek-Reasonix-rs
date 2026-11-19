@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import { t } from "../../../i18n";
 import { reason } from "../../../i18n/kernel";
 import type { HubPort } from "../../../port/hub";
-import type { CloudShareOffer, ShareOffer, ShareStatus } from "../../../port/share";
+import type { ShareOffer, ShareStatus } from "../../../port/share";
 import { copyText } from "../../CopyButton.vue";
 import Switch from "../../Switch.vue";
 
@@ -25,7 +25,6 @@ const props = defineProps<{ hub: HubPort; onError: (e: unknown) => void }>();
 const st = ref<ShareStatus | null>(null);
 const ip = ref("");
 const offer = ref<ShareOffer | null>(null);
-const cloudOffer = ref<CloudShareOffer | null>(null);
 const busy = ref(false);
 const confirm = ref("");
 const remember = ref<boolean | null>(null);
@@ -54,7 +53,6 @@ watch(() => props.hub, (hub) => {
 // The kernel withdraws a code once it pairs or lapses; the picture of it has to
 // go too, or the next phone scans a code that can no longer work.
 watch([st, offer], () => { if (offer.value && st.value && !st.value.offerExpires) offer.value = null; });
-watch([st, cloudOffer], () => { if (cloudOffer.value && st.value && !st.value.cloudRemote?.online) cloudOffer.value = null; });
 
 async function run(step: () => Promise<void>): Promise<void> {
   busy.value = true;

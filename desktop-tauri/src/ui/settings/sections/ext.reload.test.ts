@@ -15,7 +15,7 @@ const props = (port: AgentPort, over: Partial<SettingsProps> = {}): SettingsProp
   hub: {} as never, onError: () => {}, port, status: null, theme: "auto",
   reloadThemes: () => {}, onTheme: () => {}, contrast: "", weight: "", onWeight: () => {},
   look: {} as never, onLook: () => {}, onContrast: () => {}, onClose: () => {},
-  onChanged: () => {}, account: null, accountUnread: "", reloadAccount: () => {}, ...over,
+  onChanged: () => {}, ...over,
 });
 
 const draw = (port: AgentPort, over: Partial<SettingsProps> = {}) =>

@@ -13,7 +13,6 @@ import UpdateDot from "./UpdateDot.vue";
 const HOME: [Mark, string, string | null] = ["chat", "common.session", null];
 
 const FOOT: [Mark, string, string, string?][] = [
-  ["account", "settings.account", "account"],
   ["advanced", "common.settings", "", "chrome.settings"],
 ];
 
@@ -56,7 +55,7 @@ const go = (key: Mark, sec: string | null) => {
         v-for="[key, label, sec, action] in rows"
         :key="key"
         class="navbtn"
-        :data-action="key === 'account' ? 'chrome.account' : action"
+        :data-action="action"
         :aria-label="t(label)"
         :aria-current="(sec ?? null) === at ? 'page' : undefined"
         @click="go(key, sec)"
@@ -78,7 +77,7 @@ const go = (key: Mark, sec: string | null) => {
         v-for="[key, label, sec, action] in FOOT"
         :key="key"
         class="navbtn"
-        :data-action="key === 'account' ? 'chrome.account' : action"
+        :data-action="action"
         :aria-label="t(label)"
         :aria-current="(sec ?? null) === at ? 'page' : undefined"
         @click="go(key, sec)"

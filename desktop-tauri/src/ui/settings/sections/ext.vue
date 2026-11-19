@@ -34,7 +34,6 @@ const Content = defineComponent({
     <Group id="market" :title="t('ext.community_market')" :hint="t('ext.skills_plugins_mcp_servers_and')">
       <ExtMarket
         :port="settingsProps.port"
-        :account="settingsProps.account"
         :on-installed="settingsProps.onChanged"
         :on-sign-in="settingsProps.onChanged"
       />

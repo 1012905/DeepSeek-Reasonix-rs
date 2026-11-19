@@ -4,35 +4,19 @@ import { track as trackWidth } from "./ui/viewport";
 import "./styles/legacy.css";
 import "./design/design.css";
 import { createApp } from "vue";
-import RemoteAwareApp from "./ui/RemoteAwareApp.vue";
-import RemoteNotice from "./ui/RemoteNotice.vue";
+import App from "./ui/App.vue";
 import { SseHub } from "./port/hub";
 import { HttpError } from "./port/http_error";
 import type { HubPort } from "./port/hub";
 import { host } from "./port/host";
 import { play } from "./boot/intro";
 import { settled } from "./boot/gate";
-import { openRemoteHome, remoteDeviceId, remoteHub } from "./port/cloud_remote";
-import { failureView, type FailureView } from "./port/cloud_failure";
-import { RemoteLinkError } from "./port/cloud_link";
-
-const failureAction = (view: FailureView) => (view.action === "home" ? openRemoteHome : () => location.reload());
-const failureLabel = (view: FailureView) => (view.action === "home" ? t("app.open_reasonix_io") : t("app.reconnect"));
 
 // The dev proxy only exists when REASONIX_SERVE was set at vite start; probing
 // /runtimes decides which port to boot on, so neither mode needs a build flag.
 // Without the proxy vite answers it with the SPA shell at 200, so the content
 // type — not res.ok — is what says a kernel is really there.
 async function pick(): Promise<HubPort> {
-  const remoteDevice = new URLSearchParams(location.search).get("device")?.trim();
-  if (remoteDevice) return remoteHub(remoteDevice);
-  // The hosted web build has no kernel behind its origin; without a device it
-  // can only send the visitor to pick one.
-  const remoteHome = import.meta.env.VITE_REMOTE_HOME;
-  if (remoteHome) {
-    location.replace(remoteHome);
-    return new Promise<never>(() => {});
-  }
   try {
     // The hub's own list rather than a pane's /status: it answers with every
     // pane closed, which is when a reload has to find the kernel again.
@@ -117,25 +101,14 @@ pick().then(
   (hub) => {
     try { localStorage.removeItem("rx-flow-w"); } catch { /* storage is a convenience */ }
     const root = document.getElementById("root");
-    if (root) createApp(RemoteAwareApp, { hub, remote: remoteDeviceId() }).mount(root);
+    if (root) createApp(App, { hub }).mount(root);
     intro.progress(2);
     void settled.then(() => intro.progress(3));
     arrive(settled);
   },
   (e: unknown) => {
     const root = document.getElementById("root");
-    const failure = e instanceof RemoteLinkError && e.failure ? failureView(e.failure) : null;
-    if (root) {
-      if (failure) {
-        root.innerHTML = "";
-        createApp(RemoteNotice, {
-          title: failure.title, body: failure.body, action: failureLabel(failure),
-          waitS: failure.waitS, retryWhenOnline: failure.retryWhenOnline, onAction: failureAction(failure),
-        }).mount(root);
-      } else {
-        root.innerHTML = `<div class="app" data-run="idle"><div class="errbar" role="alert"><span>${escape(reason(e))}</span></div></div>`;
-      }
-    }
+    if (root) root.innerHTML = `<div class="app" data-run="idle"><div class="errbar" role="alert"><span>${escape(reason(e))}</span></div></div>`;
     // The failure is the one thing that must not stay behind the boot screen.
     arrive(Promise.resolve());
   },

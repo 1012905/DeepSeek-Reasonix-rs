@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"reasonix/internal/base/testenv"
-	"reasonix/internal/platform/remotecloud"
 )
 
 func TestMachineSettingsFollowLiveLocalRuntime(t *testing.T) {
@@ -63,17 +62,6 @@ func TestMachineSettingsPreserveRequestAuthority(t *testing.T) {
 	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
 	h := NewHub(HubOptions{})
 	hubRuntime(t, h, testenv.TempDir(t))
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		response, err := h.CloudDesktop(t.Context(), remotecloud.DesktopRequest{
-			Method: method, Path: "/host/settings/appearance", Body: []byte(`{"language":"en"}`),
-		}, "phone")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if response.Status != http.StatusOK {
-			t.Fatalf("paired %s = %d: %s", method, response.Status, response.Body)
-		}
-	}
 	req := httptest.NewRequest(http.MethodPost, "http://localhost/host/settings/appearance", strings.NewReader(`{"language":"en"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

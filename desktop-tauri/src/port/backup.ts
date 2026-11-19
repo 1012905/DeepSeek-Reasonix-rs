@@ -1,6 +1,5 @@
-// Configuration backups kept in the signed-in account. The kernel seals each
-// one with the person's passphrase before it leaves; the service stores only
-// the envelope and the metadata listed here.
+// Configuration backup as the file export and import read it. The kernel seals
+// the envelope with the person's passphrase before it leaves this machine.
 export type BackupCategory = "settings" | "extensions" | "memory" | "automation" | "secrets";
 
 export interface BackupCategoryInfo {
@@ -9,40 +8,10 @@ export interface BackupCategoryInfo {
   consent: boolean;
 }
 
-export interface BackupEntry {
-  id: string;
-  label: string;
-  format: number;
-  appVersion: string;
-  platform: string;
-  categories: BackupCategory[];
-  ciphertextBytes: number;
-  createdAt: string;
-}
-
-export interface BackupCatalog {
-  categories: BackupCategoryInfo[];
-  backups: BackupEntry[];
-  limits: { maxCount: number; maxBytes: number };
-  minPassphrase: number;
-}
-
 export interface BackupOmission {
   kind: string;
   name: string;
   reason: string;
-}
-
-export interface BackupCreateRequest {
-  label: string;
-  categories: BackupCategory[];
-  passphrase: string;
-  appVersion?: string;
-}
-
-export interface BackupCreated {
-  backup: BackupEntry;
-  omitted?: BackupOmission[];
 }
 
 export interface BackupPathRef {
@@ -96,8 +65,8 @@ export interface BackupApplyResult {
   reloadError?: string;
 }
 
-// A backup file is the same sealed envelope, saved by the person instead of the
-// account. Only the window may ask: the file can hold keys.
+// A backup file is the sealed envelope, saved by the person. Only the window
+// may ask: the file can hold keys.
 export interface BackupFileCatalog {
   categories: BackupCategoryInfo[];
   minPassphrase: number;

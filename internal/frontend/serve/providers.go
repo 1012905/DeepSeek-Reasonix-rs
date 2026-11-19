@@ -23,11 +23,10 @@ import (
 
 // hostGrants are the surfaces a host opens on behalf of its one local client.
 // They travel together because they are one decision — "this server is a window,
-// not a network service" — and three independent bools spell states no host
-// means: signing in but not switching folders, editing providers but not either.
+// not a network service" — and independent bools spell states no host means:
+// switching folders but not editing providers, or editing but neither.
 type hostGrants struct {
 	workspaceSwitch bool // POST /workspace; see AllowWorkspaceSwitch
-	accountAuth     bool // /account routes; see AllowAccountAuth
 	providerEdit    bool // /providers writes; see AllowProviderEdit
 	localDesktop    bool // POST /workspace/editor, GET /workspace/locate; see AllowLocalDesktop
 	installReport   bool // market installs may be reported; see AllowMarketInstallReport

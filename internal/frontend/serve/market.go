@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/contract/config"
 	"reasonix/internal/ext/installsource"
 	"reasonix/internal/ext/market"
+	"reasonix/internal/platform/telemetry"
 )
 
 // marketRegistry is swapped by tests; production always reads the fixed host.
@@ -27,12 +28,37 @@ var marketBrowser = func(hc *http.Client) market.Registry {
 	return market.NewClient(hc).WithCache(config.CacheDir())
 }
 
+// Swapped by tests; production always talks to the fixed registry host.
+var marketReporter = func(hc *http.Client) market.InstallReporter { return market.NewClient(hc) }
+
 func (s *Server) registerMarketRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /market/packages", s.marketList)
 	mux.HandleFunc("GET /market/packages/{handle}/{name}", s.marketDetail)
 	mux.HandleFunc("POST /market/plan", s.marketPlan)
 	mux.HandleFunc("POST /market/install", s.marketInstall)
-	s.registerMarketVoteRoutes(mux)
+}
+
+// AllowMarketInstallReport lets an install from the market be reported to the
+// registry. The host grants it only for a release build; the person's anonymous
+// statistics switches still decide per install.
+func (s *Server) AllowMarketInstallReport() { s.grants.installReport = true }
+
+// marketInstallKey is the market's own anonymous install id, or "" when
+// none may be sent: the host has not allowed it (or r came from a paired
+// device), either desktop statistics switch is off, or the environment opts out.
+func (s *Server) marketInstallKey(r *http.Request) string {
+	if !s.grants.at(r).installReport || telemetry.OptedOut() {
+		return ""
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg == nil || !cfg.DesktopTelemetry() || !cfg.DesktopMetrics() {
+		return ""
+	}
+	id, err := market.InstallID(config.ReasonixHomeDir())
+	if err != nil {
+		return ""
+	}
+	return id
 }
 
 // marketEntry is a listed package plus what this machine holds of it.

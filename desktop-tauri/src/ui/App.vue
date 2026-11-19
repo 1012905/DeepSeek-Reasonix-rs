@@ -25,7 +25,6 @@ import RemoteAsk from "./remote/RemoteAsk.vue";
 import type { PaneReport } from "./panetypes";
 import type { PaneView } from "../state/paneview";
 import type { AgentPort } from "../port/port";
-import type { AccountState } from "../port/account";
 import type { RemoteAsk as RemoteAskQuestion } from "../port/remote";
 import { useFirstRunRead, useLaunchHealth } from "./launchhealth";
 import { onRoomWidth } from "./viewport";
@@ -147,11 +146,7 @@ export default defineComponent((props: Props) => {
   const ports = computed(() => new Map(runtimes.value.map((rt) => [rt.id, props.hub.portFor(rt)])));
   const activeRuntime = computed(() => runtimes.value.find((rt) => rt.id === active.value) ?? null);
   const activePort = computed(() => (active.value ? ports.value.get(active.value) ?? null : null));
-  const account = ref<AccountState | null>(null);
 
-  async function loadAccount(): Promise<void> {
-    account.value = await machinePort.value.account().catch(() => null);
-  }
   const activeTitle = computed(() => {
     const rt = activeRuntime.value;
     if (!rt) return "";
@@ -508,7 +503,6 @@ export default defineComponent((props: Props) => {
 
   onMounted(() => {
     void refresh();
-    void loadAccount();
     // The pack behind the window is read once here: paint's own watcher only
     // re-reads it when a local runtime appears, which is after this.
     reloadThemes();
@@ -728,10 +722,7 @@ export default defineComponent((props: Props) => {
         onChanged: () => { void refresh(); },
         at: settingsAt.value,
         networkHost: activeRuntime.value?.host,
-        account: account.value,
-        accountUnread: "",
         onSessionsRecovered: () => { void refresh(); },
-        reloadAccount: () => { void loadAccount(); },
         workspaceRoot: activeRuntime.value?.root ?? undefined,
         onError: fail,
       }) : null,

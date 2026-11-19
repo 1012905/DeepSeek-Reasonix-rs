@@ -1292,3 +1292,19 @@ func awaitAskRequest(sub <-chan Frame) error {
 		}
 	}
 }
+
+func TestCSRFGuardStillRefusesPostWithoutJSONType(t *testing.T) {
+	reached := false
+	guarded := csrfGuard(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded", "application/octet-stream"} {
+		req := httptest.NewRequest(http.MethodPost, "/runtimes/x/close", nil)
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		rec := httptest.NewRecorder()
+		guarded.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnsupportedMediaType || reached {
+			t.Fatalf("content type %q: status = %d, reached = %v", contentType, rec.Code, reached)
+		}
+	}
+}

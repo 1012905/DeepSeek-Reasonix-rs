@@ -8,7 +8,6 @@ export const SCOPE_SAID: Record<SettingScope, string> = {
   model: "settings.this_model",
   workspace: "settings.this_workspace",
   machine: "session.this_machine",
-  account: "settings.account",
   chosen: "settings.you_choose_where",
 };
 const APPLY_SAID: Record<Exclude<ApplySemantics, "none">, string> = {

@@ -39,7 +39,7 @@ vi.mock("./settings/registry", async () => {
   return {
     SECTION_VIEW: {},
     // One section has no view on purpose: that is the placeholder path.
-    sectionView: (section: Section) => (section === "account" ? undefined : Stub),
+    sectionView: (section: Section) => (section === "display" ? undefined : Stub),
   };
 });
 
@@ -68,9 +68,8 @@ const props = (over: Partial<SettingsProps> = {}): SettingsProps => ({
   onContrast: () => {},
   onClose: () => {},
   onChanged: () => {},
-  account: null,
-  accountUnread: "",
-  reloadAccount: () => {},
+
+
   ...over,
 });
 
@@ -190,9 +189,9 @@ describe("the settings sheet", () => {
   });
 
   it("keeps a section with no view yet off the page and says so", () => {
-    const wrapper = sheet({ at: "account" });
+    const wrapper = sheet({ at: "display" });
     const empty = wrapper.get("[data-section-empty]");
-    expect(empty.attributes("data-section-empty")).toBe("account");
+    expect(empty.attributes("data-section-empty")).toBe("display");
     expect(empty.text()).toContain(t("settings.not_in_this_version_yet"));
     expect(wrapper.find(".prefs-col .stub-section").exists()).toBe(false);
   });

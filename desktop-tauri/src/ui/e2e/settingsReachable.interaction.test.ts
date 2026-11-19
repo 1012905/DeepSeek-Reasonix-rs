@@ -43,9 +43,8 @@ const props = (over: Partial<SettingsProps> = {}): SettingsProps => ({
   onContrast: () => {},
   onClose: () => {},
   onChanged: () => {},
-  account: null,
-  accountUnread: "",
-  reloadAccount: () => {},
+
+
   ...over,
 });
 

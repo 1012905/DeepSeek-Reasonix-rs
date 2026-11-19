@@ -140,7 +140,6 @@ var mirroredWireTypesHead = []wireMirror{
 	// Who can reach this window from another device. A device the page cannot
 	// list is one the person at the window cannot see to disconnect.
 	{"internal/frontend/serve/device_share.go", "ShareStatus", tsShareFile, "ShareStatus"},
-	{"internal/frontend/serve/device_share.go", "CloudRemoteStatus", tsShareFile, "CloudRemoteStatus"},
 	{"internal/frontend/serve/device_share.go", "ShareAddress", tsShareFile, "ShareAddress"},
 	{"internal/frontend/serve/device_share.go", "ShareOffer", tsShareFile, "ShareOffer"},
 	{"internal/frontend/serve/device_registry.go", "DeviceView", tsShareFile, "PairedDevice"},
@@ -219,8 +218,6 @@ var mirroredWireTypesHead = []wireMirror{
 	{"internal/session/control/auto_archive.go", "AutoArchiveSettings", tsBoundaryFile, "AutoArchiveSettings"},
 	{"internal/frontend/serve/notifications.go", "NotifyPrefs", tsPortFile, "NotifyPrefs"},
 	{"internal/frontend/serve/notifications.go", "PhoneNotifyPrefs", tsPortFile, "PhoneNotifyPrefs"},
-	{"internal/frontend/serve/share_phones.go", "PhoneView", tsShareFile, "PhoneView"},
-	{"internal/frontend/serve/share_phones.go", "PhoneList", tsShareFile, "PhoneList"},
 	// RemoteHostEdit is left out on purpose: the kernel still takes the single
 	// `workspace` an old row was saved with, which the page deliberately does
 	// not send. An under-filled request is not a picture that cannot be read.
@@ -296,10 +293,6 @@ var mirroredWireTypesHead = []wireMirror{
 	{"internal/platform/feedback/types.go", "ReplyReceipt", tsFeedbackFile, "FeedbackReplyReceipt"},
 	{"internal/platform/feedback/types.go", "Mine", tsFeedbackFile, "FeedbackMine"},
 	{"internal/platform/feedback/types.go", "Promotion", tsFeedbackFile, "FeedbackPromotion"},
-	{"internal/platform/feedback/board.go", "Board", tsFeedbackFile, "FeedbackBoard"},
-	{"internal/platform/feedback/board.go", "BoardEntry", tsFeedbackFile, "FeedbackBoardEntry"},
-	{"internal/platform/feedback/board.go", "BoardRelease", tsFeedbackFile, "FeedbackBoardRelease"},
-	{"internal/platform/feedback/board.go", "BoardMe", tsFeedbackFile, "FeedbackBoardMe"},
 	{"internal/platform/feedback/types.go", "Profile", tsFeedbackFile, "FeedbackProfile"},
 	{"internal/platform/feedback/types.go", "EffectiveLimits", tsFeedbackFile, "FeedbackEffectiveLimits"},
 	{"internal/frontend/serve/feedback.go", "feedbackEnvView", tsFeedbackFile, "FeedbackEnv"},

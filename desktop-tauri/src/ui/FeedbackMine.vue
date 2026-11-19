@@ -18,7 +18,6 @@ import FeedbackFilter from "./FeedbackFilter.vue";
 import { inGroup, type FeedbackGroup } from "./feedbackgroups";
 import { feedbackFailure, type FeedbackFailure } from "./feedbackfailure";
 import StatusChips, { CATEGORY_LABEL, shortDay, snippet } from "./feedbackstatus.vue";
-import FeedbackStanding from "./FeedbackStanding.vue";
 import StudioIcon from "./StudioIcon.vue";
 
 const props = withDefaults(defineProps<{
@@ -26,9 +25,7 @@ const props = withDefaults(defineProps<{
   onFile: (url: string) => void;
   // How many reports still want attention once this page has shown them.
   onUnread?: (n: number) => void;
-  // Where the title bar keeps the level line; absent, it is drawn above the list.
-  slot?: HTMLElement | null;
-}>(), { slot: null });
+}>(), {});
 
 const mine = ref<Mine | null>(remembered.get(props.port) ?? null);
 const failure = ref<FeedbackFailure | null>(null);
@@ -116,7 +113,6 @@ const issue = (n: number): VNodeChild => {
 <template>
   <div class="fbk-mine" :aria-busy="loading" :data-empty="mine && items.length === 0 ? '' : undefined">
     <p class="sr-only" role="status" aria-live="polite">{{ said }}</p>
-    <FeedbackStanding v-if="mine" :port="port" :mine="mine" :slot="slot" />
     <div class="fbk-side">
       <FeedbackFilter v-if="items.length > 1" :items="items" :fresh="fresh" :group="group" :on-pick="setGroup" />
 

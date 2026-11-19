@@ -24,11 +24,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"reasonix/internal/assembly/boot"
 	"reasonix/internal/base/i18n"
-	"reasonix/internal/base/netclient"
 	"reasonix/internal/contract/config"
 	"reasonix/internal/contract/event"
 	"reasonix/internal/contract/provider"
@@ -37,14 +34,12 @@ import (
 	"reasonix/internal/frontend/schedulerun"
 	"reasonix/internal/frontend/serve"
 	"reasonix/internal/frontend/traystate"
-	"reasonix/internal/platform/account"
 	"reasonix/internal/platform/appupdate"
 	"reasonix/internal/platform/computer"
 	"reasonix/internal/platform/crashreport"
 	"reasonix/internal/platform/feedback"
 	"reasonix/internal/platform/instanceid"
 	"reasonix/internal/platform/notify"
-	"reasonix/internal/platform/remotecloud"
 	"reasonix/internal/platform/telemetry"
 	"reasonix/internal/platform/update"
 	// Kinds register from init, so a binary builds only what it links. Without
@@ -386,7 +381,7 @@ func assemble(ctx context.Context, logs, handshakeTo io.Writer, shell shellIdent
 	// This window is the only client of its kernel, so a system notification
 	// reaches the person who asked for it. Every pane gets the same wrapper,
 	// not just the one the launch started with.
-	notifications, notifySet, phoneLink := hostNotifications(cfg)
+	notifications, notifySet := hostNotifications(cfg)
 	// One fold behind the status icon: every pane's events on the way through,
 	// so the tray surface answers from what the panes did rather than from a
 	// count the shell kept for itself.
@@ -474,7 +469,6 @@ func assemble(ctx context.Context, logs, handshakeTo io.Writer, shell shellIdent
 		return nil, err
 	}
 	hub.StartRecoveryGC(ctx)
-	startCloudRemote(ctx, cfg, logs, hub, phoneLink)
 	phases.mark(startupBackground)
 	return hub, nil
 }
@@ -498,45 +492,6 @@ func runtimeOptions(root string, sink event.Sink, logs io.Writer, phases *startu
 
 		CleanupPendingReconciler: serve.BackgroundCleanupReconciler,
 	}
-}
-
-func startCloudRemote(ctx context.Context, cfg *config.Config, logs io.Writer, tasks remotecloud.TaskService, phones *notify.PhoneLink) {
-	httpClient, err := netclient.NewHTTPClient(cfg.NetworkProxySpec(), netclient.TransportOptions{})
-	if err != nil {
-		fmt.Fprintf(logs, "remote cloud: %v\n", err)
-		return
-	}
-	stream, err := netclient.NewStreamDialer(cfg.NetworkProxySpec())
-	if err != nil {
-		fmt.Fprintf(logs, "remote cloud: %v\n", err)
-		return
-	}
-	dialer := *websocket.DefaultDialer
-	dialer.Proxy = nil
-	dialer.NetDialContext = stream.DialContext
-	client := account.New(os.Getenv("REASONIX_ACCOUNTS_URL"), "reasonix-studio/"+version, httpClient)
-	host := remotecloud.New(client, &dialer, os.Getenv("REASONIX_REMOTE_URL"), version, tasks)
-	host.SetGateway(os.Getenv("REASONIX_REMOTE_GATEWAY_ID"))
-	if registrar, ok := tasks.(interface{ SetCloudControllerDisconnect(func(string) error) }); ok {
-		registrar.SetCloudControllerDisconnect(host.DisconnectController)
-	}
-	if registrar, ok := tasks.(interface {
-		SetCloudRemoteStatus(func() serve.CloudRemoteStatus)
-	}); ok {
-		registrar.SetCloudRemoteStatus(func() serve.CloudRemoteStatus {
-			status := host.Status()
-			return serve.CloudRemoteStatus{
-				DeviceID: status.DeviceID, Name: status.Name, Online: status.Online, Error: status.Error, Reason: string(status.Reason),
-			}
-		})
-	}
-	// Phone notifications leave through this connection, under this Studio's own
-	// device credential.
-	phones.Set(host)
-	if registrar, ok := tasks.(interface{ SetCloudPhones(serve.CloudPhones) }); ok {
-		registrar.SetCloudPhones(host)
-	}
-	go host.Run(ctx)
 }
 
 // desktopTelemetryOn reads the user-level setting as it is now. A file that does
@@ -580,17 +535,13 @@ func hostServeConfig(cfg config.ServeConfig) config.ServeConfig {
 // says today, because deciding here would make "notify me" mean "notify me
 // after a restart". The shared [notifications] config is the one setting this
 // window and the CLI both answer to.
-func hostNotifications(cfg *config.Config) (func(event.Sink) event.Sink, *notify.Settings, *notify.PhoneLink) {
+func hostNotifications(cfg *config.Config) (func(event.Sink) event.Sink, *notify.Settings) {
 	set := notify.NewSettings(config.NotificationsConfig{})
 	if cfg != nil {
 		set.Store(cfg.Notifications)
 	}
 	sender := notify.NewPlatformSender()
-	// One reporter for every runtime, so a burst across panes folds into one
-	// report; its sender is the account connection, attached once that is up.
-	link := &notify.PhoneLink{}
-	phone := notify.NewPhone(link)
-	return func(sink event.Sink) event.Sink { return notify.NewSink(sink, sender, i18n.M, set).WithPhone(phone) }, set, link
+	return func(sink event.Sink) event.Sink { return notify.NewSink(sink, sender, i18n.M, set) }, set
 }
 
 // studioTray answers for a shell that can put an icon back whenever the setting
@@ -613,11 +564,10 @@ func (t *studioTray) ApplyTrayPrefs(serve.TrayPrefs) {}
 func paneKey(sink any) string { return fmt.Sprintf("%p", sink) }
 
 // grantHostCapabilities opens what only a local window may do. The single
-// client is the person in front of it, so provider keys and the account token
-// are local decisions rather than capabilities reachable from a network.
+// client is the person in front of it, so provider keys are local decisions
+// rather than capabilities reachable from a network.
 func grantHostCapabilities(srv *serve.Server) {
 	srv.AllowWorkspaceSwitch()
-	srv.AllowAccountAuth()
 	srv.AllowProviderEdit()
 	srv.AllowLocalDesktop()
 	if telemetry.ReleaseVersion(version) {

@@ -9,7 +9,6 @@ import { useReachable, useViewer } from "../state/viewer";
 import { useFolded } from "./usefold";
 import { chord, ariaChord } from "./keys";
 import DeviceBar from "./chrome/DeviceBar.vue";
-import PhonePop from "./chrome/PhonePop.vue";
 import TooltipButton from "./TooltipButton.vue";
 import StudioIcon from "./StudioIcon.vue";
 import ViewSwitch from "./chrome/ViewSwitch.vue";
@@ -140,7 +139,6 @@ function zoomOnTitleBar(e: MouseEvent) {
           >
             <StudioIcon name="search" />
           </TooltipButton>
-          <PhonePop v-if="hasHub && onError && hub" :hub="hub" :on-error="onError" />
           <TooltipButton
             class="thbtn theme-toggle"
             data-action="appearance.theme"

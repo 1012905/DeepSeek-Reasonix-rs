@@ -1,5 +1,5 @@
 import { SseLook } from "./sse_look";
-import type { MarketDetail, MarketList, MarketOwnRequest, MarketPackage, MarketPlan, MarketPublished, MarketQuery, MarketRequest, MarketSubmission, MarketVote, PluginExport, PluginInstallRequest, PluginPackage, PluginPlan, ScopeLayer, SkillCatalog, SkillUpdatePlan } from "./port";
+import type { MarketDetail, MarketList, MarketPlan, MarketQuery, MarketRequest, PluginExport, PluginInstallRequest, PluginPackage, PluginPlan, ScopeLayer, SkillCatalog, SkillUpdatePlan } from "./port";
 import { rootQuery } from "./sse_http";
 import { download } from "./download";
 import { host } from "./host";
@@ -73,34 +73,11 @@ export class SseExtensions extends SseLook {
   marketDetail(slug: string, opts?: { refresh?: boolean }) {
     return this.get<MarketDetail>(marketPath(slug) + (opts?.refresh ? "?refresh=1" : ""));
   }
-  marketMyVote(slug: string) {
-    return this.get<MarketVote>(marketPath(slug) + "/vote");
-  }
-  voteMarket(slug: string, value: -1 | 0 | 1) {
-    return this.post0<MarketVote>(marketPath(slug) + "/vote", { value });
-  }
   planMarket(req: MarketRequest) {
     return this.post0<MarketPlan>("/market/plan", req);
   }
   installMarket(req: MarketRequest) {
     return this.post0<MarketPlan>("/market/install", req);
-  }
-  publishMarket(sub: MarketSubmission) {
-    return this.post0<MarketPublished>("/market/publish", sub);
-  }
-  async myMarket() {
-    return (await this.get<{ packages: MarketPackage[] }>("/market/mine")).packages;
-  }
-  planOwnMarket(req: MarketOwnRequest) {
-    return this.post0<MarketPlan>("/market/mine/plan", req);
-  }
-  installOwnMarket(req: MarketOwnRequest) {
-    return this.post0<MarketPlan>("/market/mine/install", req);
-  }
-  async submitMarket(slug: string) {
-    const [handle = "", name = ""] = slug.split("/", 2);
-    const path = "/market/mine/" + encodeURIComponent(handle) + "/" + encodeURIComponent(name) + "/submit";
-    return (await this.post0<{ package: MarketPackage }>(path, {})).package;
   }
 
   // The header is read before the body because the body is bytes and has

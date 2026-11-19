@@ -1,4 +1,4 @@
-import type { MarketCache, MarketDetail, MarketList, MarketOwnRequest, MarketPackage, MarketPlan, MarketPublished, MarketQuery, MarketRequest, MarketSubmission, MarketVote } from "./market";
+import type { MarketCache, MarketDetail, MarketList, MarketPackage, MarketPlan, MarketQuery, MarketRequest } from "./market";
 import { HttpError } from "./http_error";
 import { MockLook } from "./mock_look";
 
@@ -48,20 +48,8 @@ const PACKAGES: (MarketPackage & { source: string; pinned: boolean })[] = [
   },
 ];
 
-// What the demo account has submitted, one row per review state a publisher sees.
-const MINE: MarketPackage[] = [
-  { ...PACKAGES[0], handle: "demo", slug: "demo/ship-notes", name: "ship-notes", summary: "发布说明整理技能。", status: "pending", installCount: 0, latestVersion: "0.1.0" },
-  { ...PACKAGES[4], handle: "demo", slug: "demo/paper-light", name: "paper-light", summary: "纸面质感的浅色主题。", status: "active", installCount: 37, latestVersion: "1.0.1" },
-  { ...PACKAGES[1], handle: "demo", slug: "demo/lint-kit", name: "lint-kit", summary: "代码检查插件。", status: "rejected", installCount: 0, latestVersion: "0.2.0" },
-  { ...PACKAGES[4], handle: "demo", slug: "demo/night-desk", name: "night-desk", summary: "只给自己用的深色主题。", status: "private", installCount: 0, latestVersion: "0.1.0" },
-].map(({ source: _source, pinned: _pinned, ...rest }) => ({ ...rest, installed: undefined }));
-
 export class MockMarket extends MockLook {
   private marketInstalled = new Set<string>(["irmia/irmia-devkit"]);
-  private mine = [...MINE];
-  private marketVotes = new Map<string, -1 | 0 | 1>([["acme/review-kit", 1]]);
-  // Voting reads its own sign-in answer so a test can draw the signed-out entry.
-  marketSignedIn = true;
   // Set to draw the listing and the entry as the last good copy.
   marketCache: MarketCache | undefined;
 
@@ -112,64 +100,6 @@ export class MockMarket extends MockLook {
     if (plan.unreviewed && req.digest !== plan.contentDigest) throw new HttpError(400, "an unreviewed install needs the digest of the preview it confirms", { code: "market.unpreviewed" });
     this.marketInstalled.add(req.slug);
     return { ...plan, status: "done", applied: true, actions: plan.actions?.map((a) => ({ ...a, status: "done" })) };
-  }
-
-  async publishMarket(sub: MarketSubmission): Promise<MarketPublished> {
-    const pkg: MarketPackage = {
-      kind: sub.kind, handle: "demo", name: sub.name, slug: `demo/${sub.name}`, summary: sub.summary ?? "", description: sub.description ?? "",
-      homepage: "", repoUrl: sub.repoUrl ?? "", tags: sub.tags ?? [], latestVersion: sub.version || "0.1.0", installCount: 0, starCount: 0, upCount: 0, downCount: 0, approvalRate: null, score: 0,
-      verified: false, status: sub.visibility === "private" ? "private" : "pending", updatedAt: new Date().toISOString(),
-    };
-    this.mine.unshift(pkg);
-    return { package: pkg, created: true, version: pkg.latestVersion };
-  }
-
-  async myMarket(): Promise<MarketPackage[]> {
-    return [...this.mine];
-  }
-
-  async planOwnMarket(req: MarketOwnRequest): Promise<MarketPlan> {
-    const p = this.mine.find((x) => x.slug === req.slug);
-    if (!p) throw new Error("market.not_yours");
-    return {
-      ok: true, status: "planned", applied: false, slug: p.slug, version: p.latestVersion, contentDigest: DIGEST, unreviewed: true,
-      planId: "low:sha256:own",
-      actions: [{ kind: p.kind === "theme" ? "plugin" : p.kind, action: "install_plugin_package", status: "planned", riskLevel: "low", name: p.name }],
-    };
-  }
-
-  async installOwnMarket(req: MarketOwnRequest): Promise<MarketPlan> {
-    if (req.digest !== DIGEST) throw new Error("market.unpreviewed");
-    const plan = await this.planOwnMarket(req);
-    this.mine = this.mine.map((p) => (p.slug === req.slug ? { ...p, installed: { version: p.latestVersion, contentHash: DIGEST } } : p));
-    return { ...plan, status: "done", applied: true, actions: plan.actions?.map((a) => ({ ...a, status: "done" })) };
-  }
-
-  async submitMarket(slug: string): Promise<MarketPackage> {
-    const i = this.mine.findIndex((x) => x.slug === slug && x.status === "private");
-    if (i < 0) throw new Error("market.not_private");
-    this.mine[i] = { ...this.mine[i]!, status: "pending" };
-    return this.mine[i]!;
-  }
-
-  async marketMyVote(slug: string): Promise<MarketVote> {
-    if (!this.marketSignedIn) return { signedIn: false, value: 0 };
-    return this.tally(slug, this.marketVotes.get(slug) ?? 0);
-  }
-
-  async voteMarket(slug: string, value: -1 | 0 | 1): Promise<MarketVote> {
-    if (!this.marketSignedIn) throw new Error("market.signed_out");
-    this.marketVotes.set(slug, value);
-    return this.tally(slug, value);
-  }
-
-  private tally(slug: string, value: -1 | 0 | 1): MarketVote {
-    const p = PACKAGES.find((x) => x.slug === slug);
-    if (!p) throw new Error("market.not_found");
-    const was = slug === "acme/review-kit" ? 1 : 0;
-    const up = p.upCount - (was === 1 ? 1 : 0) + (value === 1 ? 1 : 0);
-    const down = p.downCount + (value === -1 ? 1 : 0);
-    return { signedIn: true, value, upCount: up, downCount: down, approvalRate: up + down ? up / (up + down) : null, canVote: true, own: false, emailVerified: true };
   }
 
   private view(p: (typeof PACKAGES)[number]): MarketPackage {

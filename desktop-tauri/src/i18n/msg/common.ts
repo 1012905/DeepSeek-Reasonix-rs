@@ -118,7 +118,6 @@ export const COMMON: Messages = {
   "common.new_session": { zh: "新会话", en: "New session" },
   "common.next_page": { zh: "下一页", en: "Next page" },
   "common.no_selection": { zh: "未选择", en: "No selection" },
-  "common.no_thanks": { zh: "不用了", en: "No thanks" },
   "common.not_connected": { zh: "未连接", en: "Not connected" },
   "common.not_declared": { zh: "未声明", en: "Not declared" },
   "common.not_signed_in": { zh: "未登录", en: "Not signed in" },

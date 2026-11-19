@@ -253,11 +253,11 @@ describe("every source the tree carries is reached", () => {
   it("reads the tree it is meant to be guarding", () => {
     expect(Object.keys(SOURCES).length, "the glob read almost nothing; the guard would pass over anything").toBeGreaterThan(250);
     expect([...FILES].filter((file) => file.endsWith(".vue")).length, "the .vue half of the tree stopped being read").toBeGreaterThanOrEqual(200);
-    // The one glob edge the twenty settings pages hang from. Without it each of
+    // The one glob edge the settings pages hang from. Without it each of
     // them is an orphan at once, so this names the broken edge rather than
     // letting the pages be recorded as debt.
     const sections = [...FILES].filter((file) => file.startsWith("src/ui/settings/sections/") && file.endsWith(".vue"));
-    expect(sections.length).toBeGreaterThanOrEqual(20);
+    expect(sections.length).toBeGreaterThanOrEqual(19);
     expect(sections.filter((file) => !REACHED.has(file)), "the settings sections are mounted only by import.meta.glob, and that edge is no longer read").toEqual([]);
   });
 });

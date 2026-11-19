@@ -1,24 +1,9 @@
 import { SseIntake } from "./sse_intake";
-import type { BackupApplyResult, BackupCatalog, BackupCategory, BackupCreated, BackupCreateRequest, BackupFileCatalog, BackupFileExport, BackupPlan } from "./backup";
+import type { BackupApplyResult, BackupCategory, BackupFileCatalog, BackupFileExport, BackupPlan } from "./backup";
 
-// Backups kept in the signed-in account. Every call is refused while signed
-// out, so a caller shows the section only when the account says signed in.
+// The sealed config envelope as a file the person saves and opens again. Only
+// the window may ask: the file can hold keys.
 export class SseBackup extends SseIntake {
-  backups() {
-    return this.get<BackupCatalog>("/backups");
-  }
-  createBackup(req: BackupCreateRequest) {
-    return this.post0<BackupCreated>("/backups", req);
-  }
-  deleteBackup(id: string) {
-    return this.del("/backups/" + encodeURIComponent(id));
-  }
-  previewBackup(id: string, passphrase: string) {
-    return this.post0<BackupPlan>("/backups/" + encodeURIComponent(id) + "/preview", { passphrase });
-  }
-  applyBackup(planId: string, items: string[], consented: string[]) {
-    return this.post0<BackupApplyResult>("/backups/apply", { planId, items, consented });
-  }
   backupFileCatalog() {
     return this.get<BackupFileCatalog>("/backups/file");
   }

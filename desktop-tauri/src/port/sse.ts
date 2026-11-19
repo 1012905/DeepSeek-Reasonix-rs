@@ -1,6 +1,6 @@
 import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import { PLAN_ACTIONS, type PlanAction } from "./session";
-import type { AccountState, AgentPort, ChipCall, CompactionSettings, Completion, DeviceGrant, UpdateProgress, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, MemoryEntry, UsageQuery, UsageReport, UploadReport, Queue, Queued, NotifyPrefs, TrayPrefs, WorkspaceInfo } from "./port";
+import type { AgentPort, ChipCall, CompactionSettings, Completion, UpdateProgress, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, MemoryEntry, UsageQuery, UsageReport, UploadReport, Queue, Queued, NotifyPrefs, TrayPrefs, WorkspaceInfo } from "./port";
 import type { MemoryProactive, MemorySuggestion } from "./memory";
 import { HttpError, type CommitProposal, type CommitRequest, type CommitResult, type WorkspaceFile, type WorkspaceFiles } from "./port";
 import { SseTerminal } from "./sse_terminal";
@@ -293,14 +293,6 @@ export class SsePort extends SseTerminal implements AgentPort {
     };
   }
 
-  account() {
-    return this.get<AccountState>("/account");
-  }
-
-  accountLogin() {
-    return this.post0<DeviceGrant>("/account/login");
-  }
-
   // A kernel with no window registers no tray routes at all, which is what a
   // browser tab reads as "there is no icon here" — the same null this panel
   // has always had to render.
@@ -331,14 +323,6 @@ export class SsePort extends SseTerminal implements AgentPort {
     if (res.status === 404) return null;
     if (!res.ok) await SsePort.fail("/tray/prefs", res);
     return (await res.json()) as TrayPrefs;
-  }
-
-  accountPoll(deviceCode: string) {
-    return this.post0<{ status: "pending" | "complete"; slowDown?: boolean }>("/account/poll", { deviceCode });
-  }
-
-  accountLogout() {
-    return this.post("/account/logout");
   }
 
   workspaces() {

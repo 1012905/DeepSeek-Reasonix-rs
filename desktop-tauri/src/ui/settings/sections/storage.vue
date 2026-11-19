@@ -14,13 +14,12 @@ import { declarePage } from "./nesting";
 import StorageUsage from "../parts/data-storage-usage.vue";
 import AutoArchive from "../parts/data-auto-archive.vue";
 import BackupFile from "../parts/data-backup-file.vue";
-import Backup from "../parts/data-backup.vue";
 import LegacySessions from "../parts/data-legacy-sessions.vue";
+import TraceExport from "../parts/data-trace-export.vue";
 
 // What this machine keeps: what the agent remembers, what it has spent, how
 // much is on disk and where, how long a conversation survives without being
-// archived, and the two ways off it — a file the person carries, and a backup
-// in the account.
+// archived, and the file the person carries off it.
 //
 // Memory and usage are pages of their own as well as blocks on this one
 // (FOLDS_INTO), so they are drawn from their own files instead of a second
@@ -36,7 +35,6 @@ declarePage("storage");
 // another machine.
 const home = computed(() => props.settingsProps.networkPort ?? props.settingsProps.port);
 const recorded = computed(() => props.settingsProps.status?.cwd || props.settingsProps.workspaceRoot || "—");
-const signedIn = computed(() => !!props.settingsProps.account?.signedIn && !!props.settingsProps.account.user);
 const hidden = useExternal(onHidesLegacySessionsChange, hidesLegacySessions);
 </script>
 
@@ -85,9 +83,9 @@ const hidden = useExternal(onHidesLegacySessionsChange, hidesLegacySessions);
     <Group id="backup-file" :title="t('data.export_and_import_config')" :hint="t('settings.config_in_one_file')">
       <BackupFile :port="home" />
     </Group>
-    <!-- A backup lives in the account, so the block is not drawn before one does. -->
-    <Group v-if="signedIn" id="backup" :title="t('data.cloud_backup')" :hint="t('settings.back_up_to_the_cloud')">
-      <Backup :port="home" />
-    </Group>
+  </SectionCard>
+
+  <SectionCard :title="t('data.trace_export')">
+    <TraceExport :port="home" />
   </SectionCard>
 </template>

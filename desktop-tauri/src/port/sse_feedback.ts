@@ -1,5 +1,5 @@
 import { SseBackup } from "./sse_backup";
-import type { FeedbackBoard, FeedbackBoardMe, FeedbackEnv, FeedbackImage, FeedbackLinkedInstall, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
+import type { FeedbackEnv, FeedbackImage, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
 
 export class SseFeedback extends SseBackup {
   feedbackEnv(locale?: string) {
@@ -25,31 +25,5 @@ export class SseFeedback extends SseBackup {
   }
   feedbackSeen(receipt: string, upTo: number) {
     return this.post("/feedback/" + encodeURIComponent(receipt) + "/seen", { upTo });
-  }
-  async feedbackLinks() {
-    return (await this.get<{ installs: FeedbackLinkedInstall[] }>("/feedback/links")).installs;
-  }
-  linkFeedbackAccount() {
-    return this.post("/feedback/link");
-  }
-  unlinkFeedbackAccount() {
-    return this.del("/feedback/link");
-  }
-  feedbackBoard(release?: string) {
-    return this.get<FeedbackBoard>("/feedback/board" + (release ? "?release=" + encodeURIComponent(release) : ""));
-  }
-  feedbackBoardMe() {
-    return this.get<FeedbackBoardMe>("/feedback/board/me");
-  }
-  async joinFeedbackBoard(displayName: string) {
-    await this.post("/feedback/board/join", { displayName });
-    return this.feedbackBoardMe();
-  }
-  async leaveFeedbackBoard() {
-    await this.post("/feedback/board/leave", {});
-    return this.feedbackBoardMe();
-  }
-  unlinkFeedbackInstall(id: string) {
-    return this.del("/feedback/links/" + encodeURIComponent(id));
   }
 }

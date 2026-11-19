@@ -23,10 +23,6 @@ const (
 // list, and every row is a page copy that agrees field for field with the Go
 // struct its handler actually writes.
 var mirroredWireTypesTail = []wireMirror{
-	// account.ts: DeviceGrant is absent. /account/login writes a map literal
-	// assembled from the grant, so the struct is not what the page reads, and a
-	// guard over it would not see that response drift.
-
 	// adjudication
 	{"internal/frontend/serve/adjudications.go", "adjudicationItem", tsAdjudicationFile, "AdjudicationEntry"},
 	{"internal/frontend/serve/adjudications.go", "adjudicationView", tsAdjudicationFile, "Adjudications"},
@@ -34,9 +30,7 @@ var mirroredWireTypesTail = []wireMirror{
 	{"internal/frontend/serve/drop.go", "droppedRef", tsAttachmentFile, "DroppedRef"},
 	// backup
 	{"internal/ext/configbackup/snapshot.go", "CategoryInfo", tsBackupFile, "BackupCategoryInfo"},
-	{"internal/platform/account/backup.go", "Backup", tsBackupFile, "BackupEntry"},
 	{"internal/ext/configbackup/snapshot.go", "Omission", tsBackupFile, "BackupOmission"},
-	{"internal/frontend/serve/backup.go", "createBackupRequest", tsBackupFile, "BackupCreateRequest"},
 	{"internal/ext/configbackup/paths.go", "PathRef", tsBackupFile, "BackupPathRef"},
 	{"internal/ext/configbackup/plan.go", "PlanItem", tsBackupFile, "BackupPlanItem"},
 	{"internal/ext/configbackup/plan.go", "Plan", tsBackupFile, "BackupPlan"},
@@ -60,7 +54,6 @@ var mirroredWireTypesTail = []wireMirror{
 	// context_composition
 	{"internal/contract/event/notice_payload.go", "ContextComposition", tsContextCompositionFile, "ContextComposition"},
 	// feedback
-	{"internal/platform/feedback/link.go", "LinkedInstall", tsFeedbackFile, "FeedbackLinkedInstall"},
 	// hook
 	{"internal/frontend/serve/hooks.go", "hookEntry", tsHookFile, "HookEntry"},
 	{"internal/frontend/serve/hooks.go", "hookSource", tsHookFile, "HookSource"},
@@ -82,8 +75,6 @@ var mirroredWireTypesTail = []wireMirror{
 	{"internal/ext/market/cache.go", "CacheNote", tsMarketFile, "MarketCache"},
 	{"internal/frontend/serve/market.go", "marketDetailView", tsMarketFile, "MarketDetail"},
 	{"internal/ext/market/install.go", "Request", tsMarketFile, "MarketRequest"},
-	{"internal/ext/market/publish.go", "Submission", tsMarketFile, "MarketSubmission"},
-	{"internal/ext/market/publish.go", "Published", tsMarketFile, "MarketPublished"},
 	// mcp
 	// McpDraft is absent: /mcp/parse assembles a map of servers and risks.
 	{"internal/frontend/serve/catalog.go", "mcpTool", tsMcpFile, "McpTool"},
@@ -128,9 +119,6 @@ var mirroredWireTypesTail = []wireMirror{
 	{"internal/session/control/approval_orchestration.go", "PostureReport", tsSessionFile, "ApprovalDefault"},
 	{"internal/frontend/serve/balance.go", "walletLine", tsSessionFile, "WalletLine"},
 	{"internal/frontend/serve/balance.go", "walletBody", tsSessionFile, "WalletReading"},
-	// share
-	{"internal/frontend/serve/cloud_presence.go", "CloudControllerView", tsShareFile, "CloudDevice"},
-	{"internal/frontend/serve/device_share.go", "CloudShareOffer", tsShareFile, "CloudShareOffer"},
 	// shell
 	{"internal/session/control/shell.go", "ShellOption", tsShellFile, "ShellOption"},
 	{"internal/session/control/shell.go", "ShellSettings", tsShellFile, "ShellSettings"},

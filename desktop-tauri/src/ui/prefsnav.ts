@@ -8,7 +8,7 @@ import { rankTerms, type SettingTerms } from "./settingRank";
 /** The settings table of contents: which sections exist, what each is called,
  *  what mark it carries and which question it answers. Kept out of Settings
  *  itself because it is a table, not a screen — the screen reads it. */
-export type Section = "common" | "display" | "controls" | "session" | "persona" | "model" | "providers" | "tools" | "peers" | "hooks" | "ext" | "network" | "remote" | "memory" | "usage" | "storage" | "account" | "versions" | "appearance" | "advanced";
+export type Section = "common" | "display" | "controls" | "session" | "persona" | "model" | "providers" | "tools" | "peers" | "hooks" | "ext" | "network" | "remote" | "memory" | "usage" | "storage" | "versions" | "appearance" | "advanced";
 
 export const ICON: Record<Section, FunctionalComponent> = {
   display: () => h(StudioIcon, { name: "monitor" }),
@@ -27,7 +27,6 @@ export const ICON: Record<Section, FunctionalComponent> = {
   storage: () => h(StudioIcon, { name: "storage" }),
   memory: () => h(StudioIcon, { name: "bookmark" }),
   usage: () => h(StudioIcon, { name: "chart" }),
-  account: () => h(StudioIcon, { name: "user" }),
   versions: () => h(StudioIcon, { name: "download" }),
   appearance: () => h(StudioIcon, { name: "palette" }),
   advanced: () => h(StudioIcon, { name: "sliders" }),
@@ -51,7 +50,6 @@ export const NAV: [string, [Section, string][]][] = [
       ["appearance", "settings.appearance"],
       ["storage", "settings.data"],
       ["network", "usage.connections"],
-      ["account", "settings.account_and_about"],
       ["advanced", "settings.advanced"],
     ],
   ],
@@ -68,7 +66,6 @@ export const SECTION_DESC: Partial<Record<Section, string>> = {
   appearance: "settings.light_or_dark_colours_fonts",
   storage: "settings.memory_usage_storage_backup",
   network: "settings.network_remote_machines_phone",
-  account: "settings.account_version_logs_community",
 };
 
 /** When a change to this setting is in force.
@@ -114,10 +111,9 @@ export type ApplySemantics = "immediate" | "runtime-rebuild" | "restart" | "on-o
  *  model     follows the model or its configuration block
  *  workspace follows the project directory
  *  machine   every session on this computer, now and later
- *  account   follows the signed-in identity
  *  chosen    the block itself asks where to write, and the kernel takes that
  *            answer as a parameter — see the note on the entries that use it */
-export type SettingScope = "session" | "model" | "workspace" | "machine" | "account" | "chosen";
+export type SettingScope = "session" | "model" | "workspace" | "machine" | "chosen";
 
 export interface SettingEntry {
   /** Which page it is on. */
@@ -197,7 +193,7 @@ export const SETTINGS: SettingEntry[] = [
   { section: "peers", anchor: "peer-projects", within: "peers", title: "remote.projects_allowed_through", scope: "machine", apply: "next-turn", keywords: ["放行", "项目", "不再询问", "长期", "撤销", "peer", "release", "会话间"] },
   { section: "tools", anchor: "write-lease", title: "session.several_sessions_writing_one_project", scope: "machine", apply: "on-open", keywords: ["lease", "写锁", "并行", "多会话", "乐观", "optimistic", "write_lease", "等待"] },
   { section: "session", anchor: "subagent-claims", title: "session.sub_agent_write_scope", scope: "machine", apply: "runtime-rebuild", keywords: ["subagent", "子代理", "并发", "write_paths", "乐观", "optimistic", "写锁"] },
-  { section: "account", anchor: "trace-export", title: "data.trace_export", scope: "machine", apply: "on-open", keywords: ["追踪", "opentelemetry", "otlp", "观测", "遥测", "trace", "collector", "收集器"] },
+  { section: "storage", anchor: "trace-export", title: "data.trace_export", scope: "machine", apply: "on-open", keywords: ["追踪", "opentelemetry", "otlp", "观测", "遥测", "trace", "collector", "收集器"] },
   { section: "tools", anchor: "web-access", title: "models.web_search_and_fetch", scope: "machine", apply: "on-open", keywords: ["搜索", "searxng", "deepseek", "抓取", "计费", "付费", "web search", "fetch"] },
   { section: "tools", anchor: "browser-tools", title: "common.built_in_browser", scope: "machine", apply: "runtime-rebuild", keywords: ["browser", "网页", "chrome", "浏览器工具"] },
   // The four blocks below carry a scope control of their own, and the kernel
@@ -207,7 +203,7 @@ export const SETTINGS: SettingEntry[] = [
   { section: "session", anchor: "scheduled-runs", title: "panels.scheduled_runs", scope: "machine", apply: "immediate", keywords: ["定时", "计划", "任务", "每天", "schedule", "cron", "unattended", "无人值守"] },
   { section: "session", anchor: "hooks", title: "settings.hooks", scope: "chosen", apply: "immediate", keywords: ["钩子", "hook", "触发"] },
 
-  { section: "ext", anchor: "market", title: "ext.community_market", scope: "machine", apply: "immediate", keywords: ["市场", "market", "社区", "发现", "下载", "发布", "publish", "主题"] },
+  { section: "ext", anchor: "market", title: "ext.community_market", scope: "machine", apply: "immediate", keywords: ["市场", "market", "社区", "发现", "下载", "主题"] },
   { section: "ext", anchor: "plugins", title: "settings.plugin_packages", scope: "machine", apply: "immediate", keywords: ["安装"] },
   { section: "ext", anchor: "mcp", title: "ext.external_services", scope: "chosen", apply: "immediate", keywords: ["mcp", "服务器", "连接外部"] },
   { section: "ext", anchor: "skills", title: "settings.skills", scope: "chosen", apply: "immediate", keywords: ["skill", "技能包"] },
@@ -218,12 +214,8 @@ export const SETTINGS: SettingEntry[] = [
   // walks through it reaches every pane. Nothing is written, so nothing outlives
   // the window either.
   { section: "remote", anchor: "phone", title: "remote.phone_access", scope: "machine", apply: "immediate", keywords: ["手机", "扫码", "二维码", "局域网", "配对", "phone", "mobile", "qr"] },
-  { section: "remote", anchor: "phone-notify", within: "phone", title: "remote.phone_notifications", scope: "machine", apply: "immediate", keywords: ["推送", "提醒", "手机", "批准", "push", "notification", "phone"] },
-  { section: "remote", anchor: "phone-device", within: "phone", title: "remote.this_phones_reminders", scope: "machine", apply: "immediate", keywords: ["推送", "提醒", "手机", "push", "notification"] },
-  { section: "account", anchor: "account", title: "settings.account", scope: "account", apply: "immediate", keywords: ["登录", "社区"] },
-  // Shown only while signed in; restoring writes through the ordinary config paths and reloads the runtime.
+  // Restoring writes through the ordinary config paths and reloads the runtime.
   { section: "storage", anchor: "backup-file", title: "data.export_and_import_config", scope: "machine", apply: "immediate", keywords: ["备份", "导出", "导入", "换机", "迁移", "文件"] },
-  { section: "storage", anchor: "backup", title: "data.cloud_backup", scope: "account", apply: "immediate", keywords: ["备份", "恢复", "换机", "同步", "导出"] },
   { section: "versions", anchor: "versions", title: "common.version", scope: "machine", apply: "immediate", keywords: ["更新", "升级"] },
   { section: "common", anchor: "update-mode", title: "about.update_mode", scope: "machine", apply: "immediate", keywords: ["自动更新", "检查更新", "更新提醒", "后台", "update", "auto update", "notify", "自动下载", "download"] },
   { section: "versions", anchor: "logs", title: "about.logs_and_abnormal_exit_records", scope: "machine", apply: "none", keywords: ["日志", "崩溃", "闪退", "异常退出", "log", "logs", "crash", "路径"] },
@@ -273,7 +265,7 @@ export const SETTINGS: SettingEntry[] = [
 
 export const SETTING_AT = (anchor: string) => SETTINGS.find((s) => s.anchor === anchor);
 
-export const FOLDS_INTO: Partial<Record<Section, Section>> = { providers: "model", remote: "network", memory: "storage", persona: "session", hooks: "ext", peers: "session", usage: "storage", versions: "account" };
+export const FOLDS_INTO: Partial<Record<Section, Section>> = { providers: "model", remote: "network", memory: "storage", persona: "session", hooks: "ext", peers: "session", usage: "storage", versions: "advanced" };
 
 export const pageHome = (section: Section): Section => FOLDS_INTO[section] ?? section;
 

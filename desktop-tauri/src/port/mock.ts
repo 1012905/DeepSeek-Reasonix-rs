@@ -3,7 +3,7 @@ import type { SurfaceActionRequest, SurfaceActionRecord } from "./surface";
 import type { JobOutput, PlanAction } from "./session";
 import { approvalKind } from "./mock_approval";
 import { HttpError } from "./port";
-import type { AccountState, AgentPort, Completion, CompletionItem, DeviceGrant, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, UsageReport, UploadReport, MemoryEntry, WorkspaceInfo, Attachment, DroppedRef, Queue, QueueItem, Queued, ChipCall, NotifyPrefs, TrayPrefs, UsageQuery } from "./port";
+import type { AgentPort, Completion, CompletionItem, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, UsageReport, UploadReport, MemoryEntry, WorkspaceInfo, Attachment, DroppedRef, Queue, QueueItem, Queued, ChipCall, NotifyPrefs, TrayPrefs, UsageQuery } from "./port";
 import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
 import { MockWorkspace, mockWorkspaces, mockWorktreeSources, MockPreparations } from "./mock_workspace";
 import { SCRIPT, mockMsgIndex, mockTurnStart } from "./fixture";
@@ -207,20 +207,6 @@ export class MockPort extends MockWorkspace implements AgentPort {
   onUpdateProgress(): () => void {
     return () => {};
   }
-
-  async account(): Promise<AccountState> {
-    return localStorage.getItem("reasonix.mock.account") ? { signedIn: true, user: { handle: "demo", email: "demo@example.com", label: "demo" } } : { signedIn: false };
-  }
-
-  async accountLogin(): Promise<DeviceGrant> {
-    throw new Error("没有内核，无法登录");
-  }
-
-  async accountPoll(): Promise<{ status: "pending" | "complete" }> {
-    return { status: "pending" };
-  }
-
-  async accountLogout(): Promise<void> {}
 
   async workspaces(): Promise<WorkspaceInfo> {
     return mockWorkspaces(this.state.workspaceRoot ?? "");

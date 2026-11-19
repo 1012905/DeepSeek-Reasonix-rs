@@ -21,22 +21,6 @@ export interface PairedDevice {
   online: boolean;
 }
 
-export interface CloudDevice {
-  id: string;
-  name: string;
-  connectedAt: string;
-  lastSeen: string;
-  ordinal: number;
-}
-
-export interface CloudRemoteStatus {
-  deviceId?: string;
-  name?: string;
-  online: boolean;
-  error?: string;
-  reason?: "signed_out" | "relay_unreachable" | "relay_refused";
-}
-
 // A paired device's answer about itself. Mirrors serve.DeviceSelf.
 export interface DeviceSelf {
   id: string;
@@ -52,8 +36,6 @@ export interface ShareStatus {
   origin?: string;
   addresses: ShareAddress[];
   devices: PairedDevice[];
-  cloudDevices: CloudDevice[];
-  cloudRemote?: CloudRemoteStatus;
   offerExpires?: string;
 }
 
@@ -63,34 +45,6 @@ export interface ShareOffer {
   qr: string;
   expires: string;
 }
-
-export interface CloudShareOffer {
-  url: string;
-  qr: string;
-}
-
-// One device (a phone's browser) enrolled against this Studio at the account
-// service. Mirrors serve.PhoneView. pending is waiting for the person here.
-export interface PhoneView {
-  id: string;
-  ordinal?: number;
-  name: string;
-  state: "pending" | "active" | "revoked";
-  uaClass: string;
-  createdAt: string;
-  lastSeenAt: string;
-  expiresAt?: string;
-  // What to compare when two devices look alike.
-  keyThumbprint: string;
-  // The active device a pending one says it replaces.
-  replaceCandidate?: string;
-}
-
-export interface PhoneList {
-  phones: PhoneView[];
-}
-
-export type PhoneAction = "add" | "replace" | "reject";
 
 export interface SharePort {
   // Null where this kernel has no window to share from: a browser tab, or a
@@ -105,14 +59,7 @@ export interface SharePort {
   shareRemember(): Promise<{ remember: boolean } | null>;
   setShareRemember(remember: boolean): Promise<{ remember: boolean }>;
   offerShare(): Promise<ShareOffer>;
-  offerCloudShare(): Promise<CloudShareOffer>;
   revokeDevice(id: string): Promise<ShareStatus>;
-  // The devices enrolled against this Studio at the account service. Null where
-  // this kernel has no window to ask from; a refusal is a thrown coded error.
-  sharePhones(): Promise<PhoneList | null>;
-  // Answers a waiting device, and answers with the list as it is afterwards.
-  resolvePhone(id: string, action: PhoneAction, replaceId?: string): Promise<PhoneList>;
-  revokePhone(id: string): Promise<PhoneList>;
   // What this page is to the kernel: a paired device, or null for the window
   // and for a browser on a networked serve.
   device(): Promise<DeviceSelf | null>;

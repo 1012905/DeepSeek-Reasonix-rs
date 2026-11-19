@@ -1,7 +1,7 @@
 import type { AgentPort } from "./port";
 import type { HistorySearch, HubPort, RuntimeView, TreeSession, TreeWindow, TreeWorkspace } from "./hub";
 import type { RemoteHost, RemoteListing, RemoteProbe } from "./remote";
-import type { PhoneAction, PhoneList, PhoneView, ShareStatus } from "./share";
+import type { ShareStatus } from "./share";
 import { MockPort } from "./mock";
 
 // MockHub is the fixture's answer to a window that drives several panes. Each
@@ -363,28 +363,7 @@ export class MockHub implements HubPort {
       { interface: "vEthernet (WSL)", ip: "172.28.160.1", kind: "virtual" },
     ],
     devices: [],
-    cloudDevices: [],
-    cloudRemote: { online: false, reason: "signed_out" },
   };
-
-  private phones: PhoneView[] = [
-    { id: "rc_aaa", ordinal: 1, name: "iPhone Safari", state: "active", uaClass: "ios-safari", createdAt: "2026-10-12T08:00:00Z", lastSeenAt: "2026-10-18T09:30:00Z", keyThumbprint: "kP3x…f9a1" },
-    { id: "rc_bbb", name: "Android Chrome", state: "pending", uaClass: "android-chrome", createdAt: "2026-10-18T09:40:00Z", lastSeenAt: "2026-10-18T09:40:00Z", expiresAt: "2026-10-18T09:55:00Z", keyThumbprint: "Zq8m…02c7" },
-  ];
-
-  sharePhones() {
-    return Promise.resolve<PhoneList | null>({ phones: this.phones.map((p) => ({ ...p })) });
-  }
-
-  resolvePhone(id: string, action: PhoneAction) {
-    this.phones = this.phones.flatMap((p) => (p.id !== id ? [p] : action === "reject" ? [] : [{ ...p, state: "active" as const, expiresAt: undefined, ordinal: 2 }]));
-    return Promise.resolve<PhoneList>({ phones: this.phones.map((p) => ({ ...p })) });
-  }
-
-  revokePhone(id: string) {
-    this.phones = this.phones.filter((p) => p.id !== id);
-    return Promise.resolve<PhoneList>({ phones: this.phones.map((p) => ({ ...p })) });
-  }
 
   shareStatus() {
     return Promise.resolve<ShareStatus | null>({ ...this.share });
@@ -423,11 +402,6 @@ export class MockHub implements HubPort {
     return Promise.resolve({ url: `${this.share.origin}/#pair=mock-code`, qr, expires });
   }
 
-  offerCloudShare() {
-    const qr = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"><rect width="29" height="29" fill="#fff"/><path fill="#000" d="M4 4h7v7h-7zM18 4h7v7h-7zM4 18h7v7h-7zM13 13h3v3h-3z"/></svg>`;
-    return Promise.resolve({ url: "https://reasonix.io/remote/?device=mock-device", qr });
-  }
-
   device() {
     return Promise.resolve(null);
   }
@@ -440,7 +414,6 @@ export class MockHub implements HubPort {
     this.share = {
       ...this.share,
       devices: this.share.devices.filter((d) => d.id !== id),
-      cloudDevices: this.share.cloudDevices.filter((d) => d.id !== id),
     };
     return Promise.resolve({ ...this.share });
   }

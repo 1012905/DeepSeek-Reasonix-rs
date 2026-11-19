@@ -11,9 +11,8 @@ import type { Attachment, DroppedRef, KeptText } from "./attachment";
 export { DeliveryError, HttpError };
 export type { DeliveryFault };
 export type { Attachment, DroppedRef, KeptText };
-import type { AccountState, AccountUser, DeviceGrant } from "./account";
 import type { Adjudications } from "./adjudication";
-import type { BackupApplyResult, BackupCatalog, BackupCategory, BackupCreated, BackupCreateRequest, BackupFileCatalog, BackupFileExport, BackupPlan } from "./backup";
+import type { BackupApplyResult, BackupCategory, BackupFileCatalog, BackupFileExport, BackupPlan } from "./backup";
 export type * from "./backup";
 export type { AdjudicationEntry, AdjudicationState, Adjudications } from "./adjudication";
 import type { HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource } from "./hook";
@@ -33,8 +32,8 @@ import type { StudioCrash, StudioLogs, UpdateMode, UpdateProgress, VersionEntry,
 import type { ChangeDiff, CommitFile, CommitProposal, CommitRequest, CommitResult, DiscardRequest, GitCommitFiles, GitRepos, PushRequest, PushResult, PushPlan, StageRequest, WorkspaceBranch, WorkspaceBranches, WorkspaceChange, WorkspaceChanges, WorkspaceEntry, WorkspaceFile, WorkspaceFiles, WorkspaceGit, WorkspaceInfo, WorkspacePreviewPort } from "./workspace";
 import type { SessionTailPort } from "./session_tail";
 
-export type { AccountState, AccountUser, ApprovalDefault, ApprovalMode, ApprovalVerdict, WorkspaceTrust, CapabilityScope,
-  Checkpoint, CompactionSettings, Completion, CompletionItem, ContextBreakdown, DeviceGrant, HistoryMessage, HostTodo, BrowserTab,
+export type { ApprovalDefault, ApprovalMode, ApprovalVerdict, WorkspaceTrust, CapabilityScope,
+  Checkpoint, CompactionSettings, Completion, CompletionItem, ContextBreakdown, HistoryMessage, HostTodo, BrowserTab,
   HookCatalog, HookDryRun, HookEntry, HookEventInfo, HookSource, JobEntry, JobOutput, McpCatalog, McpDraft,
   McpDraftServer, McpEntry, McpInstallResult, McpInstallScope, McpLoad, McpRisk, McpTool, MemoryCatalog,
   MemoryEntry, UnreadableMemory, ModelEntry, ModelMode, ModelPrice, NetworkProbe, NetworkSettings, Preset, RewindPlan,
@@ -44,7 +43,7 @@ export type { AccountState, AccountUser, ApprovalDefault, ApprovalMode, Approval
 
 import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
 import type { PluginExport, PluginInstallRequest, PluginPackage, PluginPlan } from "./plugin";
-import type { MarketDetail, MarketList, MarketOwnRequest, MarketPackage, MarketPlan, MarketPublished, MarketQuery, MarketRequest, MarketSubmission, MarketVote } from "./market";
+import type { MarketDetail, MarketList, MarketPlan, MarketQuery, MarketRequest } from "./market";
 import type { Appearance, SceneFolder, ThemeImport, ThemePack } from "./look";
 import type { AskTimeoutSettings, ModStatus, ModsSettings, ModsSettingsEdit, SessionRefSettings, AutoArchiveSettings, ChangedFilesSettings, FeedbackLevelNotices, FoldWorkSettings, TurnNarrationSettings, ObservabilityPatch, ObservabilitySettings, WebAccessPatch, WebAccessSettings, SearxngProbe, BrowserToolsSettings, SubagentClaimsSettings, WriteLeaseSettings, PlanApprovalSettings, DefaultModeSettings, ToolSettings, PeerReceipt, PeersState, PeersSettings, PeersSettingsEdit, PeerRemember, ConfigProblem, ConfigRepair, DisplayCurrencyMode, DisplayCurrencySettings, PermissionLists, PermissionRules, ProgressWatchSettings, SandboxSettings, WorkspaceRoots, ChangedSettings } from "./boundary";
 import type { ScheduleBoard, ScheduleDraft, SchedulePreview, ScheduleResultView, ScheduleView } from "./schedule";
@@ -52,7 +51,7 @@ import type { Protocol, ProviderHealth, ProviderCheck, ProviderCheckDraft, Provi
 export type { ModelEffort, ModelLimit, ModelRate, Protocol, ProviderHealth, ProviderCheck, ProviderCheckDraft, ProviderDraft, ProviderEdit, ProviderEntry, ProviderModelCheck, ProviderModelCheckRequest, ProviderProbe, ProviderSetup, ProviderRemoval, ProviderPreset, ProviderPresetInstall } from "./provider";
 import type { TerminalPort } from "./terminal";
 import type { StoragePlan, StorageQuery, StorageState } from "./storage";
-import type { FeedbackBoard, FeedbackBoardMe, FeedbackEnv, FeedbackImage, FeedbackLinkedInstall, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
+import type { FeedbackEnv, FeedbackImage, FeedbackMine, FeedbackReceipt, FeedbackReplyReceipt, FeedbackRequest } from "./feedback";
 import type { PersonaDraft, PersonaSettings, PresentFilesSettings } from "./boundary";
 export type * from "./plugin";
 export type * from "./schedule";
@@ -228,18 +227,6 @@ export interface AgentPort extends RunningWorkPort, MemoryHoldPort, WorkspacePre
   marketDetail(slug: string, opts?: { refresh?: boolean }): Promise<MarketDetail>;
   planMarket(req: MarketRequest): Promise<MarketPlan>;
   installMarket(req: MarketRequest): Promise<MarketPlan>;
-  // Publishing spends the account session; both refuse when signed out.
-  publishMarket(sub: MarketSubmission): Promise<MarketPublished>;
-  myMarket(): Promise<MarketPackage[]>;
-  // The account's own package in any state, installed against the digest its
-  // own preview showed; the kernel reads the package from the registry as the
-  // account, never from what the window sends.
-  planOwnMarket(req: MarketOwnRequest): Promise<MarketPlan>;
-  installOwnMarket(req: MarketOwnRequest): Promise<MarketPlan>;
-  submitMarket(slug: string): Promise<MarketPackage>;
-  marketMyVote(slug: string): Promise<MarketVote>;
-  // value 0 withdraws. The kernel sends the account token to the registry.
-  voteMarket(slug: string, value: -1 | 0 | 1): Promise<MarketVote>;
   // Text the window assembled, put on disk. Returns where it went, or null when
   // the host handled it without a path to report (a browser download).
   saveText(name: string, content: string): Promise<string | null>;
@@ -471,16 +458,6 @@ export interface AgentPort extends RunningWorkPort, MemoryHoldPort, WorkspacePre
   // material is kept until the application that came up says so. A launch that
   // booted from no update has nothing to retire and succeeds anyway.
   acknowledgeLaunchHealth(): Promise<void>;
-  account(): Promise<AccountState>;
-  accountLogin(): Promise<DeviceGrant>;
-  accountPoll(deviceCode: string): Promise<{ status: "pending" | "complete"; slowDown?: boolean }>;
-  accountLogout(): Promise<void>;
-  // Backups exist only for a signed-in account; every call refuses otherwise.
-  backups(): Promise<BackupCatalog>;
-  createBackup(req: BackupCreateRequest): Promise<BackupCreated>;
-  deleteBackup(id: string): Promise<void>;
-  previewBackup(id: string, passphrase: string): Promise<BackupPlan>;
-  applyBackup(planId: string, items: string[], consented: string[]): Promise<BackupApplyResult>;
   // A read-only question beside the session: its own conversation, never the
   // main transcript, billed to the session and gone when closed.
   openSide(): Promise<string>;
@@ -506,18 +483,6 @@ export interface AgentPort extends RunningWorkPort, MemoryHoldPort, WorkspacePre
   ackFeedbackPromotion(level: number): Promise<void>;
   // Takes one of this install's reports back; refused with feedback.not_withdrawable once it has an outcome.
   withdrawFeedback(receipt: string): Promise<void>;
-  // Tying this install to the signed-in account is always the person's own
-  // request. Linking changes no quota; unlinking only removes the join.
-  feedbackLinks(): Promise<FeedbackLinkedInstall[]>;
-  linkFeedbackAccount(): Promise<void>;
-  unlinkFeedbackAccount(): Promise<void>;
-  unlinkFeedbackInstall(id: string): Promise<void>;
-  // The public contribution board, all releases or one; a person is on it only by
-  // their own choice, under a name they pick, and can leave at any time.
-  feedbackBoard(release?: string): Promise<FeedbackBoard>;
-  feedbackBoardMe(): Promise<FeedbackBoardMe>;
-  joinFeedbackBoard(displayName: string): Promise<FeedbackBoardMe>;
-  leaveFeedbackBoard(): Promise<FeedbackBoardMe>;
   // Asks the window to raise the neutral "new reply" notification; the kernel
   // answers for the switches. Rejects where there is no window to raise it.
   announceFeedbackReply(): Promise<void>;

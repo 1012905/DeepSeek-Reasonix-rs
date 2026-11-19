@@ -193,15 +193,6 @@ export interface FeedbackPromotion {
   to: number;
 }
 
-// One install an account holds, as the service lists it: the short id, when it
-// was linked, and whether it is this machine. The install's token never comes
-// with it.
-export interface FeedbackLinkedInstall {
-  id: string;
-  linkedAt: string;
-  current: boolean;
-}
-
 // The window a refusal came from, as the service names it. A refusal carries
 // these in its params; an identifier not listed here is still a window.
 export const FEEDBACK_LIMIT = {
@@ -213,37 +204,6 @@ export const FEEDBACK_LIMIT = {
   globalDaily: "global_daily",
   globalBurst: "global_burst",
 } as const;
-
-// One person on the contribution board: the name they chose, how many of their
-// suggestions shipped, where, and (in a release view only) their place.
-export interface FeedbackBoardEntry {
-  displayName: string;
-  credits: number;
-  rank: number | null;
-  releases: FeedbackBoardRelease[];
-}
-
-export interface FeedbackBoardRelease {
-  version: string;
-  count: number;
-}
-
-// The public board. available is false where the service does not serve one, which
-// hides the section rather than failing it.
-export interface FeedbackBoard {
-  available: boolean;
-  view: "all" | "release";
-  release: string | null;
-  entries: FeedbackBoardEntry[];
-}
-
-// What the signed-in person has chosen about being on the board.
-export interface FeedbackBoardMe {
-  listed: boolean;
-  displayName: string | null;
-  // A maintainer removed this account; it cannot list itself again until restored.
-  delisted: boolean;
-}
 
 export const FEEDBACK_REPO_ISSUES = "https://github.com/esengine/DeepSeek-Reasonix/issues/";
 
