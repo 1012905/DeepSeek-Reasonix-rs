@@ -454,3 +454,14 @@ reviewed: 2026-11-17
   `wss://…workers.dev` origin before Settings → Remote → Web access can turn on.
 - Browser↔desktop has been verified at the port/unit boundary (mocked socket),
   not end-to-end against a deployed Worker; the first deploy is the real test.
+
+## workers.dev is unreachable from the user's network
+
+- The deployed worker answers only through its `workers.dev` host; that domain
+  times out from the current network (China), and `dash`-side onboarding pages
+  are flaky there too. The zone `reasonix.io` is on Cloudflare but in a
+  different account, so a custom domain cannot be attached to this worker.
+- Decision (2026-11-19): keep `workers.dev` for now. Web access from the
+  affected network needs a proxy, a domain attached to this Cloudflare account,
+  or a self-hosted relay elsewhere. `REASONIX_RELAY_URL` is set to the deployed
+  `wss://reasonix-studio-web.246839837.workers.dev`.

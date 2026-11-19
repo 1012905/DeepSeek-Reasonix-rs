@@ -18,8 +18,9 @@
     }
   ],
 
-  // workers.dev works without a route; uncomment for a custom domain.
-  // "routes": [{ "pattern": "studio.reasonix.io", "custom_domain": true }],
+  // workers.dev is unreachable from some networks; a custom domain needs a zone
+  // in this account, and none is attached yet.
+  // "routes": [{ "pattern": "studio.<your-domain>", "custom_domain": true }],
 
   "durable_objects": {
     "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }]
