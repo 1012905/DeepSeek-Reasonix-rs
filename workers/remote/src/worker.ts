@@ -1,4 +1,4 @@
-import { RELAY_ROLE_HEADER, RelayRoom, type SocketRole } from "./relay";
+import { RELAY_CONNECTION_HEADER, RELAY_ROLE_HEADER, RelayRoom, REMOTE_PROTOCOL, type SocketRole } from "./relay";
 
 export { RelayRoom };
 
@@ -12,10 +12,13 @@ const TICKET_TTL_SECONDS = 600;
 const MAX_PUBLIC_KEY_LENGTH = 4096;
 const MAX_CAPABILITIES = 64;
 const MAX_CAPABILITY_LENGTH = 64;
+const AUTH_PROTOCOL_PREFIX = "reasonix.auth.";
 
+const DEVICE_ROUTE = /^\/v1\/devices\/([A-Za-z0-9_-]+)$/;
 const DEVICE_PAIR_ROUTE = /^\/v1\/devices\/([A-Za-z0-9_-]+)\/pair$/;
+const DEVICE_ROTATE_ROUTE = /^\/v1\/devices\/([A-Za-z0-9_-]+)\/rotate$/;
 const DEVICE_CONNECT_ROUTE = /^\/v1\/devices\/([A-Za-z0-9_-]+)\/connect$/;
-const DEVICE_CONTROL_ROUTE = /^\/v1\/devices\/([A-Za-z0-9_-]+)\/control$/;
+const CONTROLLER_CONNECT_ROUTE = /^\/v1\/sessions\/connect$/;
 const PAIR_CODE_ROUTE = /^\/v1\/pair\/(\d{6})$/;
 
 interface DeviceRecord {
@@ -33,6 +36,16 @@ export default {
       return registerDevice(request, env);
     }
 
+    const device = DEVICE_ROUTE.exec(pathname);
+    if (request.method === "DELETE" && device !== null) {
+      return revokeDevice(request, env, device[1]!);
+    }
+
+    const rotate = DEVICE_ROTATE_ROUTE.exec(pathname);
+    if (request.method === "POST" && rotate !== null) {
+      return rotateDevice(request, env, rotate[1]!);
+    }
+
     const pair = DEVICE_PAIR_ROUTE.exec(pathname);
     if (request.method === "POST" && pair !== null) {
       return requestPairCode(request, env, pair[1]!);
@@ -48,9 +61,10 @@ export default {
       return forwardSocket(request, env, connect[1]!, "desktop");
     }
 
-    const control = DEVICE_CONTROL_ROUTE.exec(pathname);
-    if (request.method === "GET" && control !== null) {
-      return forwardSocket(request, env, control[1]!, "controller");
+    // A browser cannot set an Authorization header on a WebSocket, so the
+    // ticket rides in the subprotocol list the page already names.
+    if (request.method === "GET" && CONTROLLER_CONNECT_ROUTE.test(pathname)) {
+      return connectController(request, env);
     }
 
     return error(404, "not_found", "No route matches this request.");
@@ -128,16 +142,66 @@ async function redeemPairCode(request: Request, env: Env, code: string): Promise
   });
 }
 
+async function rotateDevice(request: Request, env: Env, deviceId: string): Promise<Response> {
+  const record = await authenticateDevice(request, env, deviceId);
+  if (record === null) {
+    return error(401, "unauthorized", "A valid device credential is required.");
+  }
+  const deviceCredential = randomToken(32);
+  await env.PAIRING.put(
+    deviceKey(deviceId),
+    JSON.stringify({ ...record, credentialHash: await sha256Hex(deviceCredential) }),
+  );
+  return json({ deviceId, deviceCredential });
+}
+
+async function revokeDevice(request: Request, env: Env, deviceId: string): Promise<Response> {
+  if ((await authenticateDevice(request, env, deviceId)) === null) {
+    return error(401, "unauthorized", "A valid device credential is required.");
+  }
+  await env.PAIRING.delete(deviceKey(deviceId));
+  const stub = env.RELAY.get(env.RELAY.idFromName(deviceId));
+  await stub.fetch(new Request(new URL("/revoke", request.url), { method: "POST" }));
+  return new Response(null, { status: 204 });
+}
+
+/** The hosted page's door: the ticket it redeemed names the device, and the
+ *  session joins that device's room as a controller. */
+async function connectController(request: Request, env: Env): Promise<Response> {
+  const protocols = (request.headers.get("Sec-WebSocket-Protocol") ?? "")
+    .split(",")
+    .map((entry) => entry.trim());
+  const named = protocols.find((entry) => entry.startsWith(AUTH_PROTOCOL_PREFIX));
+  const ticket = named?.slice(AUTH_PROTOCOL_PREFIX.length) ?? new URL(request.url).searchParams.get("ticket");
+  if (ticket === null || ticket === "") {
+    return error(401, "unauthorized", "A pairing ticket is required.");
+  }
+  const deviceId = await ticketDevice(env, ticket);
+  if (deviceId === null) {
+    return error(401, "unauthorized", "The pairing ticket is unknown or expired.");
+  }
+  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    return error(426, "upgrade_required", "This endpoint requires a WebSocket upgrade.");
+  }
+  if (!protocols.includes(REMOTE_PROTOCOL) && new URL(request.url).searchParams.get("ticket") === null) {
+    return error(400, "unsupported_protocol", `This endpoint speaks ${REMOTE_PROTOCOL}.`);
+  }
+
+  const headers = new Headers(request.headers);
+  headers.delete("Authorization");
+  headers.set(RELAY_ROLE_HEADER, "controller");
+  headers.set(RELAY_CONNECTION_HEADER, crypto.randomUUID());
+  const stub = env.RELAY.get(env.RELAY.idFromName(deviceId));
+  return stub.fetch(new Request(request.url, { method: "GET", headers }));
+}
+
 async function forwardSocket(
   request: Request,
   env: Env,
   deviceId: string,
   role: SocketRole,
 ): Promise<Response> {
-  const authorized =
-    role === "desktop"
-      ? (await authenticateDevice(request, env, deviceId)) !== null
-      : await authenticateTicket(request, env, deviceId);
+  const authorized = (await authenticateDevice(request, env, deviceId)) !== null;
   if (!authorized) {
     return error(401, "unauthorized", `A valid ${role} credential is required.`);
   }
@@ -168,13 +232,8 @@ async function authenticateDevice(
   return record.credentialHash === (await sha256Hex(credential)) ? record : null;
 }
 
-async function authenticateTicket(request: Request, env: Env, deviceId: string): Promise<boolean> {
-  const ticket = bearerToken(request);
-  if (ticket === null) {
-    return false;
-  }
-  const ticketDevice = await env.PAIRING.get(ticketKey(await sha256Hex(ticket)));
-  return ticketDevice === deviceId;
+async function ticketDevice(env: Env, ticket: string): Promise<string | null> {
+  return env.PAIRING.get(ticketKey(await sha256Hex(ticket)));
 }
 
 async function loadDevice(env: Env, deviceId: string): Promise<DeviceRecord | null> {

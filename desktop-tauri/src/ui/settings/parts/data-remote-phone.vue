@@ -2,9 +2,12 @@
 import { computed, ref, watch } from "vue";
 import { t } from "../../../i18n";
 import { reason } from "../../../i18n/kernel";
+import type { AgentPort } from "../../../port/port";
+import type { RelayCode, RelayStatus } from "../../../port/relay";
 import type { HubPort } from "../../../port/hub";
 import type { ShareOffer, ShareStatus } from "../../../port/share";
 import { copyText } from "../../CopyButton.vue";
+import Group from "../../Group.vue";
 import Switch from "../../Switch.vue";
 
 // While the door is open the list is what changes under the reader: a phone
@@ -20,7 +23,7 @@ const clock = (iso: string) => {
 // read as a name it is a hundred characters and every one starts the same.
 const deviceLabel = (i: number) => t("remote.device_n", { n: i + 1 });
 
-const props = defineProps<{ hub: HubPort; onError: (e: unknown) => void }>();
+const props = defineProps<{ hub: HubPort; port: AgentPort; onError: (e: unknown) => void }>();
 
 const st = ref<ShareStatus | null>(null);
 const ip = ref("");
@@ -31,6 +34,21 @@ const remember = ref<boolean | null>(null);
 const copied = ref<"" | "done" | "failed">("");
 const portDraft = ref<string | null>(null);
 const error = ref("");
+
+const relay = ref<RelayStatus | null>(null);
+const pairing = ref<RelayCode | null>(null);
+const relayBusy = ref(false);
+
+async function readRelay(): Promise<void> {
+  try {
+    relay.value = await props.port.relayStatus();
+  } catch (e) {
+    relay.value = null;
+    props.onError(e);
+  }
+}
+
+watch(() => props.port, () => { void readRelay(); }, { immediate: true });
 
 async function read(): Promise<void> {
   try {
@@ -62,6 +80,17 @@ async function run(step: () => Promise<void>): Promise<void> {
     props.onError(e);
   } finally {
     busy.value = false;
+  }
+}
+
+async function relayRun(step: () => Promise<void>): Promise<void> {
+  relayBusy.value = true;
+  try {
+    await step();
+  } catch (e) {
+    props.onError(e);
+  } finally {
+    relayBusy.value = false;
   }
 }
 
@@ -144,83 +173,132 @@ function commitPort(): void {
 }
 
 const origin = computed(() => st.value?.origin ?? "");
+
+const relayOn = computed(() => relay.value?.enabled === true);
+// A device id is a token, not a name: long enough to tell two apart, short
+// enough to sit in a row.
+const shortDevice = computed(() => {
+  const id = relay.value?.deviceId ?? "";
+  return id.length > 12 ? `${id.slice(0, 12)}…` : id;
+});
+const relayMinutes = computed(() => Math.max(1, Math.round((pairing.value?.expiresIn ?? 0) / 60)));
+
+const enableRelay = () => relayRun(async () => {
+  await props.port.relayEnable();
+  await readRelay();
+});
+
+const disableRelay = () => relayRun(async () => {
+  await props.port.relayDisable();
+  pairing.value = null;
+  await readRelay();
+});
+
+const showCode = () => relayRun(async () => {
+  pairing.value = await props.port.relayPair();
+});
 </script>
 
 <template>
-  <div v-if="st" class="share">
-    <p v-if="error" class="why" role="alert">{{ error }}</p>
-    <div class="lrow">
-      <span class="tx">
-        <span class="lb">{{ t("remote.allow_phones_to_connect") }}</span>
-        <span class="ds">{{ t(noNetwork ? "remote.this_computer_has_no_private" : "remote.a_phone_on_the_same") }}</span>
-      </span>
-      <Switch data-action="share.toggle" :on="st.open" :busy="busy || noNetwork" :label="t('remote.allow_phones_to_connect')" :on-click="toggle" />
-    </div>
-
-    <div class="lrow">
-      <span class="tx">
-        <span class="lb">{{ t("remote.remember_paired_phones") }}</span>
-        <span class="ds">{{ t("remote.when_on_a_restart_reopens") }}</span>
-      </span>
-      <Switch data-action="share.remember" :on="remember ?? false" :busy="busy || remember === null" :label="t('remote.remember_paired_phones')" :on-click="saveRemember" />
-    </div>
-
-    <label v-if="st.addresses.length > 1" class="rmtf">
-      <span>{{ t("common.network") }}</span>
-      <select data-action="share.address" :value="chosen" :disabled="busy" @change="pick(($event.target as HTMLSelectElement).value)">
-        <option v-for="a in st.addresses" :key="a.ip" :value="a.ip">
-          {{ a.kind === "tailnet" ? `${a.ip} · Tailscale` : a.kind === "virtual" ? `${a.ip} · ${a.interface} · ${t("remote.virtual_adapter")}` : `${a.ip} · ${a.interface}` }}
-        </option>
-      </select>
-    </label>
-    <p v-if="st.addresses.length > 1 && st.open && st.devices.length > 0" class="rmthint">{{ t("remote.switching_networks_disconnects_the_connected") }}</p>
-
-    <label class="rmtf">
-      <span>{{ t("common.port") }}</span>
-      <input
-        data-action="share.port"
-        inputmode="numeric"
-        maxlength="5"
-        :aria-label="t('common.port')"
-        :value="portDraft ?? (st.port ? String(st.port) : '')"
-        :placeholder="t('common.auto')"
-        :disabled="busy"
-        @input="portDraft = ($event.target as HTMLInputElement).value.replace(/\D/g, '')"
-        @blur="commitPort"
-      />
-    </label>
-    <p class="rmthint">{{ t("remote.leave_empty_to_let_the") }}</p>
-    <p v-if="st.open && st.devices.length > 0" class="rmthint">{{ t("remote.changing_the_port_disconnects_the") }}</p>
-
-    <div v-if="st.open" class="shareopen">
-      <div v-if="offer" class="shareqr">
-        <img :src="`data:image/svg+xml;charset=utf-8,${encodeURIComponent(offer.qr)}`" :alt="t('remote.pairing_qr_code')" width="184" height="184" />
-        <div class="sharehow">
-          <span class="lb">{{ t("remote.scan_with_your_phones_camera") }}</span>
-          <span class="ds">{{ t("remote.the_code_pairs_one_phone", { time: clock(offer.expires) }) }}</span>
-          <code dir="ltr">{{ origin }}</code>
-          <button type="button" class="rmtlnk sharecopy" data-action="share.copy" @click="copyLink(offer.url)">
-            {{ t(copied === "done" ? "common.copied" : copied === "failed" ? "remote.copy_blocked" : "remote.copy_pairing_link") }}
-          </button>
-        </div>
-      </div>
-      <button v-else type="button" class="rmtadd" data-action="share.offer" :disabled="busy" @click="newCode">{{ t("remote.show_a_pairing_code") }}</button>
-
-      <div class="sharedevs">
-        <div v-for="(d, i) in st.devices" :key="d.id" class="sharedev">
-          <span class="nm" :title="d.name">{{ deviceLabel(i) }}</span>
-          <span class="st">{{ seenSaid(d) }}</span>
-          <span v-if="confirm === d.id" class="rmtconfirm" role="alertdialog">
-            <span>{{ t("remote.disconnect_this_phone_it_will") }}</span>
-            <button type="button" data-action="share.keep" :data-target="d.id" @click="confirm = ''">{{ t("common.cancel") }}</button>
-            <button type="button" data-danger="" data-action="share.revoke" :data-target="d.id" @click="confirm = ''; revoke(d.id)">{{ t("remote.disconnect") }}</button>
-          </span>
-          <button v-else type="button" class="rmtlnk" data-danger="" data-action="share.ask-revoke" :data-target="d.id" @click="confirm = d.id">{{ t("remote.disconnect") }}</button>
-        </div>
-        <p v-if="st.devices.length === 0" class="rmtempty">{{ t("remote.no_phone_is_connected_yet") }}</p>
+  <Group v-if="st" id="phone" :title="t('remote.phone_access')" :hint="t('settings.phone_hint')">
+    <div class="share">
+      <p v-if="error" class="why" role="alert">{{ error }}</p>
+      <div class="lrow">
+        <span class="tx">
+          <span class="lb">{{ t("remote.allow_phones_to_connect") }}</span>
+          <span class="ds">{{ t(noNetwork ? "remote.this_computer_has_no_private" : "remote.a_phone_on_the_same") }}</span>
+        </span>
+        <Switch data-action="share.toggle" :on="st.open" :busy="busy || noNetwork" :label="t('remote.allow_phones_to_connect')" :on-click="toggle" />
       </div>
 
-      <p class="sharewarn">{{ t("remote.the_connection_is_plain_http") }}</p>
+      <div class="lrow">
+        <span class="tx">
+          <span class="lb">{{ t("remote.remember_paired_phones") }}</span>
+          <span class="ds">{{ t("remote.when_on_a_restart_reopens") }}</span>
+        </span>
+        <Switch data-action="share.remember" :on="remember ?? false" :busy="busy || remember === null" :label="t('remote.remember_paired_phones')" :on-click="saveRemember" />
+      </div>
+
+      <label v-if="st.addresses.length > 1" class="rmtf">
+        <span>{{ t("common.network") }}</span>
+        <select data-action="share.address" :value="chosen" :disabled="busy" @change="pick(($event.target as HTMLSelectElement).value)">
+          <option v-for="a in st.addresses" :key="a.ip" :value="a.ip">
+            {{ a.kind === "tailnet" ? `${a.ip} · Tailscale` : a.kind === "virtual" ? `${a.ip} · ${a.interface} · ${t("remote.virtual_adapter")}` : `${a.ip} · ${a.interface}` }}
+          </option>
+        </select>
+      </label>
+      <p v-if="st.addresses.length > 1 && st.open && st.devices.length > 0" class="rmthint">{{ t("remote.switching_networks_disconnects_the_connected") }}</p>
+
+      <label class="rmtf">
+        <span>{{ t("common.port") }}</span>
+        <input
+          data-action="share.port"
+          inputmode="numeric"
+          maxlength="5"
+          :aria-label="t('common.port')"
+          :value="portDraft ?? (st.port ? String(st.port) : '')"
+          :placeholder="t('common.auto')"
+          :disabled="busy"
+          @input="portDraft = ($event.target as HTMLInputElement).value.replace(/\D/g, '')"
+          @blur="commitPort"
+        />
+      </label>
+      <p class="rmthint">{{ t("remote.leave_empty_to_let_the") }}</p>
+      <p v-if="st.open && st.devices.length > 0" class="rmthint">{{ t("remote.changing_the_port_disconnects_the") }}</p>
+
+      <div v-if="st.open" class="shareopen">
+        <div v-if="offer" class="shareqr">
+          <img :src="`data:image/svg+xml;charset=utf-8,${encodeURIComponent(offer.qr)}`" :alt="t('remote.pairing_qr_code')" width="184" height="184" />
+          <div class="sharehow">
+            <span class="lb">{{ t("remote.scan_with_your_phones_camera") }}</span>
+            <span class="ds">{{ t("remote.the_code_pairs_one_phone", { time: clock(offer.expires) }) }}</span>
+            <code dir="ltr">{{ origin }}</code>
+            <button type="button" class="rmtlnk sharecopy" data-action="share.copy" @click="copyLink(offer.url)">
+              {{ t(copied === "done" ? "common.copied" : copied === "failed" ? "remote.copy_blocked" : "remote.copy_pairing_link") }}
+            </button>
+          </div>
+        </div>
+        <button v-else type="button" class="rmtadd" data-action="share.offer" :disabled="busy" @click="newCode">{{ t("remote.show_a_pairing_code") }}</button>
+
+        <div class="sharedevs">
+          <div v-for="(d, i) in st.devices" :key="d.id" class="sharedev">
+            <span class="nm" :title="d.name">{{ deviceLabel(i) }}</span>
+            <span class="st">{{ seenSaid(d) }}</span>
+            <span v-if="confirm === d.id" class="rmtconfirm" role="alertdialog">
+              <span>{{ t("remote.disconnect_this_phone_it_will") }}</span>
+              <button type="button" data-action="share.keep" :data-target="d.id" @click="confirm = ''">{{ t("common.cancel") }}</button>
+              <button type="button" data-danger="" data-action="share.revoke" :data-target="d.id" @click="confirm = ''; revoke(d.id)">{{ t("remote.disconnect") }}</button>
+            </span>
+            <button v-else type="button" class="rmtlnk" data-danger="" data-action="share.ask-revoke" :data-target="d.id" @click="confirm = d.id">{{ t("remote.disconnect") }}</button>
+          </div>
+          <p v-if="st.devices.length === 0" class="rmtempty">{{ t("remote.no_phone_is_connected_yet") }}</p>
+        </div>
+
+        <p class="sharewarn">{{ t("remote.the_connection_is_plain_http") }}</p>
+      </div>
     </div>
-  </div>
+  </Group>
+
+  <Group id="relay" :title="t('relay.web_access')">
+    <div class="share">
+      <div v-if="relay" class="lrow">
+        <i v-if="relayOn" class="pstate" :data-state="relay.online ? 'use' : 'warn'" aria-hidden="true" />
+        <span class="tx">
+          <span class="ds">{{ t(relayOn ? (relay.online ? "relay.online" : "relay.offline") : "relay.web_access_hint") }}</span>
+        </span>
+        <code v-if="relayOn" class="sc" dir="ltr" :title="relay.deviceId">{{ shortDevice }}</code>
+        <button v-if="!relayOn" type="button" class="btn sm" data-action="relay.enable" :disabled="relayBusy" @click="enableRelay">{{ t("relay.turn_on") }}</button>
+        <template v-else>
+          <button type="button" class="btn sm" data-action="relay.pair" :disabled="relayBusy" @click="showCode">{{ t("relay.show_code") }}</button>
+          <button type="button" class="btn sm" data-action="relay.disable" :disabled="relayBusy" @click="disableRelay">{{ t("relay.turn_off") }}</button>
+        </template>
+      </div>
+      <div v-if="pairing" class="sharehow" data-relay-code>
+        <span class="lb">{{ t("relay.code_label") }}</span>
+        <code dir="ltr">{{ pairing.code }}</code>
+        <span class="ds">{{ t("relay.code_expires", { n: relayMinutes }) }}</span>
+        <span class="ds">{{ t("relay.web_access_hint") }}</span>
+      </div>
+    </div>
+  </Group>
 </template>

@@ -14,6 +14,8 @@ import (
 const identityCredentialKey = "REASONIX_REMOTE_DEVICE_IDENTITY"
 
 type identity struct {
+	// OwnerID is zero when the identity came from a relay Worker registration,
+	// which has no account behind it.
 	OwnerID          int64  `json:"ownerId"`
 	DeviceID         string `json:"deviceId"`
 	DeviceCredential string `json:"deviceCredential"`
@@ -29,7 +31,7 @@ func loadIdentity() (*identity, error) {
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil {
 		return nil, err
 	}
-	if saved.OwnerID < 1 || saved.DeviceID == "" || saved.DeviceCredential == "" || saved.PrivateKey == "" {
+	if saved.OwnerID < 0 || saved.DeviceID == "" || saved.DeviceCredential == "" || saved.PrivateKey == "" {
 		return nil, errors.New("remote cloud: saved device identity is incomplete")
 	}
 	return &saved, nil

@@ -587,3 +587,31 @@ Rust 和 Go 共存）」。窗口由用户在本机终端验证可打开（B1 �
   （notes 现为发布资产）；polkit 名称随标识更新。
 - **验证**：update/instanceid/studio-manifest Go 测试绿；脚本测试 12+6 绿；actionlint 0；
   构建 side 待用户配置 secrets 后首个 `studio-v*` 触发实测。
+
+## D20 —— P4：零安装网页访问（Worker + Go 中继 + 配对页）
+
+用户要求「直接打开就能用」：浏览器无需安装，桌面无需公网地址。三路实现（Worker、
+Go、Vue 端口/界面）＋主 Agent 接线裁决。契约落在 `workers/remote/README.md`：
+
+- **Worker**：
+  - `/v1/devices` 注册 X25519 公钥换 deviceId/credential；Bearer 换 6 位一次性码（300s）。
+  - GET `/v1/pair/<code>` 换 controlTicket（600s）。
+  - 桌面 WS `/v1/devices/<id>/connect` 保持 Go host 既有 gateway 信封（`relay_hello`、
+    `controller_{connected,message,disconnected}`、`{"to","payload"}`）。
+  - 浏览器 WS `/v1/sessions/connect` 用子协议 `reasonix.auth.<ticket>`（不能发 Authorization 头）。
+  - Durable Object 每设备一房、休眠、转发密文；64KiB/1009，4004/4003/4401。
+  - 新增 rotate/revoke REST；`bundle.resources` 让页面随 Worker 静态资产部署。
+- **Go**：
+  - `remotecloud.NewRelay` 用 Worker Registrar 替代 account.Client（保存设备身份）。
+  - 凭证静态，不再轮询账号 token；401 停机而非静默重注册。
+  - serve `/remote/relay*` 四端点按需 enable/disable/pair，host-only。
+  - `REASONIX_RELAY_URL` 必填且为 wss。
+- **Vue**：
+  - 恢复 X25519/HKDF/AES-GCM 链路（`reasonix-remote-v1|deviceId`、session+seq 防重放、62KiB 帧预算）。
+  - `relay_cloud.ts` 换票→WS→ready→SseHub；hosted 构建探测不到内核即渲染配对页。
+  - 设置 → 远程新增「网页访问」卡（开关/6 位码）。
+  - 重配对时换票必须绕开本模块已安装的隧道 fetch。
+
+**验证**：Worker `tsc --noEmit` 0；Go build/vet/golangci 0，remotecloud/serve/cmd 全量绿
+（serve 748s）；vue-tsc 0；vitest 303 文件全绿；vite build 成功；repolint clean；
+actionlint 0；路由可达测试绿。浏览器↔桌面端到端与 Worker 部署需用户配置 secrets/KV。

@@ -5,6 +5,7 @@ import { approvalKind } from "./mock_approval";
 import { HttpError } from "./port";
 import type { AgentPort, Completion, CompletionItem, StudioLogs, VersionHub, VersionNotes, ApprovalMode, ApprovalVerdict, Checkpoint, RewindPlan, RewindResult, RewindUndo, RewindScope, HistoryMessage, HostTodo, BrowserTab, ModelEntry, Preset, ProviderSetup, RoleAssignments, RoleOverride, SessionEntry, SessionStatus, WalletReading, MemoryCatalog, MemoryEdit, UsageReport, UploadReport, MemoryEntry, WorkspaceInfo, Attachment, DroppedRef, Queue, QueueItem, Queued, ChipCall, NotifyPrefs, TrayPrefs, UsageQuery } from "./port";
 import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
+import type { RelayCode, RelayStatus } from "./relay";
 import { MockWorkspace, mockWorkspaces, mockWorktreeSources, MockPreparations } from "./mock_workspace";
 import { SCRIPT, mockMsgIndex, mockTurnStart } from "./fixture";
 import { MockExecutionHold, mockExecutionGraph } from "./mock_graph";
@@ -782,5 +783,25 @@ export class MockPort extends MockWorkspace implements AgentPort {
   async setModelMode(mode: string) { this.state.modes = this.state.modes?.map((m) => ({ ...m, active: m.id === mode })); }
   async setGoal(text: string) {
     this.state.goal = text;
+  }
+
+  private relay: RelayStatus = { enabled: false, online: false, deviceId: "" };
+
+  relayStatus() {
+    return Promise.resolve({ ...this.relay });
+  }
+
+  relayEnable() {
+    this.relay = { enabled: true, online: true, deviceId: this.relay.deviceId || "mock-relay-device" };
+    return Promise.resolve({ deviceId: this.relay.deviceId });
+  }
+
+  relayDisable() {
+    this.relay = { ...this.relay, enabled: false, online: false };
+    return Promise.resolve();
+  }
+
+  relayPair(): Promise<RelayCode> {
+    return Promise.resolve({ code: "482913", expiresIn: 300 });
   }
 }

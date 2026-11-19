@@ -709,3 +709,23 @@ acp/tui/testkit/session/config）8–11 行 skeleton；apps 90 行。M1 契约�
    Electron 保留冻结目标）。**待用户决策**：Tauri 打包（`bundle.active=false`）、Tauri 发布
    工作流、Electron 三条 CI/部署工作流的删除与网页版去留；均确认后再执行删除 `desktop/`
    （2423 文件）。在此之前 Electron 只读冻结，Tauri 是唯一开发目标。
+
+## 波次 15 改了什么（P4 零安装网页访问）
+
+Worker 网关语义从骨架补齐：配对/换票/中继三角色的完整契约见 `workers/remote/README.md`；
+Go `remotecloud` 在 account.Client 之外新增 Registrar/NewRelay，serve 提供
+`/remote/relay*`；Vue 恢复加密链路并新增 hosted 配对页与设置卡（D20）。
+
+**波次 15 验证**：
+
+```
+$ tsc --noEmit（workers/remote）               # 0
+$ go build ./... && go vet ./...                # 0
+$ golangci-lint v2.12.2（GOTOOLCHAIN=go1.26.7）  # 0 issues
+$ go test serve/remotecloud/cmd -count=1         # 全绿（serve 748s）
+$ vue-tsc -b --force                            # 0
+$ vitest run                                    # 303 文件全绿
+$ vite build / repolint / actionlint            # 全绿
+```
+
+部署前置：Cloudflare KV namespace id 与 API secrets 仍需用户配置；端到端实机尚未执行。

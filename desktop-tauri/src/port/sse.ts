@@ -9,6 +9,7 @@ import type { ExecutionGraphRead, TrajectoryRead, WireEvent } from "./wire";
 import { host } from "./host";
 import { current } from "../i18n";
 import { subscribeStream } from "./sse_subscribe";
+import type { RelayCode, RelayStatus } from "./relay";
 
 // The running project is the default, so its requests stay the bare path they
 // have always been and only a cross-project read carries the folder.
@@ -196,6 +197,46 @@ export class SsePort extends SseTerminal implements AgentPort {
         body: JSON.stringify({ icon, closeToTray }),
       }),
     );
+  }
+
+  // The relay is the window's own registration with its host, not a pane's, so
+  // these name the route absolutely: a remote pane's base is another machine's,
+  // and that machine's registration is not the one this page manages.
+  async relayStatus(): Promise<RelayStatus> {
+    const res = await fetch("/remote/relay", { credentials: "same-origin" });
+    // A kernel that predates the relay has no route; off is what its page shows.
+    if (res.status === 404) return { enabled: false, online: false, deviceId: "" };
+    if (!res.ok) await SsePort.fail("/remote/relay", res);
+    return (await res.json()) as RelayStatus;
+  }
+
+  async relayEnable(): Promise<{ deviceId: string }> {
+    const res = await fetch("/remote/relay/enable", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+    });
+    if (!res.ok) await SsePort.fail("/remote/relay/enable", res);
+    return (await res.json()) as { deviceId: string };
+  }
+
+  async relayDisable(): Promise<void> {
+    const res = await fetch("/remote/relay/disable", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+    });
+    if (!res.ok) await SsePort.fail("/remote/relay/disable", res);
+  }
+
+  async relayPair(): Promise<RelayCode> {
+    const res = await fetch("/remote/relay/pair", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+    });
+    if (!res.ok) await SsePort.fail("/remote/relay/pair", res);
+    return (await res.json()) as RelayCode;
   }
 
   async versionNotes(version: string, retry = false): Promise<VersionNotes> {

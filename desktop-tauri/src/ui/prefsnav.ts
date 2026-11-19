@@ -214,6 +214,9 @@ export const SETTINGS: SettingEntry[] = [
   // walks through it reaches every pane. Nothing is written, so nothing outlives
   // the window either.
   { section: "remote", anchor: "phone", title: "remote.phone_access", scope: "machine", apply: "immediate", keywords: ["手机", "扫码", "二维码", "局域网", "配对", "phone", "mobile", "qr"] },
+  // The relay is this machine's own registration with its host: enabling holds
+  // a socket open at once, and disabling stops it without forgetting the identity.
+  { section: "remote", anchor: "relay", title: "relay.web_access", scope: "machine", apply: "immediate", keywords: ["网页", "浏览器", "配对码", "远程访问", "中继", "web", "browser", "relay", "pairing"] },
   // Restoring writes through the ordinary config paths and reloads the runtime.
   { section: "storage", anchor: "backup-file", title: "data.export_and_import_config", scope: "machine", apply: "immediate", keywords: ["备份", "导出", "导入", "换机", "迁移", "文件"] },
   { section: "versions", anchor: "versions", title: "common.version", scope: "machine", apply: "immediate", keywords: ["更新", "升级"] },

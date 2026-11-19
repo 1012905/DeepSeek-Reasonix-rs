@@ -28,7 +28,7 @@ const ROUTES = [
   "/fork", "/summarize", "/forget", "/bypass", "/auto-approve-tools",
   "/permissions", "/sandbox", "/progress-watch", "/ask-timeout", "/session-ref-settings", "/settings-changed", "/changed-files-settings", "/schedules", "/feedback-level-notices", "/observability", "/fold-work-settings", "/turn-narration-settings", "/display-currency", "/auto-archive", "/persona", "/context", "/storage", "/tray", "/browser", "/browser-host", "/asks", "/update", "/receipt-settings", "/subagent-claims", "/write-lease", "/peers",
   "/mods", "/git",
-  "/host", "/notifications", "/share", "/pair", "/device",
+  "/host", "/notifications", "/share", "/pair", "/device", "/remote",
   "/web-access-settings", "/slash", "/workspaces", "/welcome", "/usage", "/config", "/studio",
 ];
 

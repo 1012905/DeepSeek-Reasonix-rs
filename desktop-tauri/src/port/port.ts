@@ -31,6 +31,8 @@ import type { RunningWorkPort } from "./running";
 import type { StudioCrash, StudioLogs, UpdateMode, UpdateProgress, VersionEntry, VersionHub, VersionNotes } from "./version";
 import type { ChangeDiff, CommitFile, CommitProposal, CommitRequest, CommitResult, DiscardRequest, GitCommitFiles, GitRepos, PushRequest, PushResult, PushPlan, StageRequest, WorkspaceBranch, WorkspaceBranches, WorkspaceChange, WorkspaceChanges, WorkspaceEntry, WorkspaceFile, WorkspaceFiles, WorkspaceGit, WorkspaceInfo, WorkspacePreviewPort } from "./workspace";
 import type { SessionTailPort } from "./session_tail";
+import type { RelayPort } from "./relay";
+export type { RelayCode, RelayPort, RelayStatus } from "./relay";
 
 export type { ApprovalDefault, ApprovalMode, ApprovalVerdict, WorkspaceTrust, CapabilityScope,
   Checkpoint, CompactionSettings, Completion, CompletionItem, ContextBreakdown, HistoryMessage, HostTodo, BrowserTab,
@@ -180,7 +182,7 @@ export interface TrayPrefs {
   closeToTray: boolean;
 }
 
-export interface AgentPort extends RunningWorkPort, MemoryHoldPort, WorkspacePreviewPort, SessionTailPort, UploadUsagePort, TerminalPort {
+export interface AgentPort extends RunningWorkPort, MemoryHoldPort, WorkspacePreviewPort, SessionTailPort, UploadUsagePort, TerminalPort, RelayPort {
   providerSetup(): Promise<ProviderSetup | null>;
   saveProviderKey(apiKey: string): Promise<void>;
   // The models that answer the job asked about; "chat" when none is named.

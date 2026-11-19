@@ -14,6 +14,7 @@ import { ONBOARDING } from "./onboarding";
 import { PANELS } from "./panels";
 import { PERSONA } from "./persona";
 import { PLAN } from "./plan";
+import { RELAY } from "./relay";
 import { REMOTE } from "./remote";
 import { SAFETY } from "./safety";
 import { SESSION } from "./session";
@@ -28,7 +29,7 @@ export type { Message, Messages } from "./types";
 
 /** Every message by its key. Each area's table is one file; a key's first
  *  segment names the file it lives in. */
-export const AREAS: Record<string, Messages> = { about: ABOUT, app: APP, chat: CHAT, common: COMMON, composer: COMPOSER, data: DATA, ext: EXT, feedback: FEEDBACK, kernel: KERNEL, look: LOOK, memory: MEMORY, models: MODELS, onboarding: ONBOARDING, panels: PANELS, persona: PERSONA, plan: PLAN, remote: REMOTE, safety: SAFETY, session: SESSION, settings: SETTINGS, subagent: SUBAGENT, terminal: TERMINAL, usage: USAGE, workbench: WORKBENCH };
+export const AREAS: Record<string, Messages> = { about: ABOUT, app: APP, chat: CHAT, common: COMMON, composer: COMPOSER, data: DATA, ext: EXT, feedback: FEEDBACK, kernel: KERNEL, look: LOOK, memory: MEMORY, models: MODELS, onboarding: ONBOARDING, panels: PANELS, persona: PERSONA, plan: PLAN, relay: RELAY, remote: REMOTE, safety: SAFETY, session: SESSION, settings: SETTINGS, subagent: SUBAGENT, terminal: TERMINAL, usage: USAGE, workbench: WORKBENCH };
 
 export const MESSAGES: Messages = Object.assign({}, ...Object.values(AREAS));
 

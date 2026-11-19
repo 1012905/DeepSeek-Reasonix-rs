@@ -10,7 +10,6 @@ export const APP: Messages = {
   "app.auto_inferred_from_the_model": { zh: "自动 · 按模型和地址推断", en: "Auto · inferred from the model and address" },
   "app.becomes": { zh: "改成", en: "becomes" },
   "app.best_match": { zh: "最佳匹配", en: "Best match" },
-  "app.cannot_reach_the_kernel_runtimes": { zh: "连不上内核：/runtimes 没有回应。", en: "Cannot reach the kernel: /runtimes did not answer." },
   "app.changes_saved_but_the_runtime": { zh: "更改已保存，运行时未重载：{reason}。请用「重载运行时」重试。", en: "Changes saved, but the runtime did not reload: {reason}. Use Reload runtime to retry." },
   "app.choose_the_folder_again": { zh: "重新选择文件夹", en: "Choose the folder again" },
   "app.claims_it_is_done": { zh: "宣告做完", en: "Claims it is done" },

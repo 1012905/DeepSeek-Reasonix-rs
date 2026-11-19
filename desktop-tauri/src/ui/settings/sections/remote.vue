@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { t } from "../../../i18n";
 import type { SettingsProps } from "../../SettingsProps";
 import Group from "../../Group.vue";
@@ -16,6 +17,10 @@ import RemotePhone from "../parts/data-remote-phone.vue";
 // what keeps it one if a page ever nests a section it already is.
 const props = defineProps<{ settingsProps: SettingsProps }>();
 const drawn = drawsHere("remote");
+
+// The phone and web-access blocks are answered by this machine's own kernel,
+// so they read the window's port even while a pane is on another machine.
+const port = computed(() => props.settingsProps.networkPort ?? props.settingsProps.port);
 </script>
 
 <template>
@@ -24,8 +29,6 @@ const drawn = drawsHere("remote");
       <RemoteHosts :hub="settingsProps.hub" :on-error="settingsProps.onError" />
     </Group>
 
-    <Group id="phone" :title="t('remote.phone_access')" :hint="t('settings.phone_hint')">
-      <RemotePhone :hub="settingsProps.hub" :on-error="settingsProps.onError" />
-    </Group>
+    <RemotePhone :hub="settingsProps.hub" :port="port" :on-error="settingsProps.onError" />
   </SectionCard>
 </template>

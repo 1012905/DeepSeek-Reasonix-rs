@@ -443,3 +443,14 @@ reviewed: 2026-11-17
   `studio-v*` tag is its real verification.
 - `withdraw-studio-version.sh` path now edits the latest release's `versions.json`
   asset; a dry run needs at least one published catalog asset.
+
+## P4 deployment prerequisites
+
+- `workers/remote/wrangler.jsonc` still carries a placeholder KV namespace id;
+  create `PAIRING` with `npx wrangler kv namespace create PAIRING` and paste the
+  real id before `deploy-remote.yml` can deploy.
+- `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` repository secrets are not
+  present yet. `REASONIX_RELAY_URL` must be set on the host to the deployed
+  `wss://…workers.dev` origin before Settings → Remote → Web access can turn on.
+- Browser↔desktop has been verified at the port/unit boundary (mocked socket),
+  not end-to-end against a deployed Worker; the first deploy is the real test.

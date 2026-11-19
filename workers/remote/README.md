@@ -16,24 +16,43 @@ the payload.
 | `POST` | `/v1/devices` | none | `{publicKey, capabilities}` → `201 {deviceId, deviceCredential}` |
 | `POST` | `/v1/devices/{deviceId}/pair` | `Bearer <deviceCredential>` | `{code, expiresIn}`; code is 6 digits, single-use, 300 s TTL |
 | `GET` | `/v1/pair/{code}` | none | `{deviceId, publicKey, relay, controlTicket}`; consumes the code; ticket lives 600 s |
-| `GET` (WebSocket) | `/v1/devices/{deviceId}/connect` | `Bearer <deviceCredential>` | desktop socket |
-| `GET` (WebSocket) | `/v1/devices/{deviceId}/control` | `Bearer <controlTicket>` | browser socket |
+| `POST` | `/v1/devices/{deviceId}/rotate` | `Bearer <deviceCredential>` | `{deviceId, deviceCredential}`; the old credential stops working |
+| `DELETE` | `/v1/devices/{deviceId}` | `Bearer <deviceCredential>` | `204`; closes both sockets with `4403` |
+| `GET` (WebSocket) | `/v1/devices/{deviceId}/connect` | `Bearer <deviceCredential>` | desktop socket; speaks the Go host's gateway envelope |
+| `GET` (WebSocket) | `/v1/sessions/connect` | subprotocol `reasonix.auth.<controlTicket>` (or `?ticket=`) | browser socket |
 
 `relay` is the request origin with the `wss:` scheme. Messages in both
 directions are capped at 64 KiB (65536 bytes).
+
+### Desktop gateway envelope
+
+The desktop path keeps the envelope the Go host (`internal/platform/remotecloud`)
+already speaks, one JSON object per text frame:
+
+- relay → desktop on open: `{type:"relay_hello", controllers, heartbeat, heartbeatMs}`.
+  The host echoes `heartbeat` back as a raw text frame and pings on its own tick.
+- relay → desktop: `{type:"controller_connected"|"controller_message"|"controller_disconnected", connectionId, scopes, payload}`.
+  `scopes` is `["desktop"]`; `payload` is the sealed controller frame.
+- desktop → relay: `{"to": connectionId, "payload": sealed}` and
+  `{type:"disconnect_controller", connectionId}`.
+
+The browser socket carries sealed payloads only: the first frame it receives is
+the desktop's sealed `ready`, and everything after is one sealed request or
+response per frame.
 
 ### WebSocket close codes
 
 | Code | Meaning | Sent by |
 | --- | --- | --- |
+| `1003` | binary frame on a text protocol | relay |
 | `1009` | message exceeds 64 KiB | relay |
-| `4004` | desktop disconnected | relay → controllers |
+| `4004` | desktop disconnected, or the desktop closed this session | relay → controllers |
 | `4401` | desktop replaced by a newer connection | relay → old desktop |
 | `4403` | device revoked | relay → both roles, on `POST /revoke` |
 | `4408` | idle | reserved; not emitted yet |
 
 The room holds at most one desktop socket and any number of controller sockets.
-Controller traffic is forwarded to the desktop and desktop traffic to every
+Controller traffic is forwarded to the desktop and desktop traffic to the named
 controller; a message with no peer is dropped.
 
 ## KV layout
@@ -79,12 +98,6 @@ Secrets:
   authority comes from the KV record, not from the token's claims.
 - **Rate limits.** Registration, pairing, redemption, and socket upgrades are
   all unthrottled.
-- **Revocation UX.** `RelayRoom` answers `POST /revoke` with `4403`, but there
-  is no authenticated route to call it and no device or session management.
-- **End-to-end tests.** No test runner or test script is wired up.
+- **End-to-end tests.** No test runner is wired up; `tsc --noEmit` is the gate.
 - **Code redemption atomicity.** `redeemPairCode` reads and deletes in two KV
   operations; KV is eventually consistent, so single-use is best effort.
-- **Browser ticket carrier.** The control route reads `Authorization: Bearer`.
-  The browser WebSocket API cannot set request headers, so the web client port
-  still has to settle how it carries the ticket (query parameter or
-  subprotocol) before this route can serve it.

@@ -10,6 +10,7 @@ import "net/http"
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	s.registerMachineSettingsRoutes(mux)
+	s.registerRelayRoutes(mux)
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /sessions/{id}", s.index)
 	mux.HandleFunc("GET /assets/logo-wordmark.svg", s.logoWordmark)

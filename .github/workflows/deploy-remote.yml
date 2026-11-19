@@ -34,6 +34,9 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
+      - name: Install worker dependencies
+        working-directory: workers/remote
+        run: npm ci --no-audit --no-fund
       - name: Deploy
         working-directory: workers/remote
         env:

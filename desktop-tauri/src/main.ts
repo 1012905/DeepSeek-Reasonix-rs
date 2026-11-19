@@ -1,10 +1,11 @@
-import { boot as bootLang, t } from "./i18n";
+import { boot as bootLang } from "./i18n";
 import { reason } from "./i18n/kernel";
 import { track as trackWidth } from "./ui/viewport";
 import "./styles/legacy.css";
 import "./design/design.css";
 import { createApp } from "vue";
 import App from "./ui/App.vue";
+import RelayPair from "./ui/RelayPair.vue";
 import { SseHub } from "./port/hub";
 import { HttpError } from "./port/http_error";
 import type { HubPort } from "./port/hub";
@@ -12,11 +13,15 @@ import { host } from "./port/host";
 import { play } from "./boot/intro";
 import { settled } from "./boot/gate";
 
+// The pairing page, for a build whose own origin has no kernel behind it: the
+// Worker that serves the hosted page only relays a browser to a desktop.
+const PAIRING = Symbol("pairing");
+
 // The dev proxy only exists when REASONIX_SERVE was set at vite start; probing
 // /runtimes decides which port to boot on, so neither mode needs a build flag.
 // Without the proxy vite answers it with the SPA shell at 200, so the content
 // type — not res.ok — is what says a kernel is really there.
-async function pick(): Promise<HubPort> {
+async function pick(): Promise<HubPort | typeof PAIRING> {
   try {
     // The hub's own list rather than a pane's /status: it answers with every
     // pane closed, which is when a reload has to find the kernel again.
@@ -32,11 +37,10 @@ async function pick(): Promise<HubPort> {
     if (e instanceof HttpError) throw e;
     // no serve reachable
   }
-  // A shipped build is served by the kernel it talks to. Falling back to the
-  // fixture there would put a scripted session on screen as if it had happened,
-  // so only a dev build is allowed to; the import stays dynamic to keep the
-  // fixture out of the production bundle.
-  if (!import.meta.env.DEV) throw new Error(t("app.cannot_reach_the_kernel_runtimes"));
+  // A shipped build is served by the kernel it talks to. With none at this
+  // origin — the hosted page — pairing a browser is the only useful action, so
+  // the mock fixture, which would put a scripted session on screen, stays out.
+  if (!import.meta.env.DEV) return PAIRING;
   const { MockHub } = await import("./port/mock_hub");
   return new MockHub();
 }
@@ -98,10 +102,17 @@ function arrive(shown: Promise<unknown>) {
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 
 pick().then(
-  (hub) => {
+  (chosen) => {
     try { localStorage.removeItem("rx-flow-w"); } catch { /* storage is a convenience */ }
     const root = document.getElementById("root");
-    if (root) createApp(App, { hub }).mount(root);
+    if (chosen === PAIRING) {
+      if (root) createApp(RelayPair).mount(root);
+      intro.progress(2);
+      void settled.then(() => intro.progress(3));
+      arrive(settled);
+      return;
+    }
+    if (root) createApp(App, { hub: chosen }).mount(root);
     intro.progress(2);
     void settled.then(() => intro.progress(3));
     arrive(settled);

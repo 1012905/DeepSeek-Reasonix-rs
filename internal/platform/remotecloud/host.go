@@ -32,10 +32,15 @@ const DefaultRelayURL = "wss://remote.reasonix.io"
 const desktopResponseChunk = 24 << 10
 
 var (
-	errAccountChanged = errors.New("remote cloud: account changed")
-	errRelayRefused   = errors.New("remote cloud: relay refused the connection")
-	errRelayInsecure  = errors.New("remote cloud: the relay address must start with wss://")
+	errAccountChanged    = errors.New("remote cloud: account changed")
+	errRelayRefused      = errors.New("remote cloud: relay refused the connection")
+	errRelayInsecure     = errors.New("remote cloud: the relay address must start with wss://")
+	errRelayUnauthorized = errors.New("remote cloud: the relay rejected this device's credential")
 )
+
+// relayToken stands in for the account token on the relay path, where the device
+// credential authenticates and there is no account to watch.
+const relayToken = "relay"
 
 type unavailableReason string
 
@@ -58,7 +63,10 @@ type hostState struct {
 }
 
 type Host struct {
-	client     *account.Client
+	client *account.Client
+	// reg is set on the relay path, where a Worker registration replaces the
+	// account client as the source of this device's identity.
+	reg        Registrar
 	dialer     *websocket.Dialer
 	relayURL   string
 	gatewayID  string
@@ -148,6 +156,29 @@ func New(client *account.Client, dialer *websocket.Dialer, relayURL, version str
 		host.presence, _ = tasks[0].(ControllerPresence)
 	}
 	return host
+}
+
+// NewRelay builds a host whose identity comes from a relay Worker registration
+// instead of an account. The credential it dials with is static, so the account
+// token watch that would reconnect on a changed token has nothing to watch.
+func NewRelay(reg Registrar, dialer *websocket.Dialer, relayURL, version string, tasks ...TaskService) *Host {
+	host := New(nil, dialer, relayURL, version, tasks...)
+	host.reg = reg
+	host.token = func() string { return relayToken }
+	return host
+}
+
+// EnsureDevice registers this machine with the relay on first use and returns
+// the device id it dials with. Run performs the same step before connecting.
+func (h *Host) EnsureDevice(ctx context.Context) (string, error) {
+	if h.reg == nil {
+		return "", errors.New("remote cloud: this host has no relay registrar")
+	}
+	saved, _, err := h.ensureIdentity(ctx, strings.TrimSpace(h.token()))
+	if err != nil {
+		return "", err
+	}
+	return saved.DeviceID, nil
 }
 
 // DisconnectController asks the relay to close one authenticated controller.
@@ -244,6 +275,11 @@ func (h *Host) Run(ctx context.Context) {
 		status.Error = err.Error()
 		status.Reason = unavailableReasonFor(err)
 		h.publish(status)
+		// A relay credential the Worker rejected is not retried: registering
+		// again would undo a revocation the window did not ask for.
+		if h.reg != nil && errors.Is(err, errRelayUnauthorized) {
+			return
+		}
 		if wasOnline {
 			backoff = time.Second
 		}
@@ -260,7 +296,7 @@ func unavailableReasonFor(err error) unavailableReason {
 	if errors.Is(err, account.ErrUnauthorized) {
 		return unavailableSignedOut
 	}
-	if errors.Is(err, errRelayRefused) || errors.Is(err, errRelayInsecure) {
+	if errors.Is(err, errRelayRefused) || errors.Is(err, errRelayInsecure) || errors.Is(err, errRelayUnauthorized) {
 		return unavailableRelayRefused
 	}
 	var closeErr *websocket.CloseError
@@ -271,6 +307,9 @@ func unavailableReasonFor(err error) unavailableReason {
 }
 
 func (h *Host) ensureIdentity(ctx context.Context, token string) (*identity, *ecdh.PrivateKey, error) {
+	if h.reg != nil {
+		return h.ensureRelayIdentity(ctx)
+	}
 	user, err := h.client.Me(ctx, token)
 	if err != nil {
 		return nil, nil, err
@@ -290,6 +329,34 @@ func (h *Host) ensureIdentity(ctx context.Context, token string) (*identity, *ec
 		return nil, nil, err
 	}
 	return h.registerIdentityWithPublic(ctx, token, user.ID, private, public)
+}
+
+// ensureRelayIdentity registers this machine with the relay on first use. A
+// relay registration has no account behind it, so nothing here asks who owns it.
+func (h *Host) ensureRelayIdentity(ctx context.Context) (*identity, *ecdh.PrivateKey, error) {
+	saved, err := loadIdentity()
+	if err == nil && saved != nil && saved.OwnerID == 0 {
+		if private, keyErr := privateKey(saved); keyErr == nil {
+			return saved, private, nil
+		}
+	}
+	private, public, err := generatePrivateKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	registered, err := h.reg.Register(ctx, public, []string{"desktop"})
+	if err != nil {
+		return nil, nil, err
+	}
+	saved = &identity{
+		DeviceID:         registered.DeviceID,
+		DeviceCredential: registered.Credential,
+		PrivateKey:       base64.RawURLEncoding.EncodeToString(private.Bytes()),
+	}
+	if err := saveIdentity(saved); err != nil {
+		return nil, nil, err
+	}
+	return saved, private, nil
 }
 
 func (h *Host) identityCurrent(ctx context.Context, token string, saved *identity) bool {
@@ -410,17 +477,23 @@ func (h *Host) connect(ctx context.Context, token string, saved *identity, priva
 
 	sessions := h.adopt(saved.DeviceID)
 	pingTicker := time.NewTicker(20 * time.Second)
-	tokenTicker := time.NewTicker(time.Second)
-	heartbeat := ""
 	defer pingTicker.Stop()
-	defer tokenTicker.Stop()
+	// The relay path's credential is static, so the account-token watch is not
+	// started there at all.
+	var tokenWatch <-chan time.Time
+	if h.reg == nil {
+		tokenTicker := time.NewTicker(time.Second)
+		defer tokenTicker.Stop()
+		tokenWatch = tokenTicker.C
+	}
+	heartbeat := ""
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-readErr:
 			return err
-		case <-tokenTicker.C:
+		case <-tokenWatch:
 			if strings.TrimSpace(h.token()) != token {
 				return errAccountChanged
 			}
@@ -470,6 +543,7 @@ func classifyRelayDialError(response *http.Response, err error) error {
 	}
 	if response.StatusCode == http.StatusUnauthorized {
 		_ = clearIdentity()
+		return fmt.Errorf("%w: %w", errRelayUnauthorized, err)
 	}
 	if response.StatusCode >= 400 && response.StatusCode < 500 {
 		return fmt.Errorf("%w: %w", errRelayRefused, err)
