@@ -68,3 +68,24 @@ projection 库都是可丢弃重建物，Go 侧继续持有）。
 
 Go 侧 `crypto/rand` 32 字节 hex。Rust 侧使用工作区已冻结的 `getrandom`（0.3）
 取随机 + 手写 hex 编码，不新增 `hex`/`rand` 依赖（供应链政策：能复用已冻结依赖就不新增）。
+
+## 7. stdin 租约分类的窄化（host）
+
+Go `parentLease` 以 `os.ModeNamedPipe|os.ModeSocket` 判定（host.md §1.5）。
+Rust 侧 `#![forbid(unsafe_code)]` 无法调 `GetFileType`/读 handle mode，std 只有
+`IsTerminal`。保守近似：**terminal = unsupervised，其余一律 supervised**。
+与 Go 的偏差：`host < 文件` 或 `host < /dev/null` 在 Go 是 unsupervised（永久运行），
+本实现读到 EOF 即干净退出。生产 spawn（壳以 stdio pipe 启动）两侧行为一致；
+偏差见 `apps/reasonix-studio-host/src/lease.rs` 注释。迁移 `crates/platform`
+时若有安全 FFI 通道可补精确分类。
+
+## 8. `-instance-id` canonicalize 的窄化（host）
+
+冻结依赖策略（xtask/deps.rs：binaries 只经 assembly）禁止 host 直连 state 的
+`canonical_session_path`（Go instanceid 经 platform 间接使用它）。host 内以
+`std::fs::canonicalize` 复刻：**marker 文件已存在时**解析符号链接并剥 `\\?\`
+前缀，与 Go 的 physical path 等价；home 尚未创建时（marker 不存在）按拼写哈希。
+Go 侧是「穿过最近存在祖先」解析。偏差仅在「祖先含符号链接且 home 未创建」时出现；
+壳首启即建 home，实际不可达面极窄。待 `crates/platform` 迁移 instanceid 时，
+把平台→state 的边放进 ADR-0001 的正式修订再收窄。
+

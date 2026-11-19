@@ -15,7 +15,6 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-reasonix-state.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
