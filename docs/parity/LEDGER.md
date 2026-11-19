@@ -106,47 +106,47 @@ pipe-leading line must be a six-cell ledger row.
 | CONFIG-033 | Config | Sub-struct schemas §8.1-§8.24 (UI, CLI, Desktop, Billing, Persona, Memory, LSP, Browser, Attachments, Environment, Peers, Remote, Observability, Mods, ProgressWatch, AutoArchive, Plugin, Shell, SystemOne, BackgroundJobs, WebAccess, NetworkDNS, AskTimeout) | reasonix-config | todo | M1: docs/contracts/config.md §8 |
 | CONFIG-034 | Config | Example TOML documented schema parity | reasonix-config | todo | M1: docs/contracts/config.md §6 |
 | CONFIG-035 | Config | Open divergences to verify at implementation slices: compact_ratio default 0.90 vs example 0.85; serve auth_mode comment vs token default | reasonix-config | wip | auth_mode divergence resolved to the Go source (config layer default empty, the gate normalizes; test notes carry the §7.2 record); compact_ratio outstanding (2026-11-20) |
-| ROUTE-001 | HTTP | Route matrix: 420 registrations (330 session, 74 desktop, 16 hostMux), methods, paths | reasonix-serve | todo | M1: docs/contracts/http.md §1 |
-| ROUTE-002 | HTTP | Server/Hub/Runtime topology and middleware order | reasonix-serve | todo | M1: docs/contracts/http.md §0 |
-| ROUTE-003 | HTTP | /rt/{id} prefix, routeRuntime 404, routeDefault fallback + 503 hub.no_runtime_open | reasonix-serve | todo | M1: docs/contracts/http.md §0 |
+| ROUTE-001 | HTTP | Route matrix: 420 registrations (330 session, 74 desktop, 16 hostMux), methods, paths | reasonix-serve | wip | hub-level subset registered with per-route 405/404 envelope tests (router.rs); per-runtime families land with the runtime slice ({D}) |
+| ROUTE-002 | HTTP | Server/Hub/Runtime topology and middleware order | reasonix-serve | wip | middleware order frozen and tested (log→auth→hostGuard→withPage→csrf→mutation→watchTree, gate outermost, panic catch); HubOptions conditional families land with their slices (2026-11-20) |
+| ROUTE-003 | HTTP | /rt/{id} prefix, routeRuntime 404, routeDefault fallback + 503 hub.no_runtime_open | reasonix-serve | done | router tests + smoke: unknown /rt/{id} 404 request.not_found {kind:runtime}, no-runtime paths 503 hub.no_runtime_open (2026-11-20) |
 | ROUTE-004 | HTTP | hostOnly split: devices reach mux, never hostMux (404 device.host_only) | reasonix-serve | todo | M1: docs/contracts/http.md §0, §2.8 |
-| ROUTE-005 | HTTP | watchTreeWrites tree-change trigger set | reasonix-serve | todo | M1: docs/contracts/http.md §0 |
-| ROUTE-006 | HTTP | withPage file-first serving + fixed content-type map | reasonix-serve | todo | M1: docs/contracts/http.md §0, §3 |
+| ROUTE-005 | HTTP | watchTreeWrites tree-change trigger set | reasonix-serve | done | tree_write() port of hub_sync.go:71-90 + 2xx trigger tests (router.rs::2026-11-20) |
+| ROUTE-006 | HTTP | withPage file-first serving + fixed content-type map | reasonix-serve | done | page.rs file-first + content-type table tests; 304/If-Modified-Since outstanding (2026-11-20) |
 | ROUTE-007 | HTTP | InProcessClient + shell.unavailable_over_http over sockets | reasonix-serve | todo | M1: docs/contracts/http.md §0, §7 |
-| ROUTE-008 | HTTP | Auth modes none/token/password/invalid + plain-text deny 401 | reasonix-serve | todo | M1: docs/contracts/http.md §2.1 |
-| ROUTE-009 | HTTP | Token mode: cookie/bearer/query credential + redirect cleanup | reasonix-serve | todo | M1: docs/contracts/http.md §2.2 |
-| ROUTE-010 | HTTP | POST /auth/token bootstrap (constant-time, 204, cookie 30d) | reasonix-serve | todo | M1: docs/contracts/http.md §2.2 |
+| ROUTE-008 | HTTP | Auth modes none/token/password/invalid + plain-text deny 401 | reasonix-serve | wip | none/token/invalid done (auth.rs tests, deny 401 text); password constructs deny-all until its machine lands (2026-11-20) |
+| ROUTE-009 | HTTP | Token mode: cookie/bearer/query credential + redirect cleanup | reasonix-serve | done | auth.rs cookie/bearer/query→302+cookie with safe_redirect_target tests (2026-11-20) |
+| ROUTE-010 | HTTP | POST /auth/token bootstrap (constant-time, 204, cookie 30d) | reasonix-serve | done | auth.rs bootstrap tests (≤8KiB, one JSON value, constant-time, cookie) (2026-11-20) |
 | ROUTE-011 | HTTP | Password mode: login form, bcrypt 12, HMAC session 30d, rate limit 429 | reasonix-serve | todo | M1: docs/contracts/http.md §2.3 |
-| ROUTE-012 | HTTP | hostGuard DNS-rebound allowlist (421 serve.host_rejected) | reasonix-serve | todo | M1: docs/contracts/http.md §2.4 |
-| ROUTE-013 | HTTP | mutationGate launch token (403 auth.launch_token_required) | reasonix-serve | todo | M1: docs/contracts/http.md §2.5 |
-| ROUTE-014 | HTTP | Loopback gate: tcp4 127.0.0.1:0, host/origin/token checks | reasonix-serve | todo | M1: docs/contracts/http.md §2.6 |
+| ROUTE-012 | HTTP | hostGuard DNS-rebound allowlist (421 serve.host_rejected) | reasonix-serve | wip | loopback-shape hostGuard done (tests); wildcard-bind interface expansion fails closed pending interface enumeration (2026-11-20) |
+| ROUTE-013 | HTTP | mutationGate launch token (403 auth.launch_token_required) | reasonix-serve | done | auth.rs mutationGate tests; host-gated mark rides the loopback gate (2026-11-20) |
+| ROUTE-014 | HTTP | Loopback gate: tcp4 127.0.0.1:0, host/origin/token checks | reasonix-serve | done | gate.rs tests + golden fixtures byte-exact vs recorded Go host + release smoke (403 codes ×3, GET no-origin passes) (2026-11-20) |
 | ROUTE-015 | HTTP | Device gate: /pair, self routes, public paths, 401 device.unauthorized | reasonix-serve | todo | M1: docs/contracts/http.md §2.7 |
 | ROUTE-016 | HTTP | hostOnlyRoutes 27-route list + triple enforcement | reasonix-serve | todo | M1: docs/contracts/http.md §2.8 |
-| ROUTE-017 | HTTP | csrfGuard content types + binary upload exceptions (415) | reasonix-serve | todo | M1: docs/contracts/http.md §2.9 |
-| ROUTE-018 | HTTP | No CORS / same-origin policy | reasonix-serve | todo | M1: docs/contracts/http.md §2.9 |
+| ROUTE-017 | HTTP | csrfGuard content types + binary upload exceptions (415) | reasonix-serve | done | auth.rs csrf tests (json-only POST, octet-stream exceptions) (2026-11-20) |
+| ROUTE-018 | HTTP | No CORS / same-origin policy | reasonix-serve | done | no CORS surface emitted; same-origin only (router contract tests + golden replay) (2026-11-20) |
 | ROUTE-019 | HTTP | OpenBindRefusal + PlainHTTPAuthWarning | reasonix-serve | todo | M1: docs/contracts/http.md §2.10 |
-| ROUTE-020 | HTTP | Binding: Run/RunGraceful timeouts, 10s drain | reasonix-serve | todo | M1: docs/contracts/http.md §3 |
-| ROUTE-021 | HTTP | FindPage resolution order | reasonix-serve | todo | M1: docs/contracts/http.md §3 |
-| ROUTE-022 | HTTP | Reason envelope {code, error, params} | reasonix-serve | todo | M1: docs/contracts/http.md §4.2 |
-| ROUTE-023 | HTTP | writeErr mapping: coded/memory/config/answers | reasonix-serve | todo | M1: docs/contracts/http.md §4.2 |
-| ROUTE-024 | HTTP | Shared refusal codes + decodeBody 64KiB/DisallowUnknownFields | reasonix-serve | todo | M1: docs/contracts/http.md §4.3 |
-| ROUTE-025 | HTTP | Request logging levels (routine -> Debug) | reasonix-serve | todo | M1: docs/contracts/http.md §4.4 |
+| ROUTE-020 | HTTP | Binding: Run/RunGraceful timeouts, 10s drain | reasonix-serve | done | listen.rs tests (shutdown ok, in-flight completes within drain, header 10s, idle 120s watchdog) (2026-11-20) |
+| ROUTE-021 | HTTP | FindPage resolution order | reasonix-serve | done | page.rs tests (explicit dir requires index.html; exe-side; ../desktop-tauri/dist — BREAK-002 records the contract-doc path correction) (2026-11-20) |
+| ROUTE-022 | HTTP | Reason envelope {code, error, params} | reasonix-serve | done | refuse.rs Go field order + params key ordering tests (2026-11-20) |
+| ROUTE-023 | HTTP | writeErr mapping: coded/memory/config/answers | reasonix-serve | wip | coded/config.unparsed/answers branches + http.Error fallback tested; memory read-error types arrive with the memory machine (2026-11-20) |
+| ROUTE-024 | HTTP | Shared refusal codes + decodeBody 64KiB/DisallowUnknownFields | reasonix-serve | done | refuse_common.go 19 codes as constants; decode_body stream-level truncation + unknown-fields tests (2026-11-20) |
+| ROUTE-025 | HTTP | Request logging levels (routine -> Debug) | reasonix-serve | wip | one INFO line per request in the log middleware; routine/Debug split outstanding (2026-11-20) |
 | ROUTE-026 | HTTP | Wire log kinds, 8MiB cap, witness, /trajectory availability | reasonix-serve | todo | M1: docs/contracts/http.md §4.5 |
-| ROUTE-027 | HTTP | SSE framing: id/data/keepalive/watermark | reasonix-serve | todo | M1: docs/contracts/http.md §5 |
-| ROUTE-028 | HTTP | Last-Event-ID resume + 4 subscription modes | reasonix-serve | todo | M1: docs/contracts/http.md §5 |
-| ROUTE-029 | HTTP | /events/replay shape + events mux + metrics | reasonix-serve | todo | M1: docs/contracts/http.md §5 |
+| ROUTE-027 | HTTP | SSE framing: id/data/keepalive/watermark | reasonix-serve | done | eventstream tests (id only on numbered frames, 15s keepalive ': ping'+watermark real frame, ': connected' first-byte flush; golden SSE frames byte-exact) (2026-11-20) |
+| ROUTE-028 | HTTP | Last-Event-ID resume + 4 subscription modes | reasonix-serve | done | broadcaster tests ported from broadcaster_test.go/eventstream_test.go (header+query cursor, From/InitialNotices/Attached/Resume) (2026-11-20) |
+| ROUTE-029 | HTTP | /events/replay shape + events mux + metrics | reasonix-serve | wip | /events/replay {frames,complete,watermark} done (null→[] tests); events mux family lands with its wave (2026-11-20) |
 | ROUTE-030 | HTTP | GET /status shape (fixed + conditional keys) | reasonix-serve | todo | M1: docs/contracts/http.md §7 |
 | ROUTE-031 | HTTP | POST /submit contract (202, busy 409, format, shell refusal 403) | reasonix-serve | todo | M1: docs/contracts/http.md §7 |
-| ROUTE-032 | HTTP | /sessions, /todos, /balance, /context, /new, /cancel, /approve shapes | reasonix-serve | todo | M1: docs/contracts/http.md §7 |
+| ROUTE-032 | HTTP | /sessions, /todos, /balance, /context, /new, /cancel, /approve shapes | reasonix-serve | wip | /sessions row shapes done (listing.rs tests + smoke []), /todos//balance//context//new//cancel//approve need the write-side slices (2026-11-20) |
 | ROUTE-033 | HTTP | vite ROUTES cross-check + stale prefixes | reasonix-serve | todo | M1: docs/contracts/http.md §6 |
-| SSE-001 | SSE | 36-kind taxonomy: names, order, payload fields, numbered/droppable | reasonix-core | todo | M1: docs/contracts/sse.md §1 |
-| SSE-002 | SSE | Transport-synthetic kinds stream_watermark / stream_gap | reasonix-serve | todo | M1: docs/contracts/sse.md §1, §3 |
+| SSE-001 | SSE | 36-kind taxonomy: names, order, payload fields, numbered/droppable | reasonix-core | wip | kind names/order from contract::eventwire_manifest.json (golden parity test); numbered/droppable in serve broadcaster; payload-field completeness tracks eventwire coverage (2026-11-20) |
+| SSE-002 | SSE | Transport-synthetic kinds stream_watermark / stream_gap | reasonix-serve | done | broadcaster tests (gap frame seq = first trustworthy, attached watermark unnumbered) (2026-11-20) |
 | SSE-003 | SSE | Fixed vocabularies: phases, attempts, retry scopes, levels, audiences, issuers, sub-agent channels | reasonix-core | todo | M1: docs/contracts/sse.md §1 |
-| SSE-004 | SSE | eventwire.Event envelope: field set, omitempty, externalizable marks | reasonix-core | todo | M1: docs/contracts/sse.md §2 |
-| SSE-005 | SSE | droppable() set + seq assignment + never-blocking Emit | reasonix-serve | todo | M1: docs/contracts/sse.md §3 |
-| SSE-006 | SSE | Transport-scoped seq: survives /new; ResetSession drops replay tail | reasonix-serve | todo | M1: docs/contracts/sse.md §3 |
-| SSE-007 | SSE | Replay log, gap frame, watermark, Replay(after) | reasonix-serve | todo | M1: docs/contracts/sse.md §3 |
-| SSE-008 | SSE | Five subscription modes incl. initial-notices unnumbered replay | reasonix-serve | todo | M1: docs/contracts/sse.md §4 |
+| SSE-004 | SSE | eventwire.Event envelope: field set, omitempty, externalizable marks | reasonix-core | done | crates/contract/src/eventwire/event.rs held by the manifest golden parity suite (2026-11-20) |
+| SSE-005 | SSE | droppable() set + seq assignment + never-blocking Emit | reasonix-serve | done | broadcaster tests ported from Go (stalled subscriber never blocks emit; droppable shed first; 4MiB budget) (2026-11-20) |
+| SSE-006 | SSE | Transport-scoped seq: survives /new; ResetSession drops replay tail | reasonix-serve | done | broadcaster tests (reset keeps counting, drops tail) (2026-11-20) |
+| SSE-007 | SSE | Replay log, gap frame, watermark, Replay(after) | reasonix-serve | done | broadcaster tests (8MiB budget eviction, since() completeness, watermark) (2026-11-20) |
+| SSE-008 | SSE | Five subscription modes incl. initial-notices unnumbered replay | reasonix-serve | done | broadcaster tests (From/InitialNotices once-per-session unnumbered/Attached watermark-first/Resume(0) owes the log) (2026-11-20) |
 | SSE-009 | SSE | Coalesce: 16ms window, 16KiB cap, first-delta immediate, order preserved | reasonix-core | todo | M1: docs/contracts/sse.md §5 |
 | SSE-010 | SSE | Sink capability registry + AuditForwarder completeness | reasonix-core | todo | M1: docs/contracts/sse.md §5 |
 | SSE-011 | SSE | CostQuoteSink quoting rules + no_price fallback | reasonix-core | todo | M1: docs/contracts/sse.md §5 |
@@ -378,27 +378,27 @@ pipe-leading line must be a six-cell ledger row.
 | TOOL-055 | Tools | previews + edit engine + encoding round-trip | reasonix-tools | todo | M1: docs/contracts/tools.md §7.6 |
 | TOOL-056 | Tools | Workspace binding + PathResolver + walk pruning | reasonix-tools | todo | M1: docs/contracts/tools.md §7.7 |
 | TOOL-057 | Tools | divergences (parallel_tasks guidance, preview asymmetry, V2 shadow) | reasonix-tools | todo | M1: docs/contracts/tools.md §8 |
-| HOST-001 | Host | main() argv precedence (mac handoff, tree handoff, schedule exec before flags) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.1 |
-| HOST-002 | Host | Host flag set (-page, -instance-id, -studio-*, -cua-driver, -computer-*-socket, -crash-dir, -strip-package-grants) + modhost embedder | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.2 |
-| HOST-003 | Host | Exit codes: 0 clean, 1 every startup failure | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.3 |
-| HOST-004 | Host | Startup phase log lines (startup phase=%s elapsed_ms=%d; boot.* phases; 12-phase order) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.4 |
-| HOST-005 | Host | Parent lease: stdin named pipe or socket only; terminal/file/dev-null unsupervised | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.5 |
-| HOST-006 | Host | Parent EOF on the lease ends serving cleanly (exit 0, port released) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.5 |
+| HOST-001 | Host | main() argv precedence (mac handoff, tree handoff, schedule exec before flags) | apps/reasonix-studio-host | wip | schedule-exec slot + flag precedence done (cli tests); mac/tree handoff machines land with the update slice (2026-11-20) |
+| HOST-002 | Host | Host flag set (-page, -instance-id, -studio-*, -cua-driver, -computer-*-socket, -crash-dir, -strip-package-grants) + modhost embedder | apps/reasonix-studio-host | wip | full flag set parsed with Go flag semantics (args.rs tests); -instance-id answers the real hash; modhost embedder lands with the platform slice (2026-11-20) |
+| HOST-003 | Host | Exit codes: 0 clean, 1 every startup failure | apps/reasonix-studio-host | done | cli tests (undefined flag 2, schedule child 1, lease EOF 0) (2026-11-20) |
+| HOST-004 | Host | Startup phase log lines (startup phase=%s elapsed_ms=%d; boot.* phases; 12-phase order) | apps/reasonix-studio-host | done | release smoke: 12 phase lines in the frozen order with elapsed_ms; boot.* forwarding lands with the runtime slice (2026-11-20) |
+| HOST-005 | Host | Parent lease: stdin named pipe or socket only; terminal/file/dev-null unsupervised | apps/reasonix-studio-host | wip | terminal = unsupervised (IsTerminal); pipe/file distinction needs FFI this tree forbids (OPEN_QUESTIONS §7); shell spawn always pipes (2026-11-20) |
+| HOST-006 | Host | Parent EOF on the lease ends serving cleanly (exit 0, port released) | apps/reasonix-studio-host | done | integration test: handshake first line, lease close → exit 0 (2026-11-20) |
 | HOST-007 | Host | Crash/fatal log: InstallFatalLog(crash-dir); released on 0, recorded with last line otherwise | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.6 |
-| HOST-008 | Host | Handshake line: one JSON line (version 1, origin, token), field order version/origin/token | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §2.1 |
-| HOST-009 | Host | Fresh credential per launch: 32 random bytes hex, never persisted, never from config | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §2.1 |
-| HOST-010 | Host | Loopback bind 127.0.0.1:0 (tcp4); origin http://127.0.0.1:<port> | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §2.1 |
-| HOST-011 | Host | Announce ordering: after bind + provider-setup enable, before serve loop | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §1.7 |
+| HOST-008 | Host | Handshake line: one JSON line (version 1, origin, token), field order version/origin/token | apps/reasonix-studio-host | done | handshake.rs field-order test + release smoke first line ({"version":1,...}) (2026-11-20) |
+| HOST-009 | Host | Fresh credential per launch: 32 random bytes hex, never persisted, never from config | apps/reasonix-studio-host | done | credential.rs tests (64 hex, differs per mint) (2026-11-20) |
+| HOST-010 | Host | Loopback bind 127.0.0.1:0 (tcp4); origin http://127.0.0.1:<port> | apps/reasonix-studio-host | done | serve gate tests + smoke origin shape (2026-11-20) |
+| HOST-011 | Host | Announce ordering: after bind + provider-setup enable, before serve loop | apps/reasonix-studio-host | done | prepare() marks bind/provider-setup then the binary announces before serve_until; phase log order in smoke (2026-11-20) |
 | HOST-012 | Host | host.js acceptance rules (version, token >= 32 chars, origin URL, http:, 127.0.0.1, port; 4096-byte limit; 60 s timeout; codes timeout/exited/spawn/overflow/malformed) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §2.2-2.3 |
 | HOST-013 | Host | Shell retry contract: only exited/spawn within 10 s, one retry | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §2.4 |
-| HOST-014 | Host | Acts: relaunch/quit/show, one JSON line each, mutex-serialized | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §3 |
+| HOST-014 | Host | Acts: relaunch/quit/show, one JSON line each, mutex-serialized | apps/reasonix-studio-host | done | acts.rs tests (own-line, linux-only relaunch, quit on end); live triggers land with notify (2026-11-20) |
 | HOST-015 | Host | Relaunch asked on Linux only; quit on EndApplication; PrepareForUpdate writes nothing | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §3 |
 | HOST-016 | Host | Toast click asks show; notify: toast clicked / could-not-reach logs | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §3 |
-| HOST-017 | Host | Loopback gate wiring with the launch credential (gate checks per http.md §2.6) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §4.1 |
-| HOST-018 | Host | hostServeConfig zeroes AuthMode/Token/PasswordHash/BehindProxy (no config contribution) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §4.2 |
+| HOST-017 | Host | Loopback gate wiring with the launch credential (gate checks per http.md §2.6) | apps/reasonix-studio-host | done | release smoke: 403 unauthorized/origin_rejected/host_rejected each from the real process (2026-11-20) |
+| HOST-018 | Host | hostServeConfig zeroes AuthMode/Token/PasswordHash/BehindProxy (no config contribution) | apps/reasonix-studio-host | done | config host_serve_section zeroing tests; the router's gate takes only the minted credential, user serve auth never reaches it (2026-11-20) |
 | HOST-019 | Host | Provider setup enabled on the loopback listener only | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §4.3 |
-| HOST-020 | Host | Graceful drain: RunGracefulHandler; hub.Shutdown after socket drain | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §4.4 |
-| HOST-021 | Host | -instance-id: io.reasonix.studio.<16 hex> (canonicalized home sha256[:8]) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §5.1 |
+| HOST-020 | Host | Graceful drain: RunGracefulHandler; hub.Shutdown after socket drain | apps/reasonix-studio-host | done | listen.rs drain tests + lease-EOF integration exit 0 (2026-11-20) |
+| HOST-021 | Host | -instance-id: io.reasonix.studio.<16 hex> (canonicalized home sha256[:8]) | apps/reasonix-studio-host | done | assembly host tests (marker canonicalization, prefix pinned); canonicalize narrowing recorded in OPEN_QUESTIONS §8 (2026-11-20) |
 | HOST-022 | Host | -strip-package-grants: exit 2/1/0 semantics; one-line JSON report with stripped/refused/unread always present | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §5.2 |
 | HOST-023 | Host | schedule exec child: os.Args[3:] through schedulerun.Exec | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §5.3 |
 | HOST-024 | Host | Schedule ticker eligibility (supervised && (iconLive or panes > 0)) + machine-wide scheduler.lock | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.5 |
@@ -409,7 +409,7 @@ pipe-leading line must be a six-cell ledger row.
 | HOST-029 | Host | Tray: IconLive re-read (DesktopTray != off); fold from tracker; ApplyTrayPrefs noop | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.4 |
 | HOST-030 | Host | Notifications wrap every runtime live; disk watch says a low volume once, honours both switches, 5 min cadence | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.5 |
 | HOST-031 | Host | Install/update typed-nil guards: nil unless version+exe+pid stated; layout follows stated application | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.6 |
-| HOST-032 | Host | No built page: kernel-only serve + log line | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.7 |
+| HOST-032 | Host | No built page: kernel-only serve + log line | apps/reasonix-studio-host | done | find_page None path + on_log line in prepare (2026-11-20) |
 | HOST-033 | Host | Host must not depend on the CLI crate (schedule child via schedulerun) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.8 |
 | HOST-034 | Host | Hub wiring keys (Tray/Asks/Remote/DecorateSink/Grant) + background cleanup reconciler + OpenOnFallbackModel | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §6.8 |
 | HOST-035 | Host | Credential cookie contract: reasonix_token, httpOnly, sameSite strict, armed before load, restored on removal/refusal | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §7.2 |
@@ -420,7 +420,7 @@ pipe-leading line must be a six-cell ledger row.
 | PATHS-002 | Paths | StateRootEntries (29) + first-move subset | reasonix-config | todo | M1: docs/contracts/paths.md §1 |
 | PATHS-003 | Paths | Derived path functions (config, credentials, sessions, leases, worktrees) | reasonix-session | wip | SessionDirFor/workspace_slug derived in crates/session/src/paths.rs tests; config/credentials/leases/worktrees outstanding (2026-11-20) |
 | PATHS-004 | Paths | Default dirs incl. locks-dir convergence across isolated instances | reasonix-config | todo | M1: docs/contracts/paths.md §1 |
-| PATHS-005 | Paths | User config selection chain (primary → legacy OS-support → legacy XDG) | reasonix-config | todo | M1: docs/contracts/paths.md §2 |
+| PATHS-005 | Paths | User config selection chain (primary → legacy OS-support → legacy XDG) | reasonix-config | wip | primary + legacy OS-support + pinned-home skip done (paths.rs tests); XDG legacy candidates unix-only; isUserConfigPath/managed scoping outstanding (2026-11-20) |
 | PATHS-006 | Paths | Project config paths; fallback only on IsNotExist | reasonix-config | todo | M1: docs/contracts/paths.md §2 |
 | PATHS-007 | Paths | userConfigCandidatePaths / isUserConfigPath / managed config paths | reasonix-config | todo | M1: docs/contracts/paths.md §2 |
 | PATHS-008 | Paths | Config edit locks (aliasing, 5s timeout, unsafe-dir and owner checks) | reasonix-config | todo | M1: docs/contracts/paths.md §3 |
