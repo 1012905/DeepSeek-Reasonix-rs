@@ -9,9 +9,59 @@ reviewed: 2026-11-18
 
 续跑时先读这一份。每个波次结束都要更新它；不许让它描述的树比真实的树旧。
 
-最后更新：2026-11-19（波次 14：P2 账号/云界面退役 + P3 更新通道转本仓库；全门绿 **297/2170**，
-i18n 孤儿键 −237，serve 云端路由 −2709 行，LAN/Tailscale 手机门保留；P1 `eec852107`、
-P4 骨架 `df119a62d` 已提交，P2/P3 随本波提交）。
+最后更新：2026-11-20（波次 17：Rust 内核 host 启动切片——config/session/serve 三 crate
+落地 + apps/reasonix-studio-host 端到端接线；账本 done 69→103；release 冒烟 8 契约行为
+全过；分支 `rust-migration`）。
+
+## 波次 17 改了什么（Rust 内核 host 启动切片）
+
+用户指令：把 Go 后端原地迁移为等价 Rust 内核（契约不变 + 迁移窗口优化），Go 源在验证
+通过后删除。与仓库既定迁移（RUST_MIGRATION.md、账本、B15 cutover 门槛）对齐后，本波次
+推进账本 M4 serve 切片的读侧 + host 启动面；**Go 源未删除未归档**（账本未收敛，
+B15 仍然成立——`OPEN_QUESTIONS.md` §1 有完整论证）。
+
+- **crates/config**（S1）：分层加载（未知键透传/坏层丢弃/警告文本逐字对齐 Go）、
+  serve 段 auth 归一化、host_serve_section 清零（HOST-018）、desktop 键、
+  auto workspace 根链、language、user config 选择链（PATHS-005 主体）。41 测试。
+- **crates/session**（S2）：workspacelist 读侧、树分组、原生会话 listing
+  （/sessions 行形状）、title 缓存、冻结 Hub 读侧面。51 测试。
+- **crates/serve**（S3）：loopback 门（golden 与 Go 实录逐字节对拍）、auth none/token、
+  Reason 信封 + refuse_common 19 码、decodeBody 真实截断、优雅监听（10s/120s/10s）、
+  FindPage（BREAK-002 记录契约文档路径陈旧）、Broadcaster+SSE 全机件（droppable/
+  transport-scoped seq/8MiB 回放/4MiB 逐级摘除/五订阅/gap/watermark/keepalive）、
+  hub 级路由（/runtimes /tree /sessions /rt/{id} routeDefault）。
+  85 测试（含 3 golden 重放）。
+- **apps/reasonix-studio-host + crates/assembly::host**（S4）：按 ADR-0001
+  （binaries→assembly；config 经 serve frontend 到达——ADR key choice 3 的既有路径，
+  未改冻结策略）完成端到端接线：argv 优先级/flag 集/hex 凭据/握手行/act 行/12 相位日志/
+  租约/instance-id/优雅排空。release 冒烟：无 cookie 403 unauthorized、错 Host 403
+  host_rejected、无 Origin 变更 403 origin_rejected、带 cookie GET / 200 页面、
+  /tree //sessions 200、未知路由 503 hub.no_runtime_open、租约 EOF → exit 0。
+- **优化**（详见 docs/optimization-plan.md 与各子 Agent 证据）：OPT-001..005/008..020
+  逐条执行或按证据否决（OPT-016 的 Value 树 merge 方案实测负收益，保留 direct 解码，
+  merge 实现留 benches 复核）；criterion 基准落盘（gate 40ns vs 直译 266ns；
+  帧 122ns vs 463ns；树 100 根 28-34ms vs Go 基线 89.1ms，口径差异见报告）。
+- **账本**：done 69→103、wip 23（CONFIG/PATHS/ROUTE/SSE/HOST 各行证据齐附）。
+- **并行会话事件**：工作树中出现另一会话的未提交改动（desktop-tauri remote/share +
+  Go share 面），一次 `git add -A` 曾卷入；已 `git reset --soft` 拆分并原样保留，
+  详见 OPEN_QUESTIONS §9；此后只用显式路径 add。
+
+**波次 17 验证（主 Agent 重跑非子 Agent 自报）**：
+
+```
+$ cargo test --workspace                     # 46 套件全绿（config 41/session 51/serve 85/
+                                             #   assembly 10/host 14+4）
+$ cargo clippy --workspace --all-targets -- -D warnings   # 0
+$ cargo fmt --all --check                    # 0
+$ cargo xtask deps --check                   # OK（14 internal edges）
+$ cargo xtask parity --check                 # OK（563 行：done 103 / wip 23 / todo 437）
+$ cargo build --release -p reasonix-studio-host   # 0
+$ release 冒烟（curl 走门）                  # 8 契约行为全过（见上）
+```
+
+cargo-deny 本机未装仍 skipped（B15 记录不变）；oha/wrk 未装，冒烟以 curl 代。
+裁剪面（password/device 门/events mux/wire log/写侧路由/provider/tools/agent/safety/
+ext/platform/tui/acp/cli）记录于 `docs/contract.md` §3 与 `docs/optimization-backlog.md`。
 
 > 本文每个数字都来自下方「已验证基线」里的命令。没有命令支撑的判断标「未验证」。
 > 波次 5 的 284 文件 / 2140 测试 / 16 命令 / 129 孤儿已被本波次实测取代。
