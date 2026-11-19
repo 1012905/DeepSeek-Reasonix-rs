@@ -186,7 +186,7 @@ func TestAttachmentStillStoresAPlainFile(t *testing.T) {
 // The desktop refuses an oversize upload before reading it, with its own copy of
 // each cap; the numbers are the kernel's.
 func TestDesktopUploadCapsMatchTheKernels(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "port", "upload.ts"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop-tauri", "src", "port", "upload.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}

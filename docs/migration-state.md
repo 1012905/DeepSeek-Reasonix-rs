@@ -203,6 +203,45 @@ vue-tsc 0；全量 **304 文件 / 2250 测试绿**；`tauri --version` → 2.12.
 且新目录未创建）——用户 04:58 的自跑日志没有 `startup failed` 行，疑为代理宿主限制，
 待其终端复跑确认。另把 `Pane.turn.interaction` 的 20s 等待放宽到 60s 以吸收满负载偶发。
 
+## 波次 13 改了什么（Electron 退役执行：P1；P4/P5 骨架并行）
+
+用户裁决「全部退役 + 去旧账号 + 更新转本仓库 + 零安装网页」。本波次执行 P1（删源与门禁跟随），
+并行产出 P4（Worker 骨架）与 P5（独立注册表仓库骨架）。Go 内核逻辑零改动；Go 工具（repolint /
+wire-parity / route-parity）随路径迁移做了必要改动（D17）。
+
+- **删除**：`desktop/`（2423 文件）、`studio.yml`/`release-studio.yml`/`deploy-web-studio.yml`/
+  `studio-selftest-windows.yml`/`studio-certum-signing-smoke.yml`、`.signpath/`、
+  `cmd/signpath-contract/`；`scripts/` 四个 Electron-only 测试删除、六个脚本裁剪。
+- **迁移**：`cmd/studio-manifest`（含 `arch.json` 与 gate 测试）；`internal/frontend/serve/testdata/
+  trace_readings.json`。
+- **门禁**：wire-parity 镜像常量 → `desktop-tauri/src/port`（表测试绿）；tag parity → Vue
+  `state/session.ts`；route-parity → `desktop-tauri/vite.config.ts`；repolint `stylesDir`/size
+  豁免/layer host 更新；baseline 受控 `-update -allow-widen`（+141/−78）。
+- **配置**：`ci.yml` 去 desktop 面；dependabot/labeler/CODEOWNERS/.gitattributes/.gitignore 清理；
+  `make studio`→Tauri；`bundle.active=true`（本机 MSI 4.44 MiB + NSIS 2.95 MiB）。
+- **P4 骨架**：`workers/remote/`（配对/换票路由、Durable Object 中继、README）＋
+  `deploy-remote.yml`（已含构建 `desktop-tauri/dist`，actionlint 通过）。
+  已知后续：浏览器 WS 不能带 Authorization（改走子协议/查询参数）。
+- **P5 骨架**：独立仓库 `reasonix-registry`（本地已 `git init` + 一次提交，未推远端）：四类内容
+  目录、schema、`build-index.mjs`/`validate-schemas.mjs`、validate/publish 工作流、CODEOWNERS、
+  PR 模板、两个示例；`registry.pub` 与项目内嵌 minisign 公钥一致（无私钥入库）。
+
+**波次 13 验证（主 Agent 重跑）**：
+
+```
+$ go build ./... && go vet ./...                       # 0
+$ golangci-lint v2.12.2（GOTOOLCHAIN=go1.26.7）run ./...  # 0 issues
+$ go run ./tools/repolint                              # clean (3556 baselined)
+$ mingw32-make check                                   # 0
+$ go test ./... -p 4 -timeout 20m                      # 211 ok；5 个路径遗漏失败已重指修复
+$ (前端) vue-tsc / vitest / vite build                  # 0 / 311 文件全绿 / 构建成功
+```
+
+- 首次全量在并发负载下两处超时/环境失败（boot 10 分钟超时、proc job object），单独复跑 PASS，判负载假阳性。
+- 温和并发复跑：211 包 ok；5 个失败均为 Go 对等测试仍读已删 `desktop/` 路径（P1 遗漏）。
+- 15 个文件重指 `desktop-tauri` 后，10 个受影响包 `-count=1` 全绿（serve 733s、control 198s）。
+- sandbox/builtin 3 个失败在 `pre-electron-retirement` 标签 worktree 同样复现：环境性预存项，记 blockers.md。
+
 ## 波次 12 改了什么（D15 收口）
 
 用户指令：窗口已验证可开、提交、D5、D15、以完成 Vue/TS/Tauri 重构作为 Electron 退役前提

@@ -8,7 +8,7 @@ everything you need to get started.
 - **Go 1.26+** — the version `go.mod` requires
 - **Git** — for version control
 - **Node.js 24+ and pnpm 10** (optional) — only if you work on Studio
-  (`desktop/`)
+  (`desktop-tauri/`)
 
 ## Getting started
 
@@ -39,7 +39,7 @@ go test ./...              # runs the full test suite
 | `internal/safety/sandbox` | OS-level sandboxing |
 | `internal/frontend/serve` | HTTP/SSE server frontend |
 | `internal/state/checkpoint` | Snapshot-based rewind |
-| `desktop/` | Studio: the Electron shell, the SPA it serves (separate Go module) |
+| `desktop-tauri/` | Studio: the Tauri shell and the Vue SPA it serves (own npm + Cargo roots) |
 | `docs/` | Engineering spec, migration guide |
 
 ### Dependency direction
@@ -208,7 +208,7 @@ in the PR. Documentation-only and test-only PRs are reviewed at lower priority.
 - Every PR carries the four sections of the PR template: Cause, Blast radius,
   Neighbouring behaviours tested, Why this layer.
 - The new test must fail without the change.
-- A UI change (`desktop/frontend-next/src` or the website pages) fills the
+- A UI change (`desktop-tauri/src` or the website pages) fills the
   template's UI section: screenshots before and after, light and dark, wide
   and phone width.
 - The same section carries the line "Entries moved, hidden or removed".

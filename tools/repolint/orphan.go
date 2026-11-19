@@ -30,8 +30,8 @@ func newOrphanScan() *orphanScan {
 }
 
 // observe records one file's exported kernel declarations and, separately, every
-// identifier it reads. Both halves span the whole tree — the desktop module is
-// a caller of internal/, so a scan that stopped at one module would call its
+// identifier it reads. Both halves span the whole tree — a host in cmd/ is a
+// caller of internal/, so a scan that stopped at one module would call its
 // APIs dead.
 func (o *orphanScan) observe(src *sourceFile) {
 	if src.file == nil {

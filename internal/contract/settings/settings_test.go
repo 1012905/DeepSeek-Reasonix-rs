@@ -267,7 +267,7 @@ func TestEmbeddedConfigStructsAreDeclaredToo(t *testing.T) {
 // The desktop's table of where a setting is drawn names only ids that exist, so a
 // setting renamed or removed here cannot leave a button that opens the wrong row.
 func TestTheDesktopScreenTableNamesOnlyDeclaredSettings(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "ui", "settingScreens.ts"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop-tauri", "src", "ui", "settingScreens.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}

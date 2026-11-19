@@ -18,7 +18,7 @@ func TestProductionAgentOptionsCarryTargetAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	checked := 0
-	for _, dir := range []string{"cmd", "internal", "desktop"} {
+	for _, dir := range []string{"cmd", "internal", "desktop-tauri"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil

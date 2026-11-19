@@ -79,7 +79,7 @@ func serveRefusalCodes(t *testing.T) map[string]string {
 
 func translatedCodes(t *testing.T) map[string]bool {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "i18n", "kernel.ts")
+	path := filepath.Join("..", "..", "..", "desktop-tauri", "src", "i18n", "kernel.ts")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Skipf("no frontend catalogue: %v", err)

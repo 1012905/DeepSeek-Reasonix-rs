@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const indexScript = path.join(dir, "update-versions-index.sh");
 const backfill = path.join(dir, "backfill-studio-notes.sh");
-const workflow = readFileSync(path.join(dir, "..", ".github", "workflows", "release-studio.yml"), "utf8");
 
 function index(existing, ...args) {
   const run = spawnSync("bash", [indexScript, existing, ...args], { encoding: "utf8" });
@@ -40,74 +39,6 @@ test("a rerun never rewrites an existing entry, notes included", () => {
   const again = index(file, "v2.32.0", "studio-v2.32.0", "studio", "2026-10-10T00:00:00Z", "20", NOTES);
   assert.equal(again.json.versions.length, 1);
   assert.equal("notes" in again.json.versions[0], false);
-});
-
-test("the release uploads the notes object before it writes the catalog that names it", () => {
-  const step = workflow.slice(workflow.indexOf("Mirror to R2 and update the Studio catalog"));
-  const at = (needle) => {
-    const i = step.indexOf(needle);
-    assert.notEqual(i, -1, needle);
-    return i;
-  };
-  const candidate = at('if [ "$CANDIDATE" = "true" ]');
-  const upload = at('"s3://${R2_BUCKET}/${notes_key}"');
-  const verify = at("head-object");
-  const merge = at("scripts/update-versions-index.sh");
-  const catalog = at('"s3://${R2_BUCKET}/studio/versions.json" \\\n            --endpoint-url "$endpoint" \\\n            --content-type');
-  assert.ok(candidate < upload && upload < verify && verify < merge && merge < catalog);
-  assert.match(step.slice(merge, catalog), /\$\{notes_arg\[@\]\}/);
-});
-
-// Runs the workflow's own notes block with aws stubbed, so what is tested is
-// the text that ships rather than a copy of it.
-function notesBlock(awsBody) {
-  const step = workflow.slice(workflow.indexOf("Mirror to R2 and update the Studio catalog"));
-  const from = step.indexOf('notes_key="studio/notes/');
-  const to = step.indexOf("# Studio's own catalog.");
-  const block = step.slice(from, to).replace(/^ {10}/gm, "");
-  const root = mkdtempSync(path.join(tmpdir(), "nb-"));
-  writeFileSync(path.join(root, "aws"), `#!/bin/sh\n${awsBody}\n`);
-  chmodSync(path.join(root, "aws"), 0o755);
-  const script = `set -e\nVERSION=v2.32.0 R2_BUCKET=b RUNNER_TEMP=/tmp endpoint=e\n${block}\necho "ARGS=\${notes_arg[*]}"`;
-  return spawnSync("bash", ["-c", script], { encoding: "utf8", env: { ...process.env, PATH: `${root}:${process.env.PATH}` } });
-}
-
-test("a failed notes upload warns and leaves the catalog entry without a pointer, and the step goes on", () => {
-  const run = notesBlock("exit 1");
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /::warning::release notes for v2\.32\.0 were not uploaded/);
-  assert.match(run.stdout, /ARGS=$/m);
-});
-
-test("a notes object the mirror cannot confirm gets no pointer either", () => {
-  const run = notesBlock('[ "$1" = s3api ] && exit 1; exit 0');
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /::warning::/);
-  assert.match(run.stdout, /ARGS=$/m);
-});
-
-test("only a confirmed upload produces the notes pointer", () => {
-  const run = notesBlock("exit 0");
-  assert.equal(run.status, 0, run.stderr);
-  assert.doesNotMatch(run.stdout, /::warning::/);
-  assert.match(run.stdout, /ARGS=20 https:\/\/dl\.reasonix\.io\/studio\/notes\/2\.32\.0\.md$/m);
-});
-
-test("stable publications deploy from website without widening Pages or signing permissions", () => {
-  const job = workflow.match(/^  website:\n[\s\S]*?(?=^  [a-z][a-z-]*:|$(?![\s\S]))/m)?.[0] ?? "";
-  assert.match(job, /needs: \[resolve, publish\]/);
-  assert.match(job, /github\.repository == 'esengine\/DeepSeek-Reasonix'/);
-  assert.match(job, /needs\.resolve\.outputs\.candidate != 'true'/);
-  assert.match(job, /actions: write/);
-  assert.doesNotMatch(job, /id-token:|pages:|secrets:/);
-  assert.match(job, /ref: \$\{\{ github\.workflow_sha \}\}/);
-  assert.match(job, /VERSION: \$\{\{ needs\.resolve\.outputs\.version \}\}/);
-  assert.match(job, /scripts\/publish-studio-changelog\.sh/);
-  const registration = readFileSync(path.join(dir, "..", ".github", "workflows", "pages.yml"), "utf8");
-  assert.match(registration, /workflow_dispatch:/);
-  for (const input of ["release_version", "release_request", "studio_version"]) assert.ok(registration.includes(`${input}:`));
-  assert.match(registration, /permissions: \{\}/);
-  assert.match(registration, /exit 1/);
 });
 
 test("website publication waits for its own deployment and propagates dispatch, API and deployment failures", () => {

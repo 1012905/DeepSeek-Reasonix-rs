@@ -216,24 +216,24 @@ agent-browser 子 WebView、把同步 `pathForFile` 改为原生拖放路径事�
 macOS/Linux 的子 WebView 与拖放未在本机（Windows）运行。无平台等价物的动词显式回答
 unsupported，不伪造成功。
 
-## Electron 退役计划（顺序已列，执行待确认）
+## Electron 退役计划（执行中：P1 已完成）
 
 D4 的裁决：不许在对等之前删除，不许被 Tauri 构建加载。
 
-当前状态（2026-11-19，波次 12 后）：Vue 端口 parity 已收口（311 文件 / 2297 测试、
-debt 81 无未落地用户可见子系统），真实窗口由用户在本机终端验证可开；Rust+Go 共存不变。
+当前状态（2026-11-19，波次 13）：Vue 端口 parity 已收口、真实窗口由用户验证；P1 已删除
+Electron 源与发布线，门禁跟随迁移（D17）。Rust+Go 共存不变。
 `desktop/` 在主干仍完整（**2423 个跟踪文件**：frontend-next 2292、electron 110、cmd 10、
 internal 5、packaging 2），且仍有下列活跃引用，退役必须逐项处理：
 
 | # | 事项 | 现状 | 处理 |
 |---|---|---|---|
-| 1 | Tauri 打包 | `desktop-tauri/src-tauri/tauri.conf.json` 的 `bundle.active = false` | **待用户决策**：开启并声明图标/安装器目标；签名与更新策略是产品决策 |
-| 2 | Tauri 发布工作流 | 不存在；`release-studio.yml` 仅打 Electron | **待用户决策**：新写 Tauri release，替代 Electron 发布 |
-| 3 | `App.port.test.ts` 的 oracle 对照 | ~~直接读 `desktop/frontend-next`~~ | **done（波次 12）**：属性/动作/props 冻结为 `src/ui/parity-contract.json`；`msg.test.ts` 的 oracle 键引用冻结为 `src/i18n/msg/oracle-named.json`（620 个仅 React 命名的键，Vue 命名或按需删除后自动可清） |
-| 4 | Makefile | `studio` → Electron；`test` → desktop go 测试 | **done（波次 12）**：`studio`→`pnpm -C desktop-tauri tauri dev`，新增 `studio-electron` 冻结目标；`test`→`studio-tauri-test`；`studio-test` 保留并注释为冻结 |
-| 5 | CI / 发布 / 部署 | Electron 三条工作流 + dependabot 两条目录 + ci 注释 | **待用户决策**（web 部署去留见问题二） |
-| 6 | 删除 `desktop/` | 2423 文件 | **待用户确认后执行**；git 历史与原项目目录保留 oracle |
-| 7 | 文档 | 本文 + README/RUST_MIGRATION 仍描述 Electron | 退役执行时一并改写；本表已先行 |
+| 1 | Tauri 打包 | `bundle.active=true`、targets all、四套图标 | **done（P1）**：本机产出 MSI 4.44 MiB + NSIS 2.95 MiB（未签名） |
+| 2 | Tauri 发布工作流 | 不存在 | **P3**：新增 `release-studio-tauri.yml`（tag `studio-v*`、三平台、复用旧 minisign 密钥、发布 `versions.json`） |
+| 3 | oracle 对照 | `parity-contract.json`/`oracle-named.json` | **done（波次 12）** |
+| 4 | Makefile | `studio`→Tauri、`test`→Tauri 套件 | **done（波次 12，P1 清理残项）** |
+| 5 | CI / 发布 / 部署 | Electron 三条 + Certum 冒烟已删；dependabot/labeler 改指 Tauri | **done（P1）**；网页版按 B 退役，由 `workers/remote`（P4）承接零安装访问 |
+| 6 | 删除 `desktop/` | 2423 文件已删（标签 `pre-electron-retirement`） | **done（P1）** |
+| 7 | 文档 | README/CONTRIBUTING 已改；D17 记录 | **done（P1）** |
 
 **原则**：第 6 步是破坏性动作，须在第 1–5 步绿灯且用户确认后执行；在此之前 Electron
 保持只读冻结（不再修 bug、不加功能），Tauri 是唯一开发目标。

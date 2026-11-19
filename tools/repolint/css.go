@@ -13,7 +13,7 @@ const (
 	ruleStrayFile    = "stray-file"
 )
 
-const stylesDir = "desktop/frontend-next/src/styles"
+const stylesDir = "desktop-tauri/src/styles"
 
 // The two layered sheets grow by accretion and are exempt from the 1000-line
 // ceiling; their budget only stops the growth.

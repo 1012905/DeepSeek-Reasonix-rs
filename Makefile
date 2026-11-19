@@ -9,7 +9,7 @@ GOEXE := $(shell go env GOEXE)
 # One pin for the Makefile and the CI lint job; see .github/workflows/ci.yml.
 GOLANGCI_VERSION := $(shell cat .golangci-version)
 
-.PHONY: build vet fmt lint lint-go lint-install lint-cross lint-update coverage-gate coverage-gate-update pricecheck acp-conformance check test studio-test studio-tauri-test studio-tauri-check sdk-test sdk-test-race hooks cross clean studio studio-electron
+.PHONY: build vet fmt lint lint-go lint-install lint-cross lint-update coverage-gate coverage-gate-update pricecheck acp-conformance check test studio-tauri-test studio-tauri-check sdk-test sdk-test-race hooks cross clean studio
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/reasonix$(GOEXE) ./cmd/reasonix
@@ -19,13 +19,9 @@ vet:
 	go vet ./...
 
 # Build Studio and launch it. The Tauri shell is the one this runs now that the
-# Vue port carries the product; the Electron launcher stays frozen under its own
-# target until `desktop/` is retired.
+# Vue port carries the product.
 studio:
 	pnpm -C desktop-tauri tauri dev
-
-studio-electron:
-	bash desktop/electron/run-studio.sh
 
 
 fmt:
@@ -78,7 +74,7 @@ pricecheck:
 
 # Linting one GOOS leaves every //go:build windows and darwin file unchecked.
 lint-cross:
-	@for t in "linux ." "darwin ." "windows ." "linux desktop" "windows desktop"; do \
+	@for t in "linux ." "darwin ." "windows ."; do \
 		set -- $$t; \
 		echo "== golangci-lint GOOS=$$1 ($$2)"; \
 		(cd $$2 && GOOS=$$1 golangci-lint run --timeout=5m ./...) || exit 1; \
@@ -96,10 +92,6 @@ test: studio-tauri-test sdk-test
 acp-conformance: build
 	cd tools/acp-conformance && npm ci --ignore-scripts --no-audit --no-fund
 	cd tools/acp-conformance && REASONIX_BIN=$(CURDIR)/bin/reasonix$(GOEXE) npm test
-
-# The frozen Electron module, kept runnable until `desktop/` is retired.
-studio-test:
-	cd desktop && go test ./...
 
 # The Tauri shell is its own Cargo workspace and npm root under desktop-tauri/,
 # invisible to the targets above. Its cargo target dir defaults off Desktop,

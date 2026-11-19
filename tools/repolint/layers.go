@@ -125,7 +125,7 @@ func violates(pkg, dep string) string {
 // nothing to the kernel: the rule that matters is that nothing below a
 // frontend may import one, and benchmarks are above every frontend.
 func host(pkg string) bool {
-	return under(pkg, "cmd") || under(pkg, "desktop") || under(pkg, "benchmarks")
+	return under(pkg, "cmd") || under(pkg, "benchmarks")
 }
 
 // above reports whether a package sits at or over the frontend line, which is

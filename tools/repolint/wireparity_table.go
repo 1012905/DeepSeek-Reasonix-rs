@@ -3,18 +3,18 @@ package main
 // The page's port files this half of the table reads. The other half's constants
 // live in wireparity.go.
 const (
-	tsAdjudicationFile       = "desktop/frontend-next/src/port/adjudication.ts"
-	tsAttachmentFile         = "desktop/frontend-next/src/port/attachment.ts"
-	tsBackupFile             = "desktop/frontend-next/src/port/backup.ts"
-	tsCompositionFile        = "desktop/frontend-next/src/port/composition.ts"
-	tsContextCompositionFile = "desktop/frontend-next/src/port/context_composition.ts"
-	tsHookFile               = "desktop/frontend-next/src/port/hook.ts"
-	tsMarketFile             = "desktop/frontend-next/src/port/market.ts"
-	tsMemoryFile             = "desktop/frontend-next/src/port/memory.ts"
-	tsNetworkFile            = "desktop/frontend-next/src/port/network.ts"
-	tsSkillFile              = "desktop/frontend-next/src/port/skill.ts"
-	tsStorageFile            = "desktop/frontend-next/src/port/storage.ts"
-	tsUsageFile              = "desktop/frontend-next/src/port/usage.ts"
+	tsAdjudicationFile       = "desktop-tauri/src/port/adjudication.ts"
+	tsAttachmentFile         = "desktop-tauri/src/port/attachment.ts"
+	tsBackupFile             = "desktop-tauri/src/port/backup.ts"
+	tsCompositionFile        = "desktop-tauri/src/port/composition.ts"
+	tsContextCompositionFile = "desktop-tauri/src/port/context_composition.ts"
+	tsHookFile               = "desktop-tauri/src/port/hook.ts"
+	tsMarketFile             = "desktop-tauri/src/port/market.ts"
+	tsMemoryFile             = "desktop-tauri/src/port/memory.ts"
+	tsNetworkFile            = "desktop-tauri/src/port/network.ts"
+	tsSkillFile              = "desktop-tauri/src/port/skill.ts"
+	tsStorageFile            = "desktop-tauri/src/port/storage.ts"
+	tsUsageFile              = "desktop-tauri/src/port/usage.ts"
 )
 
 // mirroredWireTypesTail is the second half of the registry whose first half is

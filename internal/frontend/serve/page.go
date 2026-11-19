@@ -29,8 +29,8 @@ func FindPage(dir string) (fs.FS, error) {
 		return page, nil
 	}
 	for _, candidate := range []string{
-		filepath.Join("..", "frontend-next", "dist"),
-		filepath.Join("desktop", "frontend-next", "dist"),
+		filepath.Join("..", "desktop-tauri", "dist"),
+		filepath.Join("desktop-tauri", "dist"),
 	} {
 		if hasIndex(candidate) {
 			return os.DirFS(candidate), nil

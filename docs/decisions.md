@@ -494,19 +494,54 @@ Rust 和 Go 共存）」。窗口由用户在本机终端验证可打开（B1 �
 | B14 | kept versions（KeptRows + removeSession + 内联确认）；move-to（useSessionMoveTo + 对话框，持有中禁移） | keptversions 10、move-session 6 |
 | B12 | useSessionSwitch 接入 openPane（ticket/flights/cancel/opening 反馈）；保留 root 的新会话；Sidebar 行标记与 aria-busy | sessionswitch 4 + App 契约 |
 
-**保留的终态裁决**：B13 浏览器标签改名维持移出范围（Vue 是停靠浏览器列，browser-only 改名
-结构性不可达）；`sidebaropen.ts` 维持 D13 冗余孤儿（语义已内联在 `openSession`）；
-`openCards.ts` 是另一条 card-opening 链，与运行面无关，保留孤儿。动作名按 `actions.ts` census
-校准：菜单 `session.move-to-start`、对话框提交 `session.move-to`。
+**保留的终态裁决**：
 
-**验证（主 Agent 重跑）**：`vue-tsc -b --force` EXIT 0；全量 `vitest run` **311 文件 / 2297
-测试**全绿 EXIT 0（基线 304/2250）；定向 16 文件 / 145 测试；orphan debt **81**（83→81：
-jobcancel、sessionswitch 转 reached）。Go/Rust 门未触发（零改动）。
+- B13 浏览器标签改名维持移出范围：Vue 是停靠浏览器列，browser-only 改名结构性不可达。
+- `sidebaropen.ts` 维持 D13 冗余孤儿（语义已内联在 `openSession`）。
+- `openCards.ts` 是另一条 card-opening 链，与运行面无关，保留孤儿。
+- 动作名按 `actions.ts` census 校准：菜单 `session.move-to-start`、对话框提交 `session.move-to`。
 
-**退役准备（同日，进行中）**：`App.port.test.ts` 的 oracle 对照冻结为
-`src/ui/parity-contract.json`（属性/动作/props），`msg.test.ts` 的 React 键引用冻结为
-`src/i18n/msg/oracle-named.json`（620 个仅 React 命名的键——Vue 一旦命名或按需删除即自然清空）；
-Makefile `studio`→`pnpm -C desktop-tauri tauri dev`（新增 `studio-electron` 冻结目标），
-`test`→`studio-tauri-test`。删除 `desktop/`（2423 文件）、Electron 三条工作流、Tauri 打包与
-发布（`bundle.active=false`）以及 web 部署去向属产品决策；已向用户提问未答，**删除动作未
-执行**，顺序见 migration-plan.md 的退役表。
+**验证（主 Agent 重跑）**：
+
+- `vue-tsc -b --force` EXIT 0；全量 `vitest run` **311 文件 / 2297 测试**全绿（基线 304/2250）。
+- 定向 16 文件 / 145 测试；orphan debt **81**（83→81：jobcancel、sessionswitch 转 reached）。
+- Go/Rust 门未触发（零改动）。
+
+## D17 —— Electron 退役执行（P1）：删源、门禁跟随与两处 Go 工具的必要改动
+
+用户裁决「全部退役」。执行结果：
+
+- **删除**：`desktop/`（2423 个跟踪文件）。
+  - 四条 Electron 工作流（`studio.yml`、`release-studio.yml`、`deploy-web-studio.yml`、
+    `studio-selftest-windows.yml`）＋ Certum 签名冒烟、`.signpath/`、`cmd/signpath-contract/`。
+  - `scripts/` 四个仅服务旧发布线的测试删除（`cli-archive-build`、`studio-release-flags`、
+    `studio-artifacts`、`linux-install-smoke`）；另六个脚本裁掉"读已删工作流"的用例。
+- **迁移**：
+  - `desktop/cmd/studio-manifest` → `cmd/studio-manifest`（连同 `arch.json` 与其 gate 测试）。
+  - `trace_readings.json` → `internal/frontend/serve/testdata/`（Go 测试从 git 历史恢复）。
+- **门禁跟随（Go 工具必要改动，非内核行为）**：
+  - wire-parity 的 TS 镜像常量改指 `desktop-tauri/src/port`；tag parity → `state/session.ts`。
+  - route-parity 读 `desktop-tauri/vite.config.ts`；repolint `stylesDir`/size 豁免/layer host 随迁。
+  - `baseline.json` 一次受控 `-update -allow-widen`（+141/−78：回收 desktop 条目、记录既有 docs
+    债务与 Vue 样式表计数）。
+  - Go 侧对等测试与 `serve/page.go` 开发回退路径重指 `desktop-tauri`（15 个文件，含注释镜像路径）。
+- **配置/CI**：
+  - `ci.yml` 去 desktop job/过滤/交叉腿与 gofmt 排除。
+  - `dependabot` 换 `desktop-tauri`（npm）与 `desktop-tauri/src-tauri`（cargo）。
+  - `labeler`/`CODEOWNERS`/`.gitattributes`/`.gitignore`（Wails 块、desktop env）清理。
+  - `make studio` 已切 Tauri、`make test` 跑 Tauri 套件。
+- **打包**：`bundle.active=true`（targets all、四套图标）。
+  - 本机产出 MSI 4.44 MiB 与 NSIS 2.95 MiB（0.1.0 x64 en-US），未签名。
+- **已知后续**：
+  - CLI/brew 的发布步骤随旧工作流移除（打包脚本保留）；若继续发 CLI/brew，由 P3 补新工作流。
+  - `backfill-studio-notes.sh --apply` 的 idle 轮询仍指向旧工作流，待 P3 落地后改名。
+- **验证**：
+  - `go build`/`go vet` 0；`golangci-lint v2.12.2`（GOTOOLCHAIN=go1.26.7）0 issues。
+  - repolint 3556 baselined clean；`make check` 0。
+  - `go test ./... -p 4 -timeout 20m`：211 包 ok；5 个路径遗漏失败重指后 10 个受影响包全绿。
+  - sandbox/builtin 3 个失败在退役前标签同样复现（环境性，见 blockers.md），敏感路径未改。
+  - 前端：vue-tsc 0；vitest 311/311 文件；vite build 成功。
+
+**退役准备（先行步骤）**：oracle 对照冻结为 `src/ui/parity-contract.json` 与
+`src/i18n/msg/oracle-named.json`（620 键）；Makefile `studio`/`test` 切 Tauri。
+删除与发布去向的产品裁决见上文「全部退役」，执行顺序见 migration-plan.md 退役表。

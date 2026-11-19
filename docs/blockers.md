@@ -421,3 +421,15 @@ reviewed: 2026-11-17
 - **实测**：`vitest run src/orphan.test.ts` → 3 passed；债务条数 129
   （`grep -c '^  \["src/'`）。
 - **纪律**：写成 `decisions.md` D11。
+
+## P1 environmental test failures (pre-existing, not retirement-caused)
+
+- `internal/safety/sandbox`: `TestIsWindowsWSLBash`,
+  `TestPowerShellPipesUTF8WithoutBOMToNativeCommands/powershell.exe` (piped bytes
+  carry a UTF-8 BOM on this Windows build 26300 host).
+- `internal/tools/builtin`: `TestBashCancelKillsGitBashHereDocPython` (the
+  here-doc python child survives bash cancel on this Git Bash install).
+- Evidence: identical failures in a worktree at tag `pre-electron-retirement`
+  (78047d63c), so they predate the Electron deletion. Both packages are declared
+  sensitive; no code change made. Status: skipped, needs a host-environment
+  investigation outside this migration.
