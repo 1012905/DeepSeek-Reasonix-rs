@@ -620,7 +620,17 @@ actionlint 0；路由可达测试绿。浏览器↔桌面端到端与 Worker 部
 
 用户裁决「重新生成」。原方案 D3/P3 复用退役发布线的旧密钥（Key ID `AF12CA46F4A9EBB0`），
 改为生成一把新密钥（Key ID `441E92EFE08CA57F`），用于 Release + registry 签名。
-私钥与口令由主 Agent 在仓库外生成，经 `gh secret set` 直接送入两个仓库的 Actions secrets；
-全程不落盘仓库、不回显内容。所有引用点同步轮换：`verify.go` 公钥常量/注释、
-`release-studio-tauri.yml` 发布自验、`update_test.go` 固定 ID、`STUDIO_RELEASE.md` 验签命令，
-以及 registry 仓 `registry.pub`/`README.md`。0.1.0 尚未发布，无历史签名失效代价。
+
+- 私钥与口令由主 Agent 在仓库外生成，经 `gh secret set` 直接送入两个仓库的 Actions secrets。
+- 全程不落盘仓库、不回显内容；0.1.0 尚未发布，无历史签名失效代价。
+- 同步轮换：`verify.go` 公钥常量/注释、`release-studio-tauri.yml` 发布自验、`update_test.go`
+  固定 ID、`STUDIO_RELEASE.md` 验签命令、registry 仓 `registry.pub`/`README.md`。
+
+## D23 —— 发布标记按当前主版本行计算
+
+旧 `studio-v2.x` 标签仍在仓库里，而新线从 `0.1.0` 起步。原 `studio-release-flags.sh` 把
+所有稳定标签一起排序，2.61.0 永远最高，首个 0.1.0 将得不到 latest，目录无处可挂。
+- 改为只比较**被发布版本的主版本行**（0.x 只看 0.x）。
+- 首个 0.1.0 取 `--latest`；同一行内「恢复旧标签不夺回徽章」的语义保持不变。
+- 历史 2.x 标签不再参与排序。
+
