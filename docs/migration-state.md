@@ -729,3 +729,20 @@ $ vite build / repolint / actionlint            # 全绿
 ```
 
 部署前置：Cloudflare KV namespace id 与 API secrets 仍需用户配置；端到端实机尚未执行。
+
+## 波次 16 改了什么（P5 签名注册表接入）
+
+`reasonix-registry` 实仓上线（签名发布已验证）。内核以签名索引替代旧账号市场，
+详见 D24。执行方式：执行代理产出主体，主 Agent 接手收尾（索引/内容源分离、跳转策略、
+process-input/孤儿/现代 lint 修正）并做线上实拉。
+
+**波次 16 验证**：
+
+```
+$ go build ./... && go vet ./...                    # 0
+$ golangci-lint v2.12.2（GOTOOLCHAIN=go1.26.7）      # 0 issues
+$ go test ./internal/ext/registry/ ./internal/ext/market/   # 绿
+$ go test ./internal/frontend/serve/ -run "Market|Registry" # 绿
+$ go run ./tools/repolint -changed                  # clean
+$ 线上实拉：List 4 条；Resolve+Fetch release-notes sha256 通过
+```

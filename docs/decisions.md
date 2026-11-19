@@ -634,3 +634,18 @@ actionlint 0；路由可达测试绿。浏览器↔桌面端到端与 Worker 部
 - 首个 0.1.0 取 `--latest`；同一行内「恢复旧标签不夺回徽章」的语义保持不变。
 - 历史 2.x 标签不再参与排序。
 
+
+## D24 —— 市场改读签名注册表（P5）
+
+独立仓库 `reasonix-registry` 上线（public），publish 工作流把**签名索引**作为 GitHub
+Release 资产发布（`releases/latest/download/index.json` + `.minisig`），内容文件留在
+仓库 `main` 分支，由 `raw.githubusercontent.com` 提供。
+
+- 内核新增 `internal/ext/registry`：先验签再解析（复用 `update.Verify` 与新密钥），
+  ETag 只缓存已验签字节，逐条 `sha256`，按 `revoked`/`minVersion`/`compat` 过滤。
+- 相对内容路径按内容源解析，而不是按索引地址；跳转只放行 `github.com`/`.githubusercontent.com`。
+- `internal/ext/market` 改为唯一数据源，删除 own/publish/votes；桌面线缆类型不变，UI 零改动。
+- 已知限制：索引条目只接受仓库内相对路径（插件二进制 URL 形态未建模）；Worker/注册表均无限流。
+
+**验证**：`go build/vet` 0；golangci 0；registry/market 测试绿；serve market 用例绿；
+repolint clean；真实线上拉取 4 条并完成一次内容 sha256 校验。

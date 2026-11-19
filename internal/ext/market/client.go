@@ -1,52 +1,33 @@
 package market
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"maps"
 	"net/http"
-	"net/url"
-	"path/filepath"
-	"reflect"
 	"regexp"
-	"strconv"
+	"sort"
 	"strings"
-	"time"
+
+	"reasonix/internal/ext/registry"
 )
 
-const (
-	registryHost    = "crash.reasonix.io"
-	requestTimeout  = 15 * time.Second
-	maxListBody     = 1 << 20
-	maxDetailBody   = 512 << 10
-	defaultPageSize = 24
-)
+const defaultPageSize = 24
 
 var (
 	// ErrUnreachable: the registry could not be reached at all.
 	ErrUnreachable = errors.New("market: registry unreachable")
-	// ErrBadResponse: the registry answered with something other than the
-	// documented JSON — a non-2xx status, a redirect, or an oversized body.
+	// ErrBadResponse: the signed index or one of its files was unusable.
 	ErrBadResponse = errors.New("market: registry answered unexpectedly")
-	// ErrNotFound: no package the caller may read has that slug.
+	// ErrNotFound: no live entry has that name.
 	ErrNotFound = errors.New("market: no such package")
 	// ErrBadSlug: the slug is not <handle>/<name>.
 	ErrBadSlug = errors.New("market: not a package slug")
-	// ErrFilterUnsupported: an installable-only listing was asked for and the
-	// registry answered without applying that filter.
+	// ErrFilterUnsupported: an installable-only listing could not be honoured.
 	ErrFilterUnsupported = errors.New("market: registry cannot filter to installable packages")
 )
 
-var slugSegment = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-
-func slugPart(s string) bool { return slugSegment.MatchString(s) && !strings.HasPrefix(s, ".") }
-
-// Package is one listed capability as the registry describes it. Every field is
-// the publisher's claim; none of it decides what gets installed.
+// Package is one listed capability as the signed registry describes it.
 type Package struct {
 	Kind          string   `json:"kind"`
 	Handle        string   `json:"handle"`
@@ -68,8 +49,7 @@ type Package struct {
 	Verified     bool     `json:"verified"`
 	Status       string   `json:"status"`
 	UpdatedAt    string   `json:"updatedAt"`
-	// Pinned is the registry's word that the latest version carries a reviewed
-	// digest; nil when it did not say. Install still checks the digest itself.
+	// Pinned is true because the registry's digest was signed and is checked.
 	Pinned *bool `json:"pinned,omitempty"`
 }
 
@@ -82,23 +62,20 @@ type Version struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
-// Detail is a package with its approved version, nil when the registry holds
-// no version row for the one a reviewer let through.
+// Detail is a package with the version that is signed and installable.
 type Detail struct {
 	Package  Package    `json:"package"`
 	Approved *Version   `json:"approved"`
 	Cache    *CacheNote `json:"cache,omitempty"`
 }
 
-// Query narrows a listing. Unknown kinds and sorts are the registry's to
-// refuse; this side only bounds the numbers.
+// Query narrows a listing. Unknown kinds and sorts are refused.
 type Query struct {
 	Kind   string
 	Q      string
 	Sort   string
 	Offset int
-	// Pinned asks the registry for installable packages only. It filters
-	// server-side so pages stay whole.
+	// Pinned asks for installable packages only; every signed row qualifies.
 	Pinned bool
 }
 
@@ -117,40 +94,194 @@ type Registry interface {
 	Detail(ctx context.Context, slug string) (Detail, error)
 }
 
-// Client talks to the one registry host. Nothing about the host comes from
-// configuration: a listing that can be pointed elsewhere is a listing anyone
-// with write access to a settings file can rewrite.
+// source is the signed registry beneath every market read and install.
+type source interface {
+	List(context.Context) ([]registry.Entry, error)
+	Resolve(context.Context, string, string) (registry.Entry, error)
+	Fetch(context.Context, registry.Entry) (registry.Content, error)
+	SourceURL(string) (string, error)
+}
+
+// Client reads the signed registry. It has one source; the retired account
+// host is neither a default nor a fallback.
 type Client struct {
-	http  *http.Client
-	base  url.URL
+	reg   source
 	cache *diskCache
+	view  Registry
 }
 
-// NewClient wraps hc (the caller's proxy-aware client) for the registry.
+// NewClient wraps hc and reads the signed registry at its declared URL.
 func NewClient(hc *http.Client) *Client {
-	return newClient(url.URL{Scheme: "https", Host: registryHost}, hc)
+	return NewClientWithRegistry(hc, registry.NewClient(hc))
 }
 
-// WithCache returns a client that keeps the last good anonymous browse answer
-// under root and serves it, marked, when the registry cannot answer. Empty root
-// leaves caching off. Requests carrying a token never touch it.
+// NewClientWithRegistry uses a caller-supplied registry client, which tests
+// point at a local signed index.
+func NewClientWithRegistry(hc *http.Client, reg *registry.Client) *Client {
+	if reg == nil {
+		reg = registry.NewClient(hc)
+	}
+	return &Client{reg: reg}
+}
+
+// WithCache serves the last good browse answer when the registry cannot
+// answer. Installs never read it.
 func (c *Client) WithCache(root string) *Client {
 	out := *c
+	out.view = nil
 	out.cache = nil
-	if root != "" {
-		out.cache = newDiskCache(filepath.Join(root, "market"))
+	direct := *c
+	direct.view = nil
+	out.view = WithCacheRegistry(&direct, root)
+	if wrapped, ok := out.view.(*cachedRegistry); ok {
+		out.cache = wrapped.cache
 	}
 	return &out
 }
 
-func newClient(base url.URL, hc *http.Client) *Client {
-	if hc == nil {
-		hc = &http.Client{}
+func (c *Client) List(ctx context.Context, q Query) (Page, error) {
+	if c.view != nil {
+		return c.view.List(ctx, q)
 	}
-	c := *hc
-	c.Timeout = requestTimeout
-	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{http: &c, base: base}
+	return c.list(ctx, q)
+}
+
+func (c *Client) list(ctx context.Context, q Query) (Page, error) {
+	entries, err := c.reg.List(ctx)
+	if err != nil {
+		return Page{}, projectSourceError(err)
+	}
+	kind := strings.TrimSpace(q.Kind)
+	term := strings.ToLower(strings.TrimSpace(q.Q))
+	rows := make([]Package, 0, len(entries))
+	for _, entry := range entries {
+		if kind != "" && kindOf(entry.Kind) != kind {
+			continue
+		}
+		pkg := packageOf(entry)
+		if term != "" && !strings.Contains(strings.ToLower(pkg.Name+" "+pkg.Summary+" "+pkg.Description), term) {
+			continue
+		}
+		rows = append(rows, pkg)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		switch q.Sort {
+		case "new":
+			return rows[i].LatestVersion > rows[j].LatestVersion
+		case "installs":
+			return rows[i].InstallCount > rows[j].InstallCount
+		case "trending":
+			return rows[i].Score > rows[j].Score
+		default:
+			return rows[i].Slug < rows[j].Slug
+		}
+	})
+	offset := max(0, min(q.Offset, 10000))
+	if offset >= len(rows) {
+		rows = []Package{}
+	} else {
+		rows = rows[offset:min(offset+defaultPageSize, len(rows))]
+	}
+	return Page{Packages: rows, Limit: defaultPageSize, Offset: offset}, nil
+}
+
+func (c *Client) Detail(ctx context.Context, slug string) (Detail, error) {
+	if c.view != nil {
+		return c.view.Detail(ctx, slug)
+	}
+	return c.detail(ctx, slug)
+}
+
+func (c *Client) detail(ctx context.Context, slug string) (Detail, error) {
+	_, name, err := SplitSlug(slug)
+	if err != nil {
+		return Detail{}, err
+	}
+	entry, err := c.reg.Resolve(ctx, name, "")
+	if err != nil {
+		return Detail{}, projectSourceError(err)
+	}
+	pkg := packageOf(entry)
+	if pkg.Slug != slug {
+		return Detail{}, ErrNotFound
+	}
+	source, digest := primaryContent(entry)
+	address, err := c.reg.SourceURL(source)
+	if err != nil {
+		return Detail{}, projectSourceError(err)
+	}
+	return Detail{
+		Package: pkg,
+		Approved: &Version{
+			Version:     entry.Version,
+			Source:      address,
+			ContentHash: "sha256:" + digest,
+			RiskLevel:   "low",
+		},
+	}, nil
+}
+
+// RegistryHandle is the namespace every signed entry is filed under.
+const RegistryHandle = "registry"
+
+func packageOf(entry registry.Entry) Package {
+	yes := true
+	return Package{
+		Kind:          kindOf(entry.Kind),
+		Handle:        RegistryHandle,
+		Name:          entry.ID,
+		Slug:          RegistryHandle + "/" + entry.ID,
+		Summary:       "Licensed " + entry.License,
+		Description:   "Signed registry entry for " + strings.Join(entry.Compat.Frontends, ", "),
+		Tags:          []string{entry.License},
+		LatestVersion: entry.Version,
+		Verified:      true,
+		Status:        "active",
+		Pinned:        &yes,
+	}
+}
+
+func kindOf(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "skills":
+		return "skill"
+	case "plugins":
+		return "plugin"
+	case "themes":
+		return "theme"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
+	}
+}
+
+// primaryContent picks the file an install_source can fetch for this kind.
+func primaryContent(entry registry.Entry) (string, string) {
+	suffix := map[string]string{"skill": "/SKILL.md", "theme": "/theme.json", "plugin": "/plugin.json", "mcp": ""}[kindOf(entry.Kind)]
+	for _, file := range entry.Files {
+		if suffix != "" && strings.HasSuffix(file.Path, suffix) {
+			return file.Path, file.SHA256
+		}
+		if suffix == "" && strings.HasSuffix(file.Path, ".json") {
+			return file.Path, file.SHA256
+		}
+	}
+	if len(entry.Files) > 0 {
+		return entry.Files[0].Path, entry.Files[0].SHA256
+	}
+	return "", ""
+}
+
+func projectSourceError(err error) error {
+	switch {
+	case errors.Is(err, registry.ErrUnreachable):
+		return fmt.Errorf("%w: %w", ErrUnreachable, err)
+	case errors.Is(err, registry.ErrNotFound):
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
+	case errors.Is(err, registry.ErrBadSignature):
+		return fmt.Errorf("%w: %w", ErrBadResponse, err)
+	default:
+		return fmt.Errorf("%w: %w", ErrBadResponse, err)
+	}
 }
 
 // SplitSlug validates a <handle>/<name> slug.
@@ -162,212 +293,8 @@ func SplitSlug(slug string) (string, string, error) {
 	return handle, name, nil
 }
 
-func (c *Client) List(ctx context.Context, q Query) (Page, error) {
-	v := url.Values{}
-	if k := strings.TrimSpace(q.Kind); k != "" {
-		v.Set("kind", k)
-	}
-	if s := strings.TrimSpace(q.Q); s != "" {
-		v.Set("q", s)
-	}
-	if s := strings.TrimSpace(q.Sort); s != "" {
-		v.Set("sort", s)
-	}
-	if q.Pinned {
-		v.Set("pinned", "1")
-	}
-	v.Set("limit", strconv.Itoa(defaultPageSize))
-	v.Set("offset", strconv.Itoa(max(0, min(q.Offset, 10000))))
-	var page Page
-	note, err := c.get(ctx, "/v1/packages", v, maxListBody, &page)
-	if err != nil {
-		return Page{}, err
-	}
-	page.Cache = note
-	kept := page.Packages[:0]
-	for _, p := range page.Packages {
-		if q.Pinned && (p.Pinned == nil || !*p.Pinned) {
-			return Page{}, ErrFilterUnsupported
-		}
-		if p.Status == "active" {
-			kept = append(kept, p)
-		}
-	}
-	page.Packages = kept
-	return page, nil
+func slugPart(s string) bool {
+	return slugSegment.MatchString(s) && !strings.HasPrefix(s, ".")
 }
 
-func (c *Client) Detail(ctx context.Context, slug string) (Detail, error) {
-	handle, name, err := SplitSlug(slug)
-	if err != nil {
-		return Detail{}, err
-	}
-	var raw struct {
-		Package  Package `json:"package"`
-		Versions []struct {
-			Version     string `json:"version"`
-			Source      string `json:"source"`
-			ContentHash string `json:"content_hash"`
-			RiskLevel   string `json:"risk_level"`
-			CreatedAt   string `json:"created_at"`
-		} `json:"versions"`
-	}
-	path := "/v1/packages/" + url.PathEscape(handle) + "/" + url.PathEscape(name)
-	note, err := c.get(ctx, path, nil, maxDetailBody, &raw)
-	if err != nil {
-		return Detail{}, err
-	}
-	if raw.Package.Status != "active" || raw.Package.Slug != handle+"/"+name {
-		return Detail{}, ErrNotFound
-	}
-	out := Detail{Package: raw.Package, Cache: note}
-	// The registry serves a package only while it is active, and approval fixes
-	// latestVersion to the reviewed row, so that row is the approved one.
-	for _, v := range raw.Versions {
-		if v.Version == raw.Package.LatestVersion {
-			out.Approved = &Version{Version: v.Version, Source: v.Source, ContentHash: v.ContentHash, RiskLevel: v.RiskLevel, CreatedAt: v.CreatedAt}
-			break
-		}
-	}
-	return out, nil
-}
-
-func (c *Client) get(ctx context.Context, path string, query url.Values, limit int64, into any) (*CacheNote, error) {
-	if c.cache == nil {
-		_, err := c.fetch(ctx, path, query, limit, nil, into)
-		return nil, err
-	}
-	key := c.cache.key(c.base.Host, path, query)
-	held, have := c.cache.load(key)
-	if have && !refreshAsked(ctx) && c.cache.fresh(held) && decode(held.Body, into) == nil {
-		return nil, nil
-	}
-	var cond http.Header
-	if have && (held.ETag != "" || held.LastModified != "") {
-		cond = http.Header{}
-		if held.ETag != "" {
-			cond.Set("If-None-Match", held.ETag)
-		}
-		if held.LastModified != "" {
-			cond.Set("If-Modified-Since", held.LastModified)
-		}
-	}
-	resp, err := c.fetch(ctx, path, query, limit, cond, into)
-	switch {
-	case err == nil && resp.status == http.StatusNotModified && have:
-		if decode(held.Body, into) != nil {
-			c.cache.remove(key)
-			return nil, ErrBadResponse
-		}
-		held.FetchedAt = cacheNow().UTC()
-		c.cache.write(held)
-		return nil, nil
-	case err == nil && noStore(resp.header):
-		c.cache.remove(key)
-		return nil, nil
-	case err == nil:
-		c.cache.store(key, resp.header, resp.body)
-		return nil, nil
-	case errors.Is(err, ErrNotFound):
-		c.cache.remove(key)
-		return nil, err
-	case !have || ctx.Err() != nil:
-		return nil, err
-	}
-	var cause string
-	switch {
-	case errors.Is(err, ErrUnreachable):
-		cause = CacheCauseUnreachable
-	case resp.status >= 500 || resp.garbled:
-		cause = CacheCauseBadResponse
-	default:
-		return nil, err
-	}
-	reflect.ValueOf(into).Elem().SetZero()
-	if decode(held.Body, into) != nil {
-		return nil, err
-	}
-	return &CacheNote{CachedAt: held.FetchedAt.UTC().Format(time.RFC3339), Cause: cause}, nil
-}
-
-type fetched struct {
-	status  int
-	header  http.Header
-	body    []byte
-	garbled bool
-}
-
-// fetch makes one GET and decodes a 2xx answer into into. A 304 is returned
-// for the caller to resolve; the fetched value describes the answer even when
-// the error is not nil.
-func (c *Client) fetch(ctx context.Context, path string, query url.Values, limit int64, extra http.Header, into any) (fetched, error) {
-	resp, body, err := c.sendWith(ctx, http.MethodGet, path, query, "", nil, limit, extra)
-	if err != nil {
-		return fetched{}, err
-	}
-	out := fetched{status: resp.StatusCode, header: resp.Header, body: body}
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return out, ErrNotFound
-	case resp.StatusCode == http.StatusNotModified && extra != nil:
-		return out, nil
-	case resp.StatusCode < 200 || resp.StatusCode >= 300:
-		return out, fmt.Errorf("%w: HTTP %d", ErrBadResponse, resp.StatusCode)
-	}
-	if err := decode(body, into); err != nil {
-		out.garbled = true
-		return out, err
-	}
-	return out, nil
-}
-
-// send makes one request to the fixed registry host and reads at most limit
-// bytes of the answer. A token, when given, travels only on this request.
-func (c *Client) send(ctx context.Context, method, path string, query url.Values, token string, payload []byte, limit int64) (*http.Response, []byte, error) {
-	return c.sendWith(ctx, method, path, query, token, payload, limit, nil)
-}
-
-func (c *Client) sendWith(ctx context.Context, method, path string, query url.Values, token string, payload []byte, limit int64, extra http.Header) (*http.Response, []byte, error) {
-	u := c.base
-	u.Path = path
-	u.RawQuery = query.Encode()
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	var reader io.Reader
-	if payload != nil {
-		reader = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrBadResponse, err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "reasonix-market/1.0")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	maps.Copy(req.Header, extra)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
-	}
-	if int64(len(body)) > limit {
-		return nil, nil, fmt.Errorf("%w: body exceeds %d bytes", ErrBadResponse, limit)
-	}
-	return resp, body, nil
-}
-
-func decode(body []byte, into any) error {
-	if err := json.Unmarshal(body, into); err != nil {
-		return fmt.Errorf("%w: %w", ErrBadResponse, err)
-	}
-	return nil
-}
+var slugSegment = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)

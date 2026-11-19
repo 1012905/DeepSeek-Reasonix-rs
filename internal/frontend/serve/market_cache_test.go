@@ -1,10 +1,9 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,35 +12,43 @@ import (
 	"reasonix/internal/ext/market"
 )
 
-type hostRewrite struct {
-	to   string
-	base http.RoundTripper
+type scriptedRegistry struct {
+	page   market.Page
+	detail market.Detail
+	down   *atomic.Bool
 }
 
-func (h hostRewrite) RoundTrip(r *http.Request) (*http.Response, error) {
-	r = r.Clone(r.Context())
-	r.URL.Host = h.to
-	return h.base.RoundTrip(r)
+func (s *scriptedRegistry) List(context.Context, market.Query) (market.Page, error) {
+	if s.down.Load() {
+		return market.Page{}, market.ErrBadResponse
+	}
+	return s.page, nil
 }
 
-func realRegistryAt(t *testing.T, handler http.HandlerFunc) *atomic.Bool {
+func (s *scriptedRegistry) Detail(context.Context, string) (market.Detail, error) {
+	if s.down.Load() {
+		return market.Detail{}, market.ErrBadResponse
+	}
+	return s.detail, nil
+}
+
+func realRegistryAt(t *testing.T) *atomic.Bool {
 	t.Helper()
-	var down atomic.Bool
-	reg := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if down.Load() {
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		handler(w, r)
-	}))
-	t.Cleanup(reg.Close)
-	u, _ := url.Parse(reg.URL)
-	hc := &http.Client{Transport: hostRewrite{to: u.Host, base: reg.Client().Transport}}
+	down := &atomic.Bool{}
+	yes := true
+	reg := &scriptedRegistry{
+		page: market.Page{Packages: []market.Package{{Slug: "registry/kit", Kind: "skill", Name: "kit", Status: "active", Pinned: &yes, LatestVersion: "1.0.0"}}, Limit: 24},
+		detail: market.Detail{
+			Package:  market.Package{Slug: "registry/kit", Kind: "skill", Status: "active", LatestVersion: "1.0.0", Pinned: &yes},
+			Approved: &market.Version{Version: "1.0.0", Source: "https://example.test/SKILL.md", ContentHash: "sha256:" + strings.Repeat("a", 64)},
+		},
+		down: down,
+	}
 	oldReg, oldBrowse := marketRegistry, marketBrowser
-	marketRegistry = func(*http.Client) market.Registry { return market.NewClient(hc) }
-	marketBrowser = func(*http.Client) market.Registry { return market.NewClient(hc).WithCache(config.CacheDir()) }
+	marketRegistry = func(*http.Client) market.Registry { return reg }
+	marketBrowser = func(*http.Client) market.Registry { return market.WithCacheRegistry(reg, config.CacheDir()) }
 	t.Cleanup(func() { marketRegistry, marketBrowser = oldReg, oldBrowse })
-	return &down
+	return down
 }
 
 func marketGetJSON(t *testing.T, u string) (int, map[string]any) {
@@ -58,19 +65,13 @@ func marketGetJSON(t *testing.T, u string) (int, map[string]any) {
 
 func TestMarketBrowseAnswersFromTheLastGoodCopyAndLabelsIt(t *testing.T) {
 	_, _, base := pluginHome(t)
-	down := realRegistryAt(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/packages/a/") {
-			_, _ = w.Write([]byte(`{"package":{"slug":"a/kit","status":"active","latestVersion":"1.0.0"},"versions":[{"version":"1.0.0","source":"https://example.test/SKILL.md","content_hash":"sha256:abababababababababababababababababababababababababababababababab"}]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"packages":[{"slug":"a/kit","status":"active","name":"kit"}],"limit":24,"offset":0}`))
-	})
+	down := realRegistryAt(t)
 
 	code, fresh := marketGetJSON(t, base+"/market/packages?q=kit")
 	if code != 200 || fresh["cache"] != nil {
 		t.Fatalf("fresh list = %d %v", code, fresh)
 	}
-	if code, _ = marketGetJSON(t, base+"/market/packages/a/kit"); code != 200 {
+	if code, _ = marketGetJSON(t, base+"/market/packages/registry/kit"); code != 200 {
 		t.Fatalf("detail = %d", code)
 	}
 
@@ -86,7 +87,7 @@ func TestMarketBrowseAnswersFromTheLastGoodCopyAndLabelsIt(t *testing.T) {
 	if rows, _ := list["packages"].([]any); len(rows) != 1 {
 		t.Fatalf("rows = %v", list["packages"])
 	}
-	code, detail := marketGetJSON(t, base+"/market/packages/a/kit?refresh=1")
+	code, detail := marketGetJSON(t, base+"/market/packages/registry/kit?refresh=1")
 	if dn, _ := detail["cache"].(map[string]any); code != 200 || dn == nil || detail["pinned"] != true {
 		t.Fatalf("stale detail = %d %v", code, detail)
 	}
@@ -99,14 +100,12 @@ func TestMarketBrowseAnswersFromTheLastGoodCopyAndLabelsIt(t *testing.T) {
 
 func TestMarketInstallNeverReadsTheBrowseCache(t *testing.T) {
 	_, _, base := pluginHome(t)
-	down := realRegistryAt(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"package":{"slug":"a/kit","status":"active","latestVersion":"1.0.0"},"versions":[{"version":"1.0.0","source":"https://example.test/SKILL.md","content_hash":"sha256:abababababababababababababababababababababababababababababababab"}]}`))
-	})
-	if code, _ := marketGetJSON(t, base+"/market/packages/a/kit"); code != 200 {
+	down := realRegistryAt(t)
+	if code, _ := marketGetJSON(t, base+"/market/packages/registry/kit"); code != 200 {
 		t.Fatalf("detail = %d", code)
 	}
 	down.Store(true)
-	resp, err := http.Post(base+"/market/plan", "application/json", strings.NewReader(`{"slug":"a/kit"}`))
+	resp, err := http.Post(base+"/market/plan", "application/json", strings.NewReader(`{"slug":"registry/kit"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
