@@ -88,7 +88,8 @@ unicode-normalization = "0.1"
 # Async/HTTP stack (serve slice, M4): runtime, router, SSE framing, config
 # parse. Chosen in docs/tech-choice.md; the supply-chain policy in deny.toml
 # holds for every entry.
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "macros", "signal", "sync", "time", "fs"] }
+tokio-util = "0.7"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 bytes = "1"
 futures-core = "0.1"
