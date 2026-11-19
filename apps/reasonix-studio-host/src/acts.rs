@@ -37,13 +37,18 @@ impl<W: Write> ShellOwner<W> {
     /// The lock is for the line, not the writer: two acts interleaved inside
     /// one write would reach the parent as neither.
     pub fn ask(&self, act: &str) -> Result<(), ActError> {
-        let body = serde_json::to_string(&Act { act })
-            .map_err(|e| ActError { act: act.to_string(), source: std::io::Error::other(e) })?;
+        let body = serde_json::to_string(&Act { act }).map_err(|e| ActError {
+            act: act.to_string(),
+            source: std::io::Error::other(e),
+        })?;
         let line = format!("{body}\n");
         let mut w = self.to.lock().unwrap_or_else(|p| p.into_inner());
         w.write_all(line.as_bytes())
             .and_then(|_| w.flush())
-            .map_err(|source| ActError { act: act.to_string(), source })
+            .map_err(|source| ActError {
+                act: act.to_string(),
+                source,
+            })
     }
 
     /// Nothing to do here, and that is the shape: ending is the third act.

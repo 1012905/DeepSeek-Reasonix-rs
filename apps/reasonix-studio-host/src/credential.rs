@@ -27,7 +27,11 @@ mod tests {
     fn credential_is_64_hex_chars() {
         let token = launch_credential().unwrap();
         assert_eq!(token.len(), CREDENTIAL_BYTES * 2);
-        assert!(token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            token
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

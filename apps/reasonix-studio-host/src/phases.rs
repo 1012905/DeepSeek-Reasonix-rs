@@ -25,7 +25,10 @@ pub struct StartupPhases<W: Write> {
 
 impl<W: Write> StartupPhases<W> {
     pub fn new(logs: W) -> Self {
-        Self { logs, last: Instant::now() }
+        Self {
+            logs,
+            last: Instant::now(),
+        }
     }
 
     pub fn mark(&mut self, phase: &str) {

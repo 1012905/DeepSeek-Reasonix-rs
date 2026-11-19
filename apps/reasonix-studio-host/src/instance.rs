@@ -70,9 +70,16 @@ fn clean_path(path: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    bytes.iter().map(|b| {
-        [HEX[(b >> 4) as usize] as char, HEX[(b & 0x0f) as usize] as char]
-    }).flatten().collect()
+    bytes
+        .iter()
+        .map(|b| {
+            [
+                HEX[(b >> 4) as usize] as char,
+                HEX[(b & 0x0f) as usize] as char,
+            ]
+        })
+        .flatten()
+        .collect()
 }
 
 #[cfg(test)]

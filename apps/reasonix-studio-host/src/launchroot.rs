@@ -90,7 +90,11 @@ mod tests {
 
     #[test]
     fn the_install_directory_is_not_a_chosen_workspace() {
-        let install = if cfg!(windows) { "C:\\apps\\studio\\bin" } else { "/apps/studio/bin" };
+        let install = if cfg!(windows) {
+            "C:\\apps\\studio\\bin"
+        } else {
+            "/apps/studio/bin"
+        };
         let cwd = Path::new(install).parent().unwrap();
         assert!(!user_chose_dir(cwd, Path::new(install)));
     }
@@ -98,13 +102,24 @@ mod tests {
     #[test]
     fn the_filesystem_root_is_never_a_chosen_workspace() {
         let root = if cfg!(windows) { "C:\\" } else { "/" };
-        assert!(!user_chose_dir(Path::new(root), Path::new("C:\\apps\\studio\\bin")));
+        assert!(!user_chose_dir(
+            Path::new(root),
+            Path::new("C:\\apps\\studio\\bin")
+        ));
     }
 
     #[test]
     fn an_unrelated_cwd_counts_as_chosen() {
-        let cwd = if cfg!(windows) { "C:\\work\\proj" } else { "/work/proj" };
-        let exe = if cfg!(windows) { "C:\\apps\\studio\\bin\\host.exe" } else { "/apps/studio/bin/host" };
+        let cwd = if cfg!(windows) {
+            "C:\\work\\proj"
+        } else {
+            "/work/proj"
+        };
+        let exe = if cfg!(windows) {
+            "C:\\apps\\studio\\bin\\host.exe"
+        } else {
+            "/apps/studio/bin/host"
+        };
         assert!(user_chose_dir(Path::new(cwd), Path::new(exe)));
     }
 
@@ -121,7 +136,12 @@ mod tests {
         let real = base.join("real");
         std::fs::create_dir_all(&real).unwrap();
         let auto_dir = base.join("auto");
-        let got = pick_launch_workspace(&cwd, &p("/bin/host"), &[p("/missing/dir"), real.clone()], &auto_dir);
+        let got = pick_launch_workspace(
+            &cwd,
+            &p("/bin/host"),
+            &[p("/missing/dir"), real.clone()],
+            &auto_dir,
+        );
         assert_eq!(got, real);
         let got = pick_launch_workspace(&cwd, &p("/bin/host"), &[p("/missing/dir")], &auto_dir);
         assert_eq!(got, auto_dir);

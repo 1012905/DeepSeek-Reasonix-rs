@@ -13,7 +13,10 @@ const PREFIX: &str = "reasonix-studio-host:";
 
 impl<W: Write> LastLine<W> {
     pub fn new(inner: W) -> Self {
-        Self { inner, line: Mutex::new(String::new()) }
+        Self {
+            inner,
+            line: Mutex::new(String::new()),
+        }
     }
 
     pub fn last(&self) -> String {

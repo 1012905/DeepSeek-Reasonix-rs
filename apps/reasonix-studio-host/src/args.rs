@@ -99,7 +99,9 @@ fn text_value<I: Iterator<Item = String>>(
 ) -> Result<String, ParseError> {
     match inline {
         Some(v) => Ok(v),
-        None => it.next().ok_or_else(|| ParseError::MissingValue(name.to_string())),
+        None => it
+            .next()
+            .ok_or_else(|| ParseError::MissingValue(name.to_string())),
     }
 }
 

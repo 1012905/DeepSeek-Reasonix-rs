@@ -71,14 +71,14 @@ pipe-leading line must be a six-cell ledger row.
 | CLI-048 | CLI | Exit-code matrix incl. 4, 77, 130 | reasonix-cli | todo | M1: docs/contracts/cli.md §5 |
 | CLI-049 | CLI | REASONIX_DNS and env handling at process start | reasonix-cli | todo | M1: docs/contracts/cli.md §6 |
 | CLI-050 | CLI | Legacy config migration trigger set | reasonix-cli | todo | M1: docs/contracts/cli.md §2.2 |
-| CONFIG-001 | Config | Layered resolution: flag > project reasonix.toml > user config.toml > defaults | reasonix-config | todo | M1: docs/contracts/config.md §0 |
-| CONFIG-002 | Config | Top-level TOML key inventory and unknown-field passthrough | reasonix-config | todo | M1: docs/contracts/config.md §1 |
-| CONFIG-003 | Config | Built-in defaults Default(), incl. DefaultSystemPrompt and agent defaults | reasonix-config | todo | M1: docs/contracts/config.md §2 |
-| CONFIG-004 | Config | Normalization matrices: theme, language, currency, modes, telemetry | reasonix-config | todo | M1: docs/contracts/config.md §3 |
+| CONFIG-001 | Config | Layered resolution: flag > project reasonix.toml > user config.toml > defaults | reasonix-config | wip | user/project/defaults layered in crates/config/src/load.rs (layered precedence + userGlobals tests); the flag layer belongs to the web command, not ported (2026-11-20) |
+| CONFIG-002 | Config | Top-level TOML key inventory and unknown-field passthrough | reasonix-config | wip | unknown-key passthrough exact (unknown_keys_pass_through_silently); key inventory subset serve/desktop/language/paths (2026-11-20) |
+| CONFIG-003 | Config | Built-in defaults Default(), incl. DefaultSystemPrompt and agent defaults | reasonix-config | wip | defaults for the boot subset (serve/desktop/paths/language) tested; system-prompt and agent defaults outstanding (2026-11-20) |
+| CONFIG-004 | Config | Normalization matrices: theme, language, currency, modes, telemetry | reasonix-config | wip | language + telemetry/metrics/tray matrices done (desktop.rs, language.rs tests); theme/currency/modes outstanding (2026-11-20) |
 | CONFIG-005 | Config | ResolveModel 3 forms, Validate error texts, atomic WriteFile | reasonix-config | todo | M1: docs/contracts/config.md §5 |
 | CONFIG-006 | Config | Load pipeline: 18-step loadForRoot, LKG recovery, bad TOML never fails load | reasonix-config | todo | M1: docs/contracts/config.md §9 |
 | CONFIG-007 | Config | Provider/plugin merge by name + BurntSushi positional decode isolation | reasonix-config | todo | M1: docs/contracts/config.md §9 |
-| CONFIG-008 | Config | Project config only narrows; userGlobals never set by a workspace | reasonix-config | todo | M1: docs/contracts/config.md §10 |
+| CONFIG-008 | Config | Project config only narrows; userGlobals never set by a workspace | reasonix-config | wip | userGlobals for [serve]/[storage] done (load.rs tests); full §10 narrow-only matrix outstanding (2026-11-20) |
 | CONFIG-009 | Config | Project programs: project-programs.json approval gates + digest matching | reasonix-config | todo | M1: docs/contracts/config.md §10.17 |
 | CONFIG-010 | Config | Workspace grants and workspace trust states | reasonix-config | todo | M1: docs/contracts/config.md §10.18-§10.19 |
 | CONFIG-011 | Config | Claude ~/.claude.json import incl. CLAUDE_CONFIG_DIR | reasonix-config | todo | M1: docs/contracts/config.md §10.20 |
@@ -92,7 +92,7 @@ pipe-leading line must be a six-cell ledger row.
 | CONFIG-019 | Config | dotenv: project .env never enters process env, control-key filter | reasonix-config | todo | M1: docs/contracts/config.md §10.30 |
 | CONFIG-020 | Config | Credential store: env/dotenv/keyring resolution, tombstones, revision | reasonix-config | todo | M1: docs/contracts/config.md §10.31 |
 | CONFIG-021 | Config | API key env naming: custom provider slots, free slots | reasonix-config | todo | M1: docs/contracts/config.md §10.32 |
-| CONFIG-022 | Config | Paths + storage roots: home/state/cache/locks, env pins, relocatability | reasonix-config | todo | M1: docs/contracts/config.md §11 |
+| CONFIG-022 | Config | Paths + storage roots: home/state/cache/locks, env pins, relocatability | reasonix-config | wip | home/state root chain + ${VAR} expansion + Clean done (paths.rs tests); cache/locks/relocatability outstanding (2026-11-20) |
 | CONFIG-023 | Config | Line-level TOML document index semantics | reasonix-config | todo | M1: docs/contracts/config.md §12 |
 | CONFIG-024 | Config | Effort/reasoning-protocol ladders and NormalizeEffort errors | reasonix-config | todo | M1: docs/contracts/config.md §13 |
 | CONFIG-025 | Config | RenderTOMLForScope scope matrix + RenderTOMLProjectDelta | reasonix-config | todo | M1: docs/contracts/config.md §14 |
@@ -105,7 +105,7 @@ pipe-leading line must be a six-cell ledger row.
 | CONFIG-032 | Config | Desktop posture release marker | reasonix-config | todo | M1: docs/contracts/config.md §15.7 |
 | CONFIG-033 | Config | Sub-struct schemas §8.1-§8.24 (UI, CLI, Desktop, Billing, Persona, Memory, LSP, Browser, Attachments, Environment, Peers, Remote, Observability, Mods, ProgressWatch, AutoArchive, Plugin, Shell, SystemOne, BackgroundJobs, WebAccess, NetworkDNS, AskTimeout) | reasonix-config | todo | M1: docs/contracts/config.md §8 |
 | CONFIG-034 | Config | Example TOML documented schema parity | reasonix-config | todo | M1: docs/contracts/config.md §6 |
-| CONFIG-035 | Config | Open divergences to verify at implementation slices: compact_ratio default 0.90 vs example 0.85; serve auth_mode comment vs token default | reasonix-config | todo | M1: docs/contracts/config.md §7 |
+| CONFIG-035 | Config | Open divergences to verify at implementation slices: compact_ratio default 0.90 vs example 0.85; serve auth_mode comment vs token default | reasonix-config | wip | auth_mode divergence resolved to the Go source (config layer default empty, the gate normalizes; test notes carry the §7.2 record); compact_ratio outstanding (2026-11-20) |
 | ROUTE-001 | HTTP | Route matrix: 420 registrations (330 session, 74 desktop, 16 hostMux), methods, paths | reasonix-serve | todo | M1: docs/contracts/http.md §1 |
 | ROUTE-002 | HTTP | Server/Hub/Runtime topology and middleware order | reasonix-serve | todo | M1: docs/contracts/http.md §0 |
 | ROUTE-003 | HTTP | /rt/{id} prefix, routeRuntime 404, routeDefault fallback + 503 hub.no_runtime_open | reasonix-serve | todo | M1: docs/contracts/http.md §0 |
@@ -416,9 +416,9 @@ pipe-leading line must be a six-cell ledger row.
 | HOST-036 | Host | Shell single instance scoped by -instance-id answer (profile + lock) | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §7.4 |
 | HOST-037 | Host | Quit drains through the lease (child stdin end); window-all-closed quits only after handshake | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §7.5 |
 | HOST-038 | Host | Host exit marker + notice (unexpected-host-exit.json) for post-handshake death | apps/reasonix-studio-host | todo | M1: docs/contracts/host.md §7.3 |
-| PATHS-001 | Paths | Storage roots, env pins, precedence (home/state/cache/worktrees/locks) | reasonix-config | todo | M1: docs/contracts/paths.md §1 |
+| PATHS-001 | Paths | Storage roots, env pins, precedence (home/state/cache/worktrees/locks) | reasonix-config | wip | home/state precedence + env pins in crates/config/src/paths.rs and crates/session/src/paths.rs tests; cache/worktrees/locks outstanding (2026-11-20) |
 | PATHS-002 | Paths | StateRootEntries (29) + first-move subset | reasonix-config | todo | M1: docs/contracts/paths.md §1 |
-| PATHS-003 | Paths | Derived path functions (config, credentials, sessions, leases, worktrees) | reasonix-config | todo | M1: docs/contracts/paths.md §1 |
+| PATHS-003 | Paths | Derived path functions (config, credentials, sessions, leases, worktrees) | reasonix-session | wip | SessionDirFor/workspace_slug derived in crates/session/src/paths.rs tests; config/credentials/leases/worktrees outstanding (2026-11-20) |
 | PATHS-004 | Paths | Default dirs incl. locks-dir convergence across isolated instances | reasonix-config | todo | M1: docs/contracts/paths.md §1 |
 | PATHS-005 | Paths | User config selection chain (primary → legacy OS-support → legacy XDG) | reasonix-config | todo | M1: docs/contracts/paths.md §2 |
 | PATHS-006 | Paths | Project config paths; fallback only on IsNotExist | reasonix-config | todo | M1: docs/contracts/paths.md §2 |

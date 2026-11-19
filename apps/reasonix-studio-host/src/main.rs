@@ -67,7 +67,11 @@ fn run(parsed: args::Args) -> ExitCode {
     let mut phases = phases::StartupPhases::new(&mut logs);
     let _ = parsed.page;
     let _ = &mut phases;
-    writeln!(logs, "{BIN}: the kernel surface lands with the serve slice \
-        (docs/parity/LEDGER.md HOST rows; see OPEN_QUESTIONS.md §3)").ok();
+    writeln!(
+        logs,
+        "{BIN}: the kernel surface lands with the serve slice \
+        (docs/parity/LEDGER.md HOST rows; see OPEN_QUESTIONS.md §3)"
+    )
+    .ok();
     ExitCode::from(1)
 }
