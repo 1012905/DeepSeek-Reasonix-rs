@@ -53,3 +53,10 @@ Rust 侧：`apps/reasonix-studio-host`（当前 exit-2 stub）。
 - 不依赖 `reasonix-cli`（HOST-033 结构守卫）。
 - 不伪造未迁移机器的成功（provider-setup/tray/notify/schedule/update 槽位 = 相位日志 +
   明确 partial，见 contract.md §3）。
+
+## OPT-015 证据留痕（m-7 复核补记）
+
+相位日志的证据形态为复杂度分析 + 未量化标注：12 相位各一行，每行 O(1)
+（Instant 差值 + 单次 writeln 到 LastLine），启动期一次性行不构成热点，
+故按计划不设基准（数字无意义）；tracing 关闭路径也无需短路——相位行不走
+tracing，直接写 stderr，成本即 12 次系统调用。

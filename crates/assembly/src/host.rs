@@ -78,8 +78,9 @@ pub async fn prepare(opts: HostBootOptions) -> Result<HostBoot, BootError> {
     let hub_paths = HubPaths::from_process_roots().unwrap_or_else(|| HubPaths {
         state_root: PathBuf::new(),
     });
+    // The launch project wins, then the remembered order (host.md §6.1).
     let remembered: Vec<PathBuf> =
-        reasonix_session::workspacelist::workspaces(&hub_paths.workspaces_path())
+        reasonix_session::workspacelist::launch_workspaces(&hub_paths.workspaces_path())
             .into_iter()
             .map(PathBuf::from)
             .collect();
@@ -167,7 +168,10 @@ pub fn instance_id_for(home: &str) -> String {
     {
         root = parent.to_string_lossy().into_owned();
     }
-    let cleaned = clean_path(&root);
+    // The hash input is the OS-separator Clean of the root: on Windows Go's
+    // filepath.Clean spells backslashes, so the identity matches the
+    // reference host byte for byte (M-3).
+    let cleaned = reasonix_session::paths::clean(&root);
     let sum = Sha256::digest(cleaned.as_bytes());
     format!("{}.{}", PREFIX, hex(&sum[..8]))
 }
@@ -188,30 +192,6 @@ fn canonical_existing(path: &str) -> Option<String> {
         }
     }
     Some(key)
-}
-
-/// Lexical `filepath.Clean`: collapses separators, resolves `.` and `..`,
-/// drops a trailing separator.
-fn clean_path(path: &str) -> String {
-    let absolute = path.starts_with('/');
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split(['/', '\\']) {
-        match part {
-            "" | "." => {}
-            ".." => {
-                let climbed_root = parts.pop().is_none() && !absolute;
-                if climbed_root {
-                    parts.push("..");
-                }
-            }
-            _ => parts.push(part),
-        }
-    }
-    if absolute {
-        format!("/{}", parts.join("/"))
-    } else {
-        parts.join("/")
-    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -334,15 +314,25 @@ mod tests {
         let base = tmp_dir("marker");
         std::fs::write(base.join(".reasonix-home.identity"), "x").unwrap();
         let id = instance_id_for(&base.to_string_lossy());
-        let suffix = hex(&Sha256::digest(clean_path(&base.to_string_lossy()).as_bytes())[..8]);
+        let cleaned = reasonix_session::paths::clean(&base.to_string_lossy());
+        let suffix = hex(&Sha256::digest(cleaned.as_bytes())[..8]);
         assert_eq!(id, format!("io.reasonix.studio.{}", suffix));
     }
 
     #[test]
-    fn clean_collapses_dot_segments() {
-        assert_eq!(clean_path("/a/./b/../c/"), "/a/c");
-        assert_eq!(clean_path("a//b"), "a/b");
-        assert_eq!(clean_path(""), "");
+    fn the_hash_input_keeps_the_os_separator_shape_like_go() {
+        // Go's filepath.Clean spells the platform separator; the identity
+        // hashes those bytes, not a rewritten "/" form (M-3).
+        let (spelled, want_clean) = if cfg!(windows) {
+            ("C:\\a\\.\\b\\..\\c\\", "C:\\a\\c")
+        } else {
+            ("/a/./b/../c/", "/a/c")
+        };
+        let suffix = hex(&Sha256::digest(want_clean.as_bytes())[..8]);
+        assert_eq!(
+            instance_id_for(spelled),
+            format!("io.reasonix.studio.{}", suffix)
+        );
     }
 
     #[test]

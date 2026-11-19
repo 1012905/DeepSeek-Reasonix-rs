@@ -137,7 +137,7 @@ pipe-leading line must be a six-cell ledger row.
 | ROUTE-029 | HTTP | /events/replay shape + events mux + metrics | reasonix-serve | wip | /events/replay {frames,complete,watermark} done (null→[] tests); events mux family lands with its wave (2026-11-20) |
 | ROUTE-030 | HTTP | GET /status shape (fixed + conditional keys) | reasonix-serve | todo | M1: docs/contracts/http.md §7 |
 | ROUTE-031 | HTTP | POST /submit contract (202, busy 409, format, shell refusal 403) | reasonix-serve | todo | M1: docs/contracts/http.md §7 |
-| ROUTE-032 | HTTP | /sessions, /todos, /balance, /context, /new, /cancel, /approve shapes | reasonix-serve | wip | /sessions row shapes done (listing.rs tests + smoke []), /todos//balance//context//new//cancel//approve need the write-side slices (2026-11-20) |
+| ROUTE-032 | HTTP | /sessions, /todos, /balance, /context, /new, /cancel, /approve shapes | reasonix-serve | wip | /sessions implemented per-runtime (routes.go:91 slot; hub-level falls to routeDefault 503 like Go — review M-1 fixed); /todos//balance//context//new//cancel//approve need the write-side slices (2026-11-20) |
 | ROUTE-033 | HTTP | vite ROUTES cross-check + stale prefixes | reasonix-serve | todo | M1: docs/contracts/http.md §6 |
 | SSE-001 | SSE | 36-kind taxonomy: names, order, payload fields, numbered/droppable | reasonix-core | wip | kind names/order from contract::eventwire_manifest.json (golden parity test); numbered/droppable in serve broadcaster; payload-field completeness tracks eventwire coverage (2026-11-20) |
 | SSE-002 | SSE | Transport-synthetic kinds stream_watermark / stream_gap | reasonix-serve | done | broadcaster tests (gap frame seq = first trustworthy, attached watermark unnumbered) (2026-11-20) |

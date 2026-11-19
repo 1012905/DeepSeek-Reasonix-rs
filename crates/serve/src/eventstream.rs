@@ -26,6 +26,8 @@ use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
+use reasonix_session::hub::Hub;
+
 use crate::broadcaster::{Broadcaster, Subscription, SubscriptionMode};
 
 /// Go `sseKeepaliveInterval`: how often /events emits a `: ping`. The comment
@@ -120,18 +122,26 @@ pub fn subscription_mode(after: i64, first: bool, attached: bool) -> Subscriptio
     }
 }
 
-/// The per-runtime event routes (Go routes.go:21-22): `GET /events` and
-/// `GET /events/replay`, mounted under a runtime's prefix by the host. The
-/// hub-level router does not register them — with no runtime open these
+/// The per-runtime route set this slice implements: `GET /events` and
+/// `GET /events/replay` (Go routes.go:21-22) plus `GET /sessions`
+/// (routes.go:91), mounted under a runtime's prefix by the host. The
+/// hub-level router registers none of them — with no runtime open these
 /// paths fall to routeDefault's 503, as they do in Go.
-pub fn session_routes(bc: Arc<Broadcaster>) -> Router {
-    Router::new()
+pub fn session_routes(hub: Arc<Hub>, bc: Arc<Broadcaster>) -> Router {
+    let events = Router::new()
         .route("/events", get(events_handler).fallback(wrong_method))
         .route(
             "/events/replay",
             get(events_replay_handler).fallback(wrong_method),
         )
-        .with_state(bc)
+        .with_state(bc);
+    let sessions = Router::new()
+        .route(
+            "/sessions",
+            get(crate::router::runtime_sessions).fallback(wrong_method),
+        )
+        .with_state(hub);
+    events.merge(sessions)
 }
 
 async fn wrong_method() -> impl IntoResponse {
@@ -247,9 +257,17 @@ fn write_replay_frames(frames: &[Bytes], complete: bool, watermark: i64) -> Resp
 mod tests {
     use super::*;
     use crate::broadcaster::Broadcaster;
+    use reasonix_session::hub::HubPaths;
+
     use reasonix_contract::eventwire::event::Event;
     use reasonix_contract::eventwire::tool::Tool;
     use tokio_stream::StreamExt as _StreamExt;
+
+    fn test_hub() -> Arc<Hub> {
+        Arc::new(Hub::new(HubPaths {
+            state_root: std::env::temp_dir().join("eventstream-tests-absent"),
+        }))
+    }
 
     fn tool_result(id: &str) -> Event {
         Event {
@@ -628,7 +646,7 @@ mod tests {
         let b = Arc::new(Broadcaster::new());
         b.emit(tool_result("t1"));
         b.emit(tool_result("t2"));
-        let router = session_routes(b.clone());
+        let router = session_routes(test_hub(), b.clone());
         let request = axum::extract::Request::builder()
             .uri("/events/replay?lastEventId=1")
             .body(Body::empty())
@@ -650,7 +668,7 @@ mod tests {
     #[tokio::test]
     async fn replay_endpoint_answers_empty_array_never_null_for_a_current_client() {
         let b = Arc::new(Broadcaster::new());
-        let router = session_routes(b.clone());
+        let router = session_routes(test_hub(), b.clone());
         let request = axum::extract::Request::builder()
             .uri("/events/replay")
             .body(Body::empty())
@@ -675,7 +693,7 @@ mod tests {
     #[tokio::test]
     async fn events_stream_opens_with_connected_then_numbers_frames() {
         let b = Arc::new(Broadcaster::new());
-        let router = session_routes(b.clone());
+        let router = session_routes(test_hub(), b.clone());
         let request = axum::extract::Request::builder()
             .uri("/events")
             .body(Body::empty())

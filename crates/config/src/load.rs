@@ -204,6 +204,16 @@ mod tests {
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
+    /// Temp dirs live under target/ because the system temp path is denied in
+    /// some environments (same approach as the session/serve test support).
+    fn temp_dir() -> TempDir {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-tmp");
+        std::fs::create_dir_all(&base).expect("create test-tmp base");
+        tempfile::Builder::new()
+            .prefix(".tmpconfig")
+            .tempdir_in(&base)
+            .expect("create config test temp dir")
+    }
     fn write(dir: &TempDir, name: &str, content: &str) -> PathBuf {
         let path = dir.path().join(name);
         fs::write(&path, content).expect("test fixture write");
@@ -224,7 +234,7 @@ mod tests {
     #[test]
     fn missing_files_are_silent_defaults() {
         // statConfigPath: absence is not an error and not a warning.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let absent_user = dir.path().join("absent-user.toml");
         let absent_project = dir.path().join("absent-project.toml");
         let loaded = Config::load(&[absent_user, absent_project]).expect("missing files load");
@@ -236,7 +246,7 @@ mod tests {
     fn unknown_keys_pass_through_silently() {
         // config.md §1 / CONFIG-002: unknown fields are ignored without
         // warning or refusal, at the top level and inside every table.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -261,7 +271,7 @@ compact_ratio = 0.85
     #[test]
     fn project_layer_overrides_user_layer() {
         // config.md §0: project reasonix.toml outranks the user config.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -290,7 +300,7 @@ metrics = true
     fn explicit_default_equal_value_still_overrides() {
         // Decoding onto the live config: a later layer that explicitly sets
         // an empty value wins over an earlier non-empty one.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(&dir, "user.toml", "language = \"zh\"\n");
         let project = write(&dir, "project.toml", "language = \"\"\n");
         let loaded = Config::load(&[user, project]).expect("layered load");
@@ -301,7 +311,7 @@ metrics = true
     fn project_layer_cannot_set_serve_or_storage() {
         // load_project.go userGlobals: serve authentication and relocation
         // stay the user's, whatever a checked-in file claims.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -342,7 +352,7 @@ state = "D:/elsewhere"
     fn project_serve_alone_yields_defaults() {
         // With no user layer, a project file's [serve] still cannot set it:
         // the held value is the built-in default.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let absent_user = dir.path().join("absent-user.toml");
         let project = write(
             &dir,
@@ -362,7 +372,7 @@ password_hash = "hash"
     fn project_layer_may_set_desktop_keys() {
         // desktop telemetry/metrics/tray are not user-globals in the
         // reference (load_project.go userGlobals does not hold them).
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let project = write(
             &dir,
             "project.toml",
@@ -380,7 +390,7 @@ tray = "off"
 
     #[test]
     fn auth_mode_normalizes_through_the_toml_layer() {
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -400,7 +410,7 @@ token = "  padded  "
     fn wrong_typed_known_key_invalidates_its_layer() {
         // The reference decodes transactionally: one mistyped value drops
         // the whole file, and earlier valid keys in it do not survive either.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -422,7 +432,7 @@ token = "  padded  "
     fn mistyped_key_drops_its_layer_even_without_a_later_override() {
         // Nothing later overrides the fault, so the layer is dropped whole:
         // the delta decode of one file is transactional on its own.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -436,7 +446,7 @@ token = "  padded  "
 
     #[test]
     fn malformed_user_layer_falls_back_to_defaults() {
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(&dir, "user.toml", "language = [not closed\n");
         let loaded = Config::load(&[user]).expect("malformed load");
         assert_eq!(loaded.language, "");
@@ -455,7 +465,7 @@ token = "  padded  "
     #[test]
     fn malformed_project_layer_is_ignored_for_this_workspace() {
         // load.go: the project file's warning leaves the user values in force.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(&dir, "user.toml", "language = \"zh\"\n");
         let project = write(&dir, "project.toml", "[desktop\nbroken");
         let loaded = Config::load(&[user, project]).expect("layered load");
@@ -498,7 +508,7 @@ token = "  padded  "
     #[test]
     fn host_serve_view_over_a_layered_load() {
         // The host flow: layered load, then the credential-free serve view.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",
@@ -524,7 +534,7 @@ share_port = 8090
     #[test]
     fn storage_roundtrip_shapes() {
         // [storage] decodes as a plain string map keyed by root id.
-        let dir = TempDir::new().expect("temp dir");
+        let dir = temp_dir();
         let user = write(
             &dir,
             "user.toml",

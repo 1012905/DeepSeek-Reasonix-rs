@@ -17,7 +17,7 @@ getrandom = { workspace = true }
 # Listen shape (hyper-util is already in the graph through axum): the frozen
 # binding contract needs ReadHeaderTimeout, which axum::serve does not expose.
 hyper = "1"
-hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "service", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "server-graceful", "service", "http1", "http2"] }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }

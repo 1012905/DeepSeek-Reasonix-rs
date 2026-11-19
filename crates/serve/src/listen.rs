@@ -1,12 +1,12 @@
 //! Listening and shutdown for the hub's host (Go `listen.go`): serve until
-//! the shutdown signal ends, then drain for up to ten seconds. Timeouts ride
-//! the hyper layer — `ReadHeaderTimeout` 10s against slowloris, an idle
-//! watchdog against keep-alive connections that never come back.
+//! the shutdown signal ends, then drain. Timeouts ride the hyper layer —
+//! `ReadHeaderTimeout` 10s against slowloris, an idle watchdog against
+//! keep-alive connections that never come back.
 
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use axum::Router;
+use hyper_util::server::graceful::GracefulShutdown;
 
 /// Go `runGracefulListener`: the drain budget once the context ends.
 const DRAIN_BUDGET: Duration = Duration::from_secs(10);
@@ -28,40 +29,35 @@ const IDLE_POLL: Duration = Duration::from_secs(10);
 
 /// Go `RunGracefulHandler`: serves the router on a caller-supplied listener —
 /// one that already recorded its real bound address — until `shutdown`
-/// completes, then drains active connections for up to ten seconds. A
-/// shutdown that ran answers `Ok`; only a listener failure is an error.
+/// completes, then drains. A shutdown that ran answers `Ok`; only a listener
+/// failure is an error.
 pub async fn run_graceful_handler(
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     listener: TcpListener,
     router: Router,
 ) -> io::Result<()> {
     let (stop_tx, stop_rx) = watch::channel(false);
-    let live = Arc::new(AtomicUsize::new(0));
-    let accept = tokio::spawn(accept_loop(listener, router, stop_rx, live.clone()));
+    let accept = tokio::spawn(accept_loop(listener, router, stop_rx));
     tokio::pin!(accept);
-    let listener_failed = tokio::select! {
-        _ = shutdown => false,
+    // The accept loop hands back the shutdown coordinator its connections
+    // were watched with; on a listener error the error is the answer.
+    let graceful: GracefulShutdown = tokio::select! {
+        _ = shutdown => {
+            let _ = stop_tx.send(true);
+            flatten_join(accept.as_mut().await)?
+        }
         outcome = &mut accept => {
-            // The accept loop only ends early on an accept error.
-            outcome.unwrap_or(Ok(()))?;
-            true
+            let _ = stop_tx.send(true);
+            flatten_join(outcome)?
         }
     };
-    let _ = stop_tx.send(true);
-    if !listener_failed {
-        // Wait for the accept loop to observe the stop signal.
-        let _ = accept.as_mut().await;
-    }
-    // Drain: in-flight work gets its budget, then whatever is left (an SSE
-    // stream that never ends is always left) is closed with the process,
-    // matching Go's Shutdown-then-give-up shape.
-    let drained = tokio::time::timeout(DRAIN_BUDGET, async {
-        while live.load(Ordering::SeqCst) > 0 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await;
-    if drained.is_err() {
+    // Go `srv.Shutdown`: idle keep-alive connections close immediately; only
+    // in-flight requests get the drain budget. A stream that never ends (an
+    // open /events) is always left, and is closed with the process.
+    if tokio::time::timeout(DRAIN_BUDGET, graceful.shutdown())
+        .await
+        .is_err()
+    {
         tracing::warn!(
             "serve: graceful shutdown exceeded its drain budget; closing remaining connections"
         );
@@ -69,35 +65,51 @@ pub async fn run_graceful_handler(
     Ok(())
 }
 
+fn flatten_join(
+    joined: Result<Result<GracefulShutdown, io::Error>, tokio::task::JoinError>,
+) -> io::Result<GracefulShutdown> {
+    match joined {
+        Ok(inner) => inner,
+        // A panicking accept loop is a malfunction, not a shutdown condition.
+        Err(join) => Err(io::Error::other(join)),
+    }
+}
+
 async fn accept_loop(
     listener: TcpListener,
     router: Router,
     mut stopped: watch::Receiver<bool>,
-    live: Arc<AtomicUsize>,
-) -> io::Result<()> {
+) -> io::Result<GracefulShutdown> {
+    let graceful = GracefulShutdown::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _addr) = accepted?;
+                // The watcher subscribes before it is sent to the task, so a
+                // shutdown signal that lands before the task starts is still
+                // seen (a fresh Receiver only misses sends made before the
+                // subscription existed).
+                let watcher = graceful.watcher();
                 let router = router.clone();
-                let live = live.clone();
-                live.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
-                    serve_connection(stream, router).await;
-                    live.fetch_sub(1, Ordering::SeqCst);
+                    serve_connection(watcher, stream, router).await;
                 });
             }
             _ = stopped.changed() => {
                 if *stopped.borrow() {
-                    return Ok(());
+                    return Ok(graceful);
                 }
             }
         }
     }
 }
 
-async fn serve_connection(stream: tokio::net::TcpStream, router: Router) {
-    let activity = Arc::new(std::sync::Mutex::new(Instant::now()));
+async fn serve_connection(
+    watcher: hyper_util::server::graceful::Watcher,
+    stream: tokio::net::TcpStream,
+    router: Router,
+) {
+    let activity = Arc::new(Mutex::new(Instant::now()));
     let stream = ActivityStream::new(stream, activity.clone());
     let service = hyper_util::service::TowerToHyperService::new(router);
     let mut builder =
@@ -108,38 +120,34 @@ async fn serve_connection(stream: tokio::net::TcpStream, router: Router) {
         .header_read_timeout(Some(HEADER_READ_TIMEOUT));
     let connection =
         builder.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(stream), service);
-    tokio::pin!(connection);
-    loop {
-        tokio::select! {
-            result = &mut connection => {
-                if let Err(err) = result {
-                    tracing::warn!("serve: connection error: {err}");
-                }
-                break;
+    // Shutdown closes this connection when idle and waits for an in-flight
+    // request; the idle watchdog closes it during normal operation.
+    tokio::select! {
+        result = watcher.watch(connection) => {
+            if let Err(err) = result {
+                tracing::warn!("serve: connection error: {err}");
             }
-            _ = tokio::time::sleep(IDLE_POLL) => {
-                let last = *activity
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                if last.elapsed() > IDLE_TIMEOUT {
-                    tracing::debug!("serve: idle timeout closing a keep-alive connection");
-                    break;
-                }
+        }
+        _ = tokio::time::sleep(IDLE_POLL) => {
+            let last = *activity.lock().unwrap_or_else(|e| e.into_inner());
+            if last.elapsed() > IDLE_TIMEOUT {
+                tracing::debug!("serve: idle timeout closing a keep-alive connection");
             }
         }
     }
 }
 
 /// A stream wrapper that records every completed read and write, so the
-/// connection task's watchdog can tell an idle keep-alive from active work.
-/// The timestamp is bumped in the poll paths — no lock is held across I/O.
+/// connection task's idle watchdog can tell an idle keep-alive from active
+/// work. The timestamp is bumped in the poll paths — no lock is held across
+/// I/O.
 struct ActivityStream {
     inner: tokio::net::TcpStream,
-    activity: Arc<std::sync::Mutex<Instant>>,
+    activity: Arc<Mutex<Instant>>,
 }
 
 impl ActivityStream {
-    fn new(inner: tokio::net::TcpStream, activity: Arc<std::sync::Mutex<Instant>>) -> Self {
+    fn new(inner: tokio::net::TcpStream, activity: Arc<Mutex<Instant>>) -> Self {
         Self { inner, activity }
     }
 
@@ -191,6 +199,67 @@ impl AsyncWrite for ActivityStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::broadcaster::Broadcaster;
+    use reasonix_session::hub::Hub;
+    use reasonix_session::hub::HubPaths;
+
+    fn test_hub() -> Arc<Hub> {
+        Arc::new(Hub::new(HubPaths {
+            state_root: std::env::temp_dir().join("serve-listen-tests"),
+        }))
+    }
+
+    // m-5 / OPT-002: a real TCP disconnect must release the SSE
+    // subscription — no orphaned subscriber behind a gone socket.
+    #[tokio::test]
+    async fn a_disconnected_sse_client_releases_its_subscription() {
+        let bc = Arc::new(Broadcaster::new());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let serve = tokio::spawn(run_graceful_handler(
+            async move {
+                let _ = rx.await;
+            },
+            listener,
+            crate::eventstream::session_routes(test_hub(), bc.clone()),
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"GET /events HTTP/1.1
+Host: 127.0.0.1
+
+",
+        )
+        .await
+        .unwrap();
+        // The stream stays open, so read bounded chunks under a deadline.
+        let mut buf = vec![0u8; 512];
+        let n = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
+        )
+        .await
+        .expect("no connect frame within 5s")
+        .expect("socket closed before the connect frame");
+        assert!(
+            String::from_utf8_lossy(&buf[..n]).contains(": connected"),
+            "the stream must open with the connect comment"
+        );
+        assert_eq!(bc.subscriber_count(), 1, "the stream holds one subscriber");
+        drop(stream);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while bc.subscriber_count() != 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the subscription outlived its client");
+        tx.send(()).unwrap();
+        serve.await.unwrap().unwrap();
+    }
 
     #[tokio::test]
     async fn shutdown_signal_ends_serving_with_ok() {
@@ -257,5 +326,67 @@ mod tests {
             response.contains("200"),
             "in-flight request must complete: {response}"
         );
+    }
+
+    // m-3: an idle keep-alive connection must not hold the drain open — Go's
+    // Shutdown closes it with the signal, so shutdown converges fast even
+    // with a browser tab sitting on the port.
+    #[tokio::test]
+    async fn idle_keep_alive_connection_closes_immediately_on_shutdown() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counter = requests.clone();
+        let router = Router::new().layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request<axum::body::Body>,
+                  next: axum::middleware::Next| {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    next.run(request).await
+                }
+            },
+        ));
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let serve = tokio::spawn(run_graceful_handler(
+            async move {
+                let _ = rx.await;
+            },
+            listener,
+            router,
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A keep-alive connection that makes one request and then sits idle.
+        let idle = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            tokio::io::AsyncWriteExt::write_all(
+                &mut stream,
+                b"GET /tree HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+            // Hold the socket open without another request.
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "the request landed");
+        let start = Instant::now();
+        tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            serve.await.unwrap().unwrap();
+        })
+        .await
+        .expect("shutdown did not converge inside its budget");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < DRAIN_BUDGET,
+            "an idle keep-alive must close with the signal, not after the drain: {elapsed:?}"
+        );
+        idle.abort();
     }
 }

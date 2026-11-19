@@ -86,6 +86,40 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_acts_still_arrive_whole() {
+        // 64 threads asking at once: the mutex keeps each act on its own line,
+        // so the reader sees 64 complete frames in some order (OPT-009).
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let owner = Arc::new(ShellOwner::new(SharedWriter(buf.clone())));
+        let handles: Vec<_> = (0..64)
+            .map(|i| {
+                let owner = owner.clone();
+                let act = if i % 2 == 0 { ACT_SHOW } else { ACT_QUIT };
+                std::thread::spawn(move || owner.ask(act).unwrap())
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 64);
+        assert!(
+            lines
+                .iter()
+                .all(|l| *l == "{\"act\":\"show\"}" || *l == "{\"act\":\"quit\"}")
+        );
+        assert_eq!(
+            out.lines().filter(|l| *l == "{\"act\":\"show\"}").count(),
+            32
+        );
+        assert_eq!(
+            out.lines().filter(|l| *l == "{\"act\":\"quit\"}").count(),
+            32
+        );
+    }
+
+    #[test]
     fn relaunch_is_asked_on_linux_only() {
         let buf = Arc::new(Mutex::new(Vec::new()));
         let owner = ShellOwner::new(SharedWriter(buf.clone()));

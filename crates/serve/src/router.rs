@@ -75,7 +75,15 @@ pub(crate) struct RouterState {
 /// wrapped around everything net/http would have recovered.
 pub fn build_router(hub: Arc<Hub>, cfg: RouterConfig) -> Router {
     let token = cfg.token.trim().to_owned();
-    let auth = Arc::new(AuthGate::none(&token));
+    let auth = Arc::new(match AuthGate::none(&token) {
+        Ok(gate) => gate,
+        // A serve that cannot mint a credential refuses everything, like an
+        // invalid auth mode: there is no usable boundary to lower.
+        Err(err) => {
+            tracing::error!("serve: token generation failed: {err}; refusing every request");
+            AuthGate::invalid()
+        }
+    });
     build_router_with_auth(hub, cfg, auth)
 }
 
@@ -106,10 +114,6 @@ pub(crate) fn build_router_with_auth(
             post(close_runtime).fallback(method_not_allowed_response),
         )
         .route("/tree", get(get_tree).fallback(method_not_allowed_response))
-        .route(
-            "/sessions",
-            get(get_sessions).fallback(method_not_allowed_response),
-        )
         // Go's pattern "/rt/{id}/" matches the bare prefix and anything
         // under it. "/rt/{id}" without the slash falls to routeDefault,
         // as there. The id is read off the path because the two shapes
@@ -262,17 +266,19 @@ async fn get_tree(State(state): State<RouterState>) -> Response {
     write_json(&state.hub.tree())
 }
 
-/// Go `sessions` (sessions_list.go): the first local runtime's workspace
-/// names the transcript directory; with no runtime there is none, and an
-/// empty or unreadable directory answers `[]`, never an error.
-async fn get_sessions(State(state): State<RouterState>) -> Response {
-    let workspace = state
-        .hub
+/// Go `s.sessions` (sessions_list.go, routes.go:91) as a per-runtime route
+/// (mounted by `session_routes`, never by the hub mux): the runtime's
+/// workspace names the transcript directory. The runtime identity joins when
+/// controllers migrate, so the first runtime's root stands in; with no
+/// runtime the directory is empty, and an empty or unreadable directory
+/// answers `[]`, never an error.
+pub(crate) async fn runtime_sessions(State(hub): State<Arc<Hub>>) -> Response {
+    let workspace = hub
         .runtimes()
         .first()
         .map(|rt| rt.root.clone())
         .unwrap_or_default();
-    let rows: Vec<SessionRow> = state.hub.sessions(std::path::Path::new(&workspace));
+    let rows: Vec<SessionRow> = hub.sessions(std::path::Path::new(&workspace));
     write_json(&rows)
 }
 
@@ -451,11 +457,11 @@ fn panic_response(panic: Box<dyn std::any::Any + Send>) -> Response {
     crate::refuse::http_error(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
 }
 
-/// Mounts a runtime's event routes at a prefix — what Go's
-/// `http.StripPrefix("/rt/"+ID, Server.routes())` does for the events half.
-/// The host calls this when a runtime exists; with none, nothing mounts.
-pub fn mount_runtime_routes(prefix: &str, bc: Arc<Broadcaster>) -> Router {
-    let runtime = session_routes(bc);
+/// Mounts a runtime's routes at a prefix — what Go's
+/// `http.StripPrefix("/rt/"+ID, Server.routes())` does. The host calls this
+/// when a runtime exists; with none, nothing mounts.
+pub fn mount_runtime_routes(prefix: &str, hub: Arc<Hub>, bc: Arc<Broadcaster>) -> Router {
+    let runtime = session_routes(hub, bc);
     Router::new().nest(prefix, runtime)
 }
 
@@ -683,7 +689,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tree_and_sessions_answer_arrays_never_null() {
+    async fn tree_answers_an_array_and_sessions_falls_to_route_default() {
         let r = router(RouterConfig::default());
         let response = oneshot(r.clone(), request_get("/tree", None)).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -691,12 +697,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body.as_ref(), b"[]\n");
+        // The hub mux does not register /sessions (http.md §1.2); the request
+        // reaches routeDefault, which answers 503 with no runtime open.
         let response = oneshot(r, request_get("/sessions", None)).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
-            .await
-            .unwrap();
-        assert_eq!(body.as_ref(), b"[]\n");
+        let (status, json) = envelope_of(response).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json["code"], NO_RUNTIME_OPEN);
     }
 
     #[tokio::test]
@@ -999,7 +1005,7 @@ mod tests {
                 state_root: tmp.path().to_path_buf(),
             })),
             RouterConfig::default(),
-            Arc::new(crate::auth::AuthGate::token_mode("tkn")),
+            Arc::new(crate::auth::AuthGate::token_mode("tkn").unwrap()),
         );
         // API paths deny with the generic 401 text.
         let response = oneshot(r.clone(), request_get("/runtimes", None)).await;

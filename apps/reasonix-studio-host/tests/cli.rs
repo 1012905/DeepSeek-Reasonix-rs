@@ -83,3 +83,43 @@ fn a_launch_whose_lease_ends_drains_cleanly() {
     let status = child.wait().expect("wait");
     assert_eq!(status.code(), Some(0), "the host outlived the lease");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_terminated_host_exits_cleanly() {
+    // OPT-008's second path: SIGTERM converges to exit 0 like the lease EOF
+    // does (both only cancel the one token).
+    use std::io::Read as _;
+    use std::process::Stdio;
+    let mut child = Command::new(bin())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    {
+        let mut out = child.stdout.take().expect("stdout piped");
+        let mut buf = Vec::new();
+        let mut byte = [0u8; 1];
+        while matches!(out.read(&mut byte), Ok(1)) {
+            buf.push(byte[0]);
+            if byte[0] == b'\n' {
+                break;
+            }
+        }
+        assert!(String::from_utf8_lossy(&buf).starts_with("{\"version\":1,"));
+    }
+    let id = child.id();
+    terminate(id);
+    let status = child.wait().expect("wait");
+    assert_eq!(status.code(), Some(0), "SIGTERM should drain to exit 0");
+}
+
+#[cfg(unix)]
+fn terminate(pid: u32) {
+    // libc-free signal: the kill(1) coreutil is present on every CI unix.
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .expect("kill");
+}

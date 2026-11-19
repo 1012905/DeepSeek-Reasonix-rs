@@ -51,7 +51,12 @@ fn write_fixture(dir: &Path, name: &str, content: &str) -> PathBuf {
 }
 
 fn bench_load(c: &mut Criterion) {
-    let dir = tempfile::TempDir::new().expect("bench fixture dir");
+    let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-tmp");
+    std::fs::create_dir_all(&base).expect("create test-tmp base");
+    let dir = tempfile::Builder::new()
+        .prefix(".tmpbench")
+        .tempdir_in(&base)
+        .expect("bench fixture dir");
     let user = write_fixture(dir.path(), "user.toml", USER_TOML);
     let project = write_fixture(dir.path(), "project.toml", PROJECT_TOML);
 

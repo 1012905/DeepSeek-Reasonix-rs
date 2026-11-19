@@ -68,22 +68,24 @@ pub struct AuthGate {
 
 impl AuthGate {
     /// Auth off: mutations still need the launch token (Go `newAuthGate`,
-    /// authNone arm). An empty configured token is replaced by a generated one.
-    pub fn none(configured: &str) -> Self {
-        Self {
+    /// authNone arm). An empty configured token is replaced by a generated
+    /// one; minting can fail only if the OS CSPRNG does, and the caller
+    /// decides the fallback (`build_router` degrades to deny-everything).
+    pub fn none(configured: &str) -> Result<Self, getrandom::Error> {
+        Ok(Self {
             mode: AuthMode::None,
-            token: configured_token(configured),
+            token: configured_token(configured)?,
             hosts: HostAllowlist::default(),
-        }
+        })
     }
 
     /// Token mode: cookie, bearer, or legacy query parameter.
-    pub fn token_mode(configured: &str) -> Self {
-        Self {
+    pub fn token_mode(configured: &str) -> Result<Self, getrandom::Error> {
+        Ok(Self {
             mode: AuthMode::Token,
-            token: configured_token(configured),
+            token: configured_token(configured)?,
             hosts: HostAllowlist::default(),
-        }
+        })
     }
 
     /// An unrecognized mode denies everything (auth.go `authInvalid`).
@@ -151,12 +153,12 @@ impl AuthGate {
     }
 }
 
-fn configured_token(configured: &str) -> String {
+fn configured_token(configured: &str) -> Result<String, getrandom::Error> {
     let token = configured.trim().to_owned();
     if token.is_empty() {
         generate_token()
     } else {
-        token
+        Ok(token)
     }
 }
 
@@ -166,12 +168,12 @@ pub fn launch_token_equal(got: &str, want: &str) -> bool {
     !got.is_empty() && constant_time_eq(got.as_bytes(), want.as_bytes())
 }
 
-/// Go `generateToken`: 32 random bytes, base64url without padding.
-pub fn generate_token() -> String {
+/// Go `generateToken`: 32 random bytes, base64url without padding. Fallible:
+/// a CSPRNG failure is the caller's to answer, never a panic in library code.
+pub fn generate_token() -> Result<String, getrandom::Error> {
     let mut bytes = [0u8; TOKEN_BYTE_LEN];
-    getrandom::fill(&mut bytes)
-        .unwrap_or_else(|_| panic!("the OS CSPRNG failed; a token cannot be minted"));
-    base64url_raw(&bytes)
+    getrandom::fill(&mut bytes)?;
+    Ok(base64url_raw(&bytes))
 }
 
 fn base64url_raw(data: &[u8]) -> String {
@@ -665,14 +667,14 @@ mod tests {
 
     #[test]
     fn generate_token_is_43_unpadded_base64url_chars() {
-        let token = generate_token();
+        let token = generate_token().unwrap();
         assert_eq!(token.len(), 43, "32 bytes -> 43 raw base64url chars");
         assert!(
             token
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         );
-        assert_ne!(generate_token(), token);
+        assert_ne!(generate_token().unwrap(), token);
     }
 
     #[test]
