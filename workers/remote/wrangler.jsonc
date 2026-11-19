@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "reasonix-studio-web",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+
+  "assets": {
+    // Built by `pnpm build` in desktop-tauri; dist/ is gitignored.
+    "directory": "../../desktop-tauri/dist",
+    "not_found_handling": "single-page-application"
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "PAIRING",
+      // Run `npx wrangler kv namespace create PAIRING` and paste the printed id.
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+
+  // workers.dev works without a route; uncomment for a custom domain.
+  // "routes": [{ "pattern": "studio.reasonix.io", "custom_domain": true }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }]
+}
