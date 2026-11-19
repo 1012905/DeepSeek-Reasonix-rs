@@ -31,7 +31,7 @@ func TestManifestRecordsEveryArtifactWithItsSignature(t *testing.T) {
 		}
 	}
 
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", false); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -86,7 +86,7 @@ func TestManifestResolvesOnlyWhatCanInstallItself(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", false); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var m update.Manifest
@@ -129,14 +129,14 @@ func TestManifestResolvesOnlyWhatCanInstallItself(t *testing.T) {
 
 func TestEmptyDirIsAFailedRelease(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
-	if err := run(testenv.TempDir(t), "v0.1.0", "studio-v0.1.0", "", false); err == nil {
+	if err := run(testenv.TempDir(t), "v0.1.0", "studio-v0.1.0", ""); err == nil {
 		t.Fatal("a release with no artifacts must fail, not publish an empty manifest")
 	}
 }
 
-// A mirrored release is fetched from the mirror first, with GitHub kept as the
-// address a client falls back to; every full artifact and its signature alike.
-func TestMirroredManifestPutsTheMirrorFirst(t *testing.T) {
+// Every full artifact and its signature alike is addressed as a release asset
+// of the tag, with no second source the client could fall back to.
+func TestEveryAssetNamesTheGitHubRelease(t *testing.T) {
 	dir := testenv.TempDir(t)
 	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
 	for _, name := range []string{
@@ -148,7 +148,7 @@ func TestMirroredManifestPutsTheMirrorFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", true); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var m update.Manifest
@@ -170,13 +170,12 @@ func TestMirroredManifestPutsTheMirrorFirst(t *testing.T) {
 	}
 	for _, a := range all {
 		name := a.URL[strings.LastIndex(a.URL, "/")+1:]
-		mirror := update.StudioMirror + "/studio-v0.1.0/" + name
 		github := "https://github.com/esengine/DeepSeek-Reasonix/releases/download/studio-v0.1.0/" + name
-		if a.URL != mirror || a.Sig != mirror+".minisig" {
-			t.Errorf("%s: primary = %q / %q, want the mirror", name, a.URL, a.Sig)
+		if a.URL != github || a.Sig != github+".minisig" {
+			t.Errorf("%s: primary = %q / %q, want the GitHub release asset", name, a.URL, a.Sig)
 		}
-		if a.Fallback != github || a.FallbackSig != github+".minisig" {
-			t.Errorf("%s: fallback = %q / %q, want the GitHub release", name, a.Fallback, a.FallbackSig)
+		if a.Fallback != "" || a.FallbackSig != "" {
+			t.Errorf("%s: fallback = %q / %q, want none beside the release asset", name, a.Fallback, a.FallbackSig)
 		}
 	}
 	if !strings.HasPrefix(m.DownloadPage, "https://github.com/") {
@@ -184,10 +183,10 @@ func TestMirroredManifestPutsTheMirrorFirst(t *testing.T) {
 	}
 }
 
-func TestUnmirroredManifestNamesOnlyGitHub(t *testing.T) {
-	a := releaseAsset("o/r", "studio-v1", "ReasonixStudio-linux-amd64.deb", false)
+func TestReleaseAssetNamesOnlyGitHub(t *testing.T) {
+	a := releaseAsset("o/r", "studio-v1", "ReasonixStudio-linux-amd64.deb")
 	if !strings.HasPrefix(a.URL, "https://github.com/o/r/") || a.Fallback != "" || a.FallbackSig != "" {
-		t.Fatalf("asset = %+v, want GitHub alone when nothing is mirrored", a)
+		t.Fatalf("asset = %+v, want GitHub alone", a)
 	}
 }
 
@@ -206,7 +205,7 @@ func TestWindowsArchitecturesResolveToTheirOwnInstallers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", false); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var m update.Manifest
@@ -246,7 +245,7 @@ func TestRPMRidesBesideTheDebWithoutMovingItsKey(t *testing.T) {
 	}
 	generate := func(dir string) update.Manifest {
 		t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
-		if err := run(dir, "v0.1.0", "studio-v0.1.0", "", true); err != nil {
+		if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
 			t.Fatalf("run: %v", err)
 		}
 		var m update.Manifest
@@ -295,7 +294,7 @@ func TestLinuxArm64PackagesAreKeyedBesideAmd64(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
 	dir := testenv.TempDir(t)
 	generate := func() update.Manifest {
-		if err := run(dir, "v2.39.0", "studio-v2.39.0", "", true); err != nil {
+		if err := run(dir, "v2.39.0", "studio-v2.39.0", ""); err != nil {
 			t.Fatal(err)
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
@@ -334,10 +333,9 @@ func TestLinuxArm64PackagesAreKeyedBesideAmd64(t *testing.T) {
 		if !ok || after.Downloads[name] != asset {
 			t.Fatalf("%s does not resolve to its own download", key)
 		}
-		mirror := update.StudioMirror + "/studio-v2.39.0/" + name
 		github := "https://github.com/esengine/DeepSeek-Reasonix/releases/download/studio-v2.39.0/" + name
-		if asset.URL != mirror || asset.Sig != mirror+".minisig" || asset.Fallback != github || asset.FallbackSig != github+".minisig" {
-			t.Errorf("%s loses its mirror, fallback or signature: %+v", key, asset)
+		if asset.URL != github || asset.Sig != github+".minisig" || asset.Fallback != "" || asset.FallbackSig != "" {
+			t.Errorf("%s loses its release address or signature: %+v", key, asset)
 		}
 	}
 }
@@ -353,7 +351,7 @@ func TestAnAppImageIsOfferedButNeverResolvedAsAnUpdate(t *testing.T) {
 		}
 	}
 	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", "", true); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	var m update.Manifest

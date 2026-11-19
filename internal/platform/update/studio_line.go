@@ -14,23 +14,19 @@ func StudioLine() Line {
 		Deb: DebLine{
 			Package:      "reasonix-studio",
 			HelperPath:   "/usr/lib/reasonix-studio/reasonix-studio-update-helper",
-			PolkitAction: "io.reasonix.studio.update",
+			PolkitAction: "com.esengine.reasonix-studio.update",
 		},
-		// Studio's releases are Developer ID signed and notarized, so a swapped
-		// bundle is one Gatekeeper still opens. The identifier is what the swap
-		// checks a downloaded bundle against before it replaces anything.
-		Mac: MacLine{BundleID: "io.reasonix.studio", SelfUpdate: true},
-		// The Electron installer requests nothing and raises consent itself for
-		// an all-users install. Starting it elevated would put it in the
-		// consenting account, where its per-user default writes that profile.
+		// The identifier is what the bundle swap checks a downloaded bundle
+		// against before it replaces anything; it is the Tauri shell's own.
+		Mac: MacLine{BundleID: "com.esengine.reasonix-studio", SelfUpdate: true},
+		// A per-user installer writes the profile of the account that runs it;
+		// starting it elevated would install into the administrator's profile
+		// instead of the user's.
 		Windows: WindowsLine{Installer: WindowsInstallerPerUser, InstallerArgs: "--updated"},
 	}
 }
 
-// The single binary the Wails shell installs. The Electron shell reads neither
-// Members nor Launchers -- every platform it ships takes a channel that
-// replaces a whole install rather than staging files -- so this stays what it
-// has always named rather than becoming a name that fits neither shell.
+// The single binary name the line's packages install.
 func studioBinName() string {
 	if runtime.GOOS == "windows" {
 		return "reasonix-studio.exe"

@@ -1013,7 +1013,7 @@ func TestMacUpdateHandoffParserRequiresCompletePipePair(t *testing.T) {
 		"-to-version", "v2",
 		"-created-at", "2026-07-28T00:00:00Z",
 		"-transaction-id", strings.Repeat("a", 64),
-		"-bundle-id", "io.reasonix.studio",
+		"-bundle-id", "com.esengine.reasonix-studio",
 		"-ready-fd", "3",
 	})
 	if err == nil || !strings.Contains(err.Error(), "pipe arguments") {
@@ -1362,7 +1362,7 @@ func TestMacUpdateHandoffSerializesWithConcurrentRollback(t *testing.T) {
 // fall back to this process, which would swap whatever directory this binary
 // happens to sit in while every later check still passed.
 func TestApplyMacRefusesAnApplicationNobodyStated(t *testing.T) {
-	line := MacLine{SelfUpdate: true, BundleID: "io.reasonix.studio"}
+	line := MacLine{SelfUpdate: true, BundleID: "com.esengine.reasonix-studio"}
 	for _, tc := range []struct {
 		name string
 		app  Application
@@ -1383,7 +1383,7 @@ func TestApplyMacRefusesAnApplicationNobodyStated(t *testing.T) {
 // A stated bundle is still checked before anything is staged: a shell may state
 // a path, and only the disk can say whether it is an app.
 func TestApplyMacRefusesAStatedBundleThatIsNotOne(t *testing.T) {
-	line := MacLine{SelfUpdate: true, BundleID: "io.reasonix.studio"}
+	line := MacLine{SelfUpdate: true, BundleID: "com.esengine.reasonix-studio"}
 	app := Application{Bundle: filepath.Join(tempdir.New(t), "Nothing.app"), PID: os.Getpid()}
 	if err := applyMac("archive.zip", "v2.0.0", "v1.0.0", line, app); !errors.Is(err, ErrApplicationInvalid) {
 		t.Fatalf("applyMac refused for the wrong reason: %v", err)

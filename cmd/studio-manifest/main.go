@@ -1,6 +1,5 @@
 // Command studio-manifest writes Studio's latest.json from a directory of built
-// artifacts. cmd/sign's manifest subcommand is the desktop line's: it hardcodes
-// desktop's download page and drops any windows file that is not -installer.exe.
+// artifacts, every one addressed as a GitHub release asset of the tag.
 //
 // Downloads is what a person is offered, so it lists only what installs itself.
 // Platforms and NativePackages are what the updater resolves, which is why a
@@ -31,16 +30,13 @@ func main() {
 	if len(os.Args) == 5 {
 		deltaDir = os.Args[4]
 	}
-	// HAS_R2 is the release workflow's own gate on uploading the mirror, so the
-	// manifest names mirror addresses exactly when that upload will run.
-	mirrored := os.Getenv("HAS_R2") == "true"
-	if err := run(os.Args[1], os.Args[2], os.Args[3], deltaDir, mirrored); err != nil {
+	if err := run(os.Args[1], os.Args[2], os.Args[3], deltaDir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(dir, version, tag, deltaDir string, mirrored bool) error {
+func run(dir, version, tag, deltaDir string) error {
 	repo := os.Getenv("GITHUB_REPOSITORY")
 	if strings.TrimSpace(repo) == "" {
 		return fmt.Errorf("studio-manifest: GITHUB_REPOSITORY is unset, so asset URLs cannot be built")
@@ -69,7 +65,7 @@ func run(dir, version, tag, deltaDir string, mirrored bool) error {
 		if err != nil {
 			return err
 		}
-		asset := releaseAsset(repo, tag, name, mirrored)
+		asset := releaseAsset(repo, tag, name)
 		asset.Size, asset.SHA256 = size, sum
 		// Downloads is what a person is offered, so it lists what installs
 		// itself. A portable archive stays a release asset, but offering it
@@ -120,19 +116,11 @@ func run(dir, version, tag, deltaDir string, mirrored bool) error {
 	return os.WriteFile(filepath.Join(dir, "latest.json"), append(b, '\n'), 0o644)
 }
 
-// releaseAsset addresses one artifact. The mirror serves it first when there is
-// one: GitHub's release CDN is what a CN route reaches slowest, and it stays as
-// the fallback for a mirror that is down.
-func releaseAsset(repo, tag, name string, mirrored bool) update.Asset {
+// releaseAsset addresses one artifact as a release asset of the tag, its
+// detached signature beside it under the same name.
+func releaseAsset(repo, tag, name string) update.Asset {
 	github := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, tag, name)
-	if !mirrored {
-		return update.Asset{URL: github, Sig: github + ".minisig"}
-	}
-	mirror := fmt.Sprintf("%s/%s/%s", update.StudioMirror, tag, name)
-	return update.Asset{
-		URL: mirror, Sig: mirror + ".minisig",
-		Fallback: github, FallbackSig: github + ".minisig",
-	}
+	return update.Asset{URL: github, Sig: github + ".minisig"}
 }
 
 // installable reports whether an artifact is a download a person is offered: a

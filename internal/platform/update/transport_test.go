@@ -205,7 +205,7 @@ func TestDownloadRejectsBodyLongerThanManifestSize(t *testing.T) {
 
 func TestDownloadRejectsAssetSizeAboveMaximum(t *testing.T) {
 	if _, err := tp(&http.Client{}, nil).Download(
-		context.Background(), "https://dl.reasonix.io/file", MaxAssetSize+1, nil,
+		context.Background(), "https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v9.9.9/file", MaxAssetSize+1, nil,
 	); err == nil {
 		t.Fatal("download accepted an asset size above the release maximum")
 	}

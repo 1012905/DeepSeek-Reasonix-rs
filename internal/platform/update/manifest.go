@@ -7,10 +7,10 @@ package update
 
 import "runtime"
 
-// Manifest is the latest.json published alongside a desktop release. The updater
-// fetches it from the R2 mirror (primary) or GitHub releases (fallback), compares
-// Version against the running build, and looks up the running platform's artifact
-// via Asset / NativePackage.
+// Manifest is the latest.json published alongside a desktop release. The
+// updater fetches it from the release's GitHub assets, compares Version against
+// the running build, and looks up the running platform's artifact via Asset /
+// NativePackage.
 type Manifest struct {
 	Version         string           `json:"version"`                     // release version, e.g. "v1.1.0"
 	Notes           string           `json:"notes"`                       // markdown release notes
@@ -31,11 +31,14 @@ type Delta struct {
 	Chunks string `json:"chunks"` // base URL; a chunk is Chunks + "/" + delta.ObjectName(hash)
 }
 
-// StudioMirror is the release mirror Studio's catalog and deltas live on.
-const StudioMirror = "https://dl.reasonix.io"
+// StudioReleases is the GitHub Releases endpoint Studio publishes on: the
+// catalog, each release's manifest, its notes and its artifacts are release
+// assets of this repository, and nothing else serves them.
+const StudioReleases = "https://github.com/1012905/DeepSeek-Reasonix-rs/releases"
 
-// StudioChunks is the one chunk store every Studio release shares.
-const StudioChunks = StudioMirror + "/studio/chunks"
+// StudioChunks is one release's chunk store: its chunks ride beside its
+// artifacts as release assets named by their content hash.
+func StudioChunks(tag string) string { return StudioReleases + "/download/" + tag }
 
 // DeltaIndexName is a platform's index file inside a release's delta directory.
 const DeltaIndexName = "index.json.zst"

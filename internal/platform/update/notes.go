@@ -53,10 +53,11 @@ type VersionNotes struct {
 
 var releaseVersion = regexp.MustCompile(`^v?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)$`)
 
-// notesURL is where a release's notes live. It is built from a validated
-// version and the mirror constant, never from the catalog: the catalog only
-// says whether notes exist, so it cannot aim this fetch anywhere.
-func notesURL(v string) string { return StudioMirror + "/studio/notes/" + v + ".md" }
+// notesURL is where a release's notes live: the notes.md asset of its tag. It
+// is built from a validated version and the releases constant, never from the
+// catalog: the catalog only says whether notes exist, so it cannot aim this
+// fetch anywhere.
+func notesURL(v string) string { return StudioReleases + "/download/studio-v" + v + "/notes.md" }
 
 func notesVersion(version string) (string, error) {
 	m := releaseVersion.FindStringSubmatch(strings.TrimSpace(version))
@@ -100,7 +101,7 @@ type notesState struct {
 var sharedNotes = &notesState{}
 
 // ReadNotes returns a release's notes from disk when they were ever fetched and
-// from the mirror otherwise. A fetched document is kept for good: a released
+// from the release otherwise. A fetched document is kept for good: a released
 // version's notes do not change. retry skips the short memory of a failure.
 func ReadNotes(ctx context.Context, in Install, version string, retry bool) (VersionNotes, error) {
 	client, err := netclient.NewHTTPClient(ProxySpec(), netclient.TransportOptions{})
@@ -205,7 +206,7 @@ func fetchNotes(ctx context.Context, c *http.Client, url, userAgent string) (str
 	case resp.StatusCode != http.StatusOK:
 		return "", fmt.Errorf("%w: %s", ErrNotesUnreachable, resp.Status)
 	case !documentType(resp.Header.Get("Content-Type")):
-		return "", fmt.Errorf("%w: the mirror answered with content type %q", ErrNotesUnreachable, resp.Header.Get("Content-Type"))
+		return "", fmt.Errorf("%w: the release host answered with content type %q", ErrNotesUnreachable, resp.Header.Get("Content-Type"))
 	case resp.ContentLength > NotesMaxBytes:
 		return "", ErrNotesTooLarge
 	}
@@ -217,7 +218,7 @@ func fetchNotes(ctx context.Context, c *http.Client, url, userAgent string) (str
 		return "", ErrNotesTooLarge
 	}
 	if !usableNotes(body) {
-		return "", fmt.Errorf("%w: the mirror answered something that is not a document", ErrNotesUnreachable)
+		return "", fmt.Errorf("%w: the release host answered something that is not a document", ErrNotesUnreachable)
 	}
 	return string(body), nil
 }

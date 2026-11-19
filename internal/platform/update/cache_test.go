@@ -18,7 +18,7 @@ func sha256Hex(data []byte) string {
 
 func assetFor(data []byte, name string) Asset {
 	return Asset{
-		URL:    "https://dl.reasonix.io/studio-v9.9.9/" + name,
+		URL:    "https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v9.9.9/" + name,
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}

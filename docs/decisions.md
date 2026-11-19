@@ -545,3 +545,45 @@ Rust 和 Go 共存）」。窗口由用户在本机终端验证可打开（B1 �
 **退役准备（先行步骤）**：oracle 对照冻结为 `src/ui/parity-contract.json` 与
 `src/i18n/msg/oracle-named.json`（620 键）；Makefile `studio`/`test` 切 Tauri。
 删除与发布去向的产品裁决见上文「全部退役」，执行顺序见 migration-plan.md 退役表。
+
+## D18 —— P2：旧账号/云备份/市场发布界面退役（Go 云端半边剥离）
+
+用户裁决「原来的账号部分一起去掉」。执行结果：
+
+- **Vue 删除**：账号登录页与设置块、市场发布/投票/我的包（`ext-market.vue` 收敛为浏览+安装）、
+  云备份整组、手机提醒/推送/云远程与 `RemoteAwareApp` 包装、反馈贡献榜/等级/账号关联
+  （反馈对话框与提交/历史保留，通道本就 `FEEDBACK_RETIRED`）。
+- **迁移**：TraceExport 迁至 storage 页（锚点 `storage:trace-export`，`settingScreens` 随指）；
+  Versions 面板保留在设置目录（profile 等级展示随反馈等级退役）。
+- **端口/线缆**：`AgentPort` 摘除 account/backup/market-publish/phone/cloud-remote/board 方法，
+  sse/mock/boundary 同步；wire-parity 表摘除对应镜像对。
+- **i18n**：按 msg.test 同口径批删孤儿键 **237** 个；`settings-intents` 去掉 account/backup 目标。
+- **Go**：serve 删除 account/backup/cloud-presence/market-publish/phones 路由与文件（−2709 行），
+  `startCloudRemote` 移除；DeviceShare 的 LAN/Tailscale 门完整保留（`test_share*`、tailnet 用例全绿）。
+  删除随云端路由失去唯一调用者的 `notify.Phone`/`Sink.WithPhone`（孤儿门禁）。
+- **保留**：`internal/platform/account`、`remotecloud` 休眠（CLI 登录不动）。
+
+**验证**：
+
+- `vue-tsc` 0；全量 vitest **297 文件 / 2170 测试**全绿（删测试即删用例）。
+- `go build`/`go vet` 0；`golangci-lint` 0 issues；repolint 3553 clean。
+- serve 全量 780s：唯一失败是 P3 的 notes URL 断言（已随 P3 更新并定向复跑通过）；
+  cmd host、account、remotecloud、notify 全绿。
+
+## D19 —— P3：更新通道改指本仓库 Releases
+
+- **目录**：`update.StudioReleases` = `https://github.com/1012905/DeepSeek-Reasonix-rs/releases`
+  （按本仓 remote 定），`StudioCatalog` = 其 `latest/download/versions.json`；notes 为各 tag 的
+  `notes.md` 资产。重定向信任集不变（github.com/.githubusercontent.com）。
+- **标识**：Mac BundleID 与 polkit action 改 `com.esengine.reasonix-studio`；instanceid 保持稳定
+  （升级不搬状态目录）；`computer` 敏感路径未动（其 pin 属 CUA，另行处理）。
+- **发布**：
+  - 新 `release-studio-tauri.yml`：tag `studio-v*`，三平台矩阵。
+  - Tauri bundle 携 `bundle.resources` 的 host `bin/` 与页面 `page/`。
+  - minisign 旧密钥签名+公钥自验；studio-manifest 生成 latest.json，versions.json 挂 latest 资产。
+  - candidate 不入目录。
+  `withdraw-studio-version.yml` 从 R2 改为操作 latest release 的 versions.json。
+- **脚本**：`update-versions-index.sh` 产 GitHub 资产 URL；`backfill-studio-notes.sh` 退役
+  （notes 现为发布资产）；polkit 名称随标识更新。
+- **验证**：update/instanceid/studio-manifest Go 测试绿；脚本测试 12+6 绿；actionlint 0；
+  构建 side 待用户配置 secrets 后首个 `studio-v*` 触发实测。

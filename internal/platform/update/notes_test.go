@@ -45,7 +45,7 @@ func notesReq(t *testing.T, c *http.Client) notesRequest {
 
 func TestNotesURLIsBuiltFromAReleaseVersionOnly(t *testing.T) {
 	v, err := notesVersion("v2.31.0")
-	if got := notesURL(v); err != nil || got != "https://dl.reasonix.io/studio/notes/2.31.0.md" {
+	if got := notesURL(v); err != nil || got != "https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v2.31.0/notes.md" {
 		t.Fatalf("notesURL(v2.31.0) = %q, %v", got, err)
 	}
 	for _, bad := range []string{"", "latest", "../../x", "2.31", "2.31.0/../../x", "2.31.0?x=1", "https://evil.test/a"} {
@@ -57,7 +57,7 @@ func TestNotesURLIsBuiltFromAReleaseVersionOnly(t *testing.T) {
 
 func TestSecondReadComesFromDiskWithoutTheNetwork(t *testing.T) {
 	c, hits := mirror(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/studio/notes/2.31.0.md" {
+		if r.URL.Path != "/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v2.31.0/notes.md" {
 			t.Errorf("fetched %s", r.URL.Path)
 		}
 		_, _ = w.Write([]byte("# notes\n- a\n"))
@@ -234,7 +234,7 @@ func TestACancelledCallerDoesNotFailTheSharedFetch(t *testing.T) {
 }
 
 func TestVersionRowsMarkOnlyEntriesWithNotes(t *testing.T) {
-	rows := versionRows([]IndexEntry{{Version: "v2.2.0", Notes: "https://dl.reasonix.io/studio/notes/2.2.0.md"}, {Version: "v2.1.0"}}, "2.2.0")
+	rows := versionRows([]IndexEntry{{Version: "v2.2.0", Notes: "https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v2.2.0/notes.md"}, {Version: "v2.1.0"}}, "2.2.0")
 	if !rows[0].HasNotes || rows[1].HasNotes {
 		t.Fatalf("hasNotes = %v, %v; want true, false", rows[0].HasNotes, rows[1].HasNotes)
 	}

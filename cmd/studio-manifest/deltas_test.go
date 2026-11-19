@@ -10,10 +10,10 @@ import (
 	"reasonix/internal/platform/update"
 )
 
-// A platform's delta is listed from the mirror with its signature beside it,
-// the shared chunk store named; an unsigned index fails the release instead of
-// being offered.
-func TestManifestListsEachSignedDeltaFromTheMirror(t *testing.T) {
+// A platform's delta is listed as a release asset with its signature beside it
+// and the tag's chunk store named; an unsigned index fails the release instead
+// of being offered.
+func TestManifestListsEachSignedDeltaFromTheRelease(t *testing.T) {
 	dir, deltaDir := testenv.TempDir(t), testenv.TempDir(t)
 	t.Setenv("GITHUB_REPOSITORY", "esengine/DeepSeek-Reasonix")
 	if err := os.WriteFile(filepath.Join(dir, "ReasonixStudio-windows-amd64-installer.exe"), []byte("x"), 0o644); err != nil {
@@ -30,13 +30,13 @@ func TestManifestListsEachSignedDeltaFromTheMirror(t *testing.T) {
 	if err := os.WriteFile(index, []byte("index bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir, true); err == nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir); err == nil {
 		t.Fatal("an unsigned delta index was published")
 	}
 	if err := os.WriteFile(index+".minisig", []byte("sig"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir, true); err != nil {
+	if err := run(dir, "v0.1.0", "studio-v0.1.0", deltaDir); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
@@ -48,8 +48,8 @@ func TestManifestListsEachSignedDeltaFromTheMirror(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, ok := m.Deltas["windows-amd64"]
-	want := "https://dl.reasonix.io/studio-v0.1.0/delta/windows-amd64/index.json.zst"
-	if !ok || d.Index.URL != want || d.Index.Sig != want+".minisig" || d.Index.Size != 11 || d.Chunks != update.StudioChunks {
+	want := "https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v0.1.0/delta-windows-amd64-index.json.zst"
+	if !ok || d.Index.URL != want || d.Index.Sig != want+".minisig" || d.Index.Size != 11 || d.Chunks != update.StudioChunks("studio-v0.1.0") {
 		t.Fatalf("deltas = %+v", m.Deltas)
 	}
 	if len(m.Deltas) != 1 {

@@ -8,6 +8,14 @@ import (
 	"reasonix/internal/base/testenv"
 )
 
+// Existing installs lock under this prefix; a bundle-id change must not move
+// it, or an old and a new build over one home stop excluding each other.
+func TestPrefixStaysTheLockExistingInstallsHold(t *testing.T) {
+	if Prefix != "io.reasonix.studio" {
+		t.Fatalf("Prefix = %q; renaming it relocates every running install's instance lock", Prefix)
+	}
+}
+
 func TestInstanceIDScopesToTheDataHome(t *testing.T) {
 	first, second := testenv.TempDir(t), testenv.TempDir(t)
 	t.Setenv("REASONIX_HOME", first)

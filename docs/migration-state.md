@@ -9,8 +9,9 @@ reviewed: 2026-11-18
 
 续跑时先读这一份。每个波次结束都要更新它；不许让它描述的树比真实的树旧。
 
-最后更新：2026-11-19（波次 12：D15 收口——job 查看器、Transcript focus、Plan、conversation-files、
-kept versions、move-to、并发开排序；全门绿 **311/2297**，debt 81；D5 删 pinia 完成）。
+最后更新：2026-11-19（波次 14：P2 账号/云界面退役 + P3 更新通道转本仓库；全门绿 **297/2170**，
+i18n 孤儿键 −237，serve 云端路由 −2709 行，LAN/Tailscale 手机门保留；P1 `eec852107`、
+P4 骨架 `df119a62d` 已提交，P2/P3 随本波提交）。
 
 > 本文每个数字都来自下方「已验证基线」里的命令。没有命令支撑的判断标「未验证」。
 > 波次 5 的 284 文件 / 2140 测试 / 16 命令 / 129 孤儿已被本波次实测取代。
@@ -202,6 +203,38 @@ vue-tsc 0；全量 **304 文件 / 2250 测试绿**；`tauri --version` → 2.12.
 `tauri dev` 在本代理进程内仍卡 WebView2（B1：0x800700AA；换空数据目录后 0x8000FFFF
 且新目录未创建）——用户 04:58 的自跑日志没有 `startup failed` 行，疑为代理宿主限制，
 待其终端复跑确认。另把 `Pane.turn.interaction` 的 20s 等待放宽到 60s 以吸收满负载偶发。
+
+## 波次 14 改了什么（P2 + P3 执行）
+
+用户裁决「原来的账号部分一起去掉；版本更新转为现在的 reasonix-rs 项目」。P4 Worker 骨架已在
+波次 13 提交；本波次完成 P2（旧账号面退役）与 P3（更新通道改指本仓库 Releases），详见 D18/D19。
+执行方式：三路并行代理（P2-Go / P2-Vue / P3），其中两路因推理配额中断，主 Agent 接手收口。
+
+- **P2**：Vue 删账号/市场发布/云备份/手机/云远程/反馈榜（反馈对话框保留）；TraceExport 迁 storage；
+  i18n 孤儿键批删 237；端口与 wire-parity 同步摘除；serve 删 account/backup/cloud/market-publish/
+  phones 路由（−2709 行），`notify.Phone` 随唯一调用者删除；DeviceShare LAN 门保留。
+- **P3**：
+  - 目录 → `github.com/1012905/DeepSeek-Reasonix-rs/releases/latest/download/versions.json`。
+  - BundleID/polkit → `com.esengine.reasonix-studio`（instanceid 稳定）。
+  - 新 `release-studio-tauri.yml`（三平台、`bundle.resources` 携 host+page、minisign 旧钥、
+    catalog 挂 latest 资产）。
+  - `withdraw-studio-version.yml` 改操作 release 资产；backfill 脚本退役。
+
+**波次 14 验证（真实执行）**：
+
+```
+$ vue-tsc -b --force                                 # 0
+$ vitest run                                         # 297 文件 / 2170 测试全绿
+$ vite build                                         # 成功
+$ go build ./... && go vet ./...                     # 0
+$ golangci-lint v2.12.2（GOTOOLCHAIN=go1.26.7）      # 0 issues
+$ go run ./tools/repolint                            # clean (3553 baselined)
+$ go test serve/cmd/account/remotecloud/notify/update/instanceid/studio-manifest  # 全绿
+$ node --test scripts/*.test.mjs（notes/release/withdraw）  # 12 + 6 通过
+$ actionlint（新/改工作流）                          # 0
+```
+
+首个 `studio-v*` 发布与 `tauri build` 三平台产物待用户配置 secrets 后实测（见 blockers.md）。
 
 ## 波次 13 改了什么（Electron 退役执行：P1；P4/P5 骨架并行）
 

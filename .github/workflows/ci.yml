@@ -523,6 +523,7 @@ jobs:
             -ignore 'label "windows-11-arm" is unknown' \
             -ignore 'label "ubuntu-22.04-arm" is unknown' \
             .github/workflows/studio-tauri.yml \
+            .github/workflows/release-studio-tauri.yml \
             .github/workflows/deploy-remote.yml \
             .github/workflows/ci.yml \
             .github/workflows/pr-gate-and-labels.yml \

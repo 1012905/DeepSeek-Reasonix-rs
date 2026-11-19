@@ -433,3 +433,13 @@ reviewed: 2026-11-17
   (78047d63c), so they predate the Electron deletion. Both packages are declared
   sensitive; no code change made. Status: skipped, needs a host-environment
   investigation outside this migration.
+
+## P3 first release and packaged build need user-side setup
+
+- Secrets not yet present in this repo: `MINISIGN_PRIVATE_KEY`, `MINISIGN_PASSWORD`
+  (signing), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (remote worker deploy).
+- The three-platform `tauri build` matrix in `release-studio-tauri.yml` (including
+  `bundle.resources` carrying `bin/` and `page/`) has not run on CI yet; the first
+  `studio-v*` tag is its real verification.
+- `withdraw-studio-version.sh` path now edits the latest release's `versions.json`
+  asset; a dry run needs at least one published catalog asset.

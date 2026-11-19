@@ -15,8 +15,9 @@ import (
 	"reasonix/internal/contract/config"
 )
 
-// Prefix is the bundle's own identifier, so a Studio launch never answers the
-// 1.x desktop's lock: two applications, two windows.
+// Prefix namespaces the instance lock a data home takes. It stays the
+// identifier existing installs already lock under: renaming it with the bundle
+// id would let an old and a new build hold one home at once.
 const Prefix = "io.reasonix.studio"
 
 // Current names the instance this process's configured home may have.

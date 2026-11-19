@@ -9,8 +9,8 @@ import (
 )
 
 // deltas lists each platform's chunked update under deltaDir, laid out by
-// studio-delta as <platform>/index.json.zst beside its signature. They are
-// served from the mirror, never GitHub: the chunks they name exist only there.
+// studio-delta as <platform>/index.json.zst beside its signature. The index and
+// the chunks it names ride as release assets of the same tag.
 func deltas(deltaDir, tag string) (map[string]update.Delta, error) {
 	entries, err := os.ReadDir(deltaDir)
 	if err != nil {
@@ -30,10 +30,10 @@ func deltas(deltaDir, tag string) (map[string]update.Delta, error) {
 		if err != nil {
 			return nil, err
 		}
-		url := fmt.Sprintf("%s/%s/delta/%s/%s", update.StudioMirror, tag, platform, update.DeltaIndexName)
+		url := fmt.Sprintf("%s/delta-%s-%s", update.StudioChunks(tag), platform, update.DeltaIndexName)
 		out[platform] = update.Delta{
 			Index:  update.Asset{URL: url, Sig: url + ".minisig", Size: size, SHA256: sum},
-			Chunks: update.StudioChunks,
+			Chunks: update.StudioChunks(tag),
 		}
 		fmt.Printf("delta: %s (%d bytes index)\n", platform, size)
 	}
