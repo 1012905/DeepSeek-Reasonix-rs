@@ -1,24 +1,26 @@
-//! Passes stderr through and remembers the last `reasonix-studio-host:` line,
-//! which is where `run` says why it is returning a failure code.
+//! Writes stderr and remembers the last `reasonix-studio-host:` line, which
+//! is where `run` says why it is returning a failure code. Shareable: every
+//! write takes the stderr lock, so no handle is held across threads.
 
 use std::io::Write;
 use std::sync::Mutex;
 
-pub struct LastLine<W: Write> {
-    inner: W,
+const PREFIX: &str = "reasonix-studio-host:";
+
+pub struct LastLine {
     line: Mutex<String>,
 }
 
-const PREFIX: &str = "reasonix-studio-host:";
-
-impl<W: Write> LastLine<W> {
-    pub fn new(inner: W) -> Self {
+impl LastLine {
+    pub fn new() -> Self {
         Self {
-            inner,
             line: Mutex::new(String::new()),
         }
     }
 
+    // Consumed by the fatal-log recording (HOST-007), landing with the
+    // platform slice.
+    #[allow(dead_code)]
     pub fn last(&self) -> String {
         let stored = self.line.lock().unwrap_or_else(|p| p.into_inner());
         if stored.is_empty() {
@@ -27,22 +29,28 @@ impl<W: Write> LastLine<W> {
             stored.clone()
         }
     }
-}
 
-impl<W: Write> Write for LastLine<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let text = String::from_utf8_lossy(&buf.clone());
+    /// Tracks prefixed lines and passes everything through to stderr.
+    pub fn write_bytes(&self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
         for line in text.trim_end_matches(['\r', '\n']).split('\n') {
             if line.starts_with(PREFIX) {
                 let mut stored = self.line.lock().unwrap_or_else(|p| p.into_inner());
                 *stored = line.trim().to_string();
             }
         }
-        self.inner.write(buf)
+        let mut err = std::io::stderr().lock();
+        err.write(buf)
+    }
+}
+
+impl Write for LastLine {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.write_bytes(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
+        std::io::stderr().flush()
     }
 }
 
@@ -51,16 +59,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remembers_the_last_prefixed_line_and_passes_everything_through() {
-        let mut buf = Vec::new();
-        {
-            let mut l = LastLine::new(&mut buf);
-            write!(l, "noise\n").unwrap();
-            write!(l, "reasonix-studio-host: startup phase=page elapsed_ms=3\n").unwrap();
-            write!(l, "reasonix-studio-host: bind failed\r\nmore noise\n").unwrap();
-            assert_eq!(l.last(), "reasonix-studio-host: bind failed");
-        }
-        assert!(String::from_utf8(buf).unwrap().contains("more noise"));
-        assert_eq!(LastLine::new(Vec::new()).last(), "no reason was reported");
+    fn remembers_the_last_prefixed_line() {
+        let l = LastLine::new();
+        l.write_bytes(b"noise\n").unwrap();
+        assert_eq!(l.last(), "no reason was reported");
+        l.write_bytes(b"reasonix-studio-host: startup phase=page elapsed_ms=3\n")
+            .unwrap();
+        assert_eq!(
+            l.last(),
+            "reasonix-studio-host: startup phase=page elapsed_ms=3"
+        );
+        l.write_bytes(b"reasonix-studio-host: bind failed\r\nmore noise\n")
+            .unwrap();
+        assert_eq!(l.last(), "reasonix-studio-host: bind failed");
     }
 }

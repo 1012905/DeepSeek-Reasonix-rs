@@ -5,16 +5,28 @@
 use std::io::Write;
 use std::time::Instant;
 
+// The names the assembly emits; kept as the binary's frozen vocabulary.
+#[allow(dead_code)]
 pub const PAGE: &str = "page";
+#[allow(dead_code)]
 pub const CONFIG_UPGRADE: &str = "config-upgrade";
+#[allow(dead_code)]
 pub const CONFIG: &str = "config";
+#[allow(dead_code)]
 pub const SINKS: &str = "sinks";
+#[allow(dead_code)]
 pub const WORKSPACE: &str = "workspace";
+#[allow(dead_code)]
 pub const RUNTIME: &str = "runtime";
+#[allow(dead_code)]
 pub const HUB: &str = "hub";
+#[allow(dead_code)]
 pub const ADOPT: &str = "adopt";
+#[allow(dead_code)]
 pub const BACKGROUND: &str = "background";
+#[allow(dead_code)]
 pub const BIND: &str = "bind";
+#[allow(dead_code)]
 pub const PROVIDER_SETUP: &str = "provider-setup";
 pub const ANNOUNCE: &str = "announce";
 
@@ -38,7 +50,9 @@ impl<W: Write> StartupPhases<W> {
     }
 
     /// A kernel boot phase reported by the assembly: logged with the `boot.`
-    /// prefix, its own duration.
+    /// prefix, its own duration. Consumed when the runtime slice reports its
+    /// boot phases.
+    #[allow(dead_code)]
     pub fn boot(&mut self, name: &str, elapsed_ms: u64) {
         self.write(&format!("boot.{name}"), elapsed_ms);
     }

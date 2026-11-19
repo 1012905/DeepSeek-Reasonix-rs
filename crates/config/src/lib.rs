@@ -23,5 +23,5 @@ pub mod serve;
 pub use language::normalize_language;
 pub use load::ConfigError;
 pub use model::Config;
-pub use paths::auto_workspace_dir;
+pub use paths::{auto_workspace_dir, reasonix_home_dir, user_config_path};
 pub use serve::{AuthMode, ServeSection, host_serve_section};

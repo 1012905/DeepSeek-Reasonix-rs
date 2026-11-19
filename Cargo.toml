@@ -92,7 +92,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-st
 tokio-util = "0.7"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 bytes = "1"
-futures-core = "0.1"
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.8"
 

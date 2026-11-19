@@ -113,6 +113,56 @@ fn under_auto(base: PathBuf) -> PathBuf {
     base.join("workspaces").join("auto")
 }
 
+/// Go `config.ReasonixHomeDir()`: the data home the root chain resolves
+/// (the REASONIX_HOME pin, else the platform default). Empty when none can.
+pub fn reasonix_home_dir() -> PathBuf {
+    home_root_in(&RootEnv::process())
+}
+
+/// The user config file a load reads (paths.md §2.1 userConfigLoadPath): the
+/// primary `<home>/config.toml` when it exists, else the legacy OS-support
+/// copy, else the legacy XDG candidates. Empty when the home cannot resolve.
+pub fn user_config_path() -> PathBuf {
+    user_config_path_in(&RootEnv::process())
+}
+
+fn user_config_path_in(env: &RootEnv) -> PathBuf {
+    let home = home_root_in(env);
+    if home.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    let primary = home.join("config.toml");
+    if primary.exists() {
+        return primary;
+    }
+    // The legacy dirs name the same tree as a pinned home, so only the
+    // primary counts there.
+    if env.var("REASONIX_HOME").trim().is_empty() {
+        if let Some(dir) = env.user_config_dir() {
+            let legacy = dir.join("reasonix").join("config.toml");
+            if legacy != primary && legacy.exists() {
+                return legacy;
+            }
+        }
+        if cfg!(unix) {
+            let xdg = env.var("XDG_CONFIG_HOME");
+            if !xdg.is_empty() {
+                let candidate = PathBuf::from(xdg).join("reasonix").join("config.toml");
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+            if let Some(home) = env.home() {
+                let candidate = home.join(".config").join("reasonix").join("config.toml");
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    primary
+}
+
 fn home_root_in(env: &RootEnv) -> PathBuf {
     let pinned = expand_dir_value_in(env.var("REASONIX_HOME"), env);
     if !pinned.as_os_str().is_empty() {
@@ -320,6 +370,7 @@ fn is_name_byte(byte: u8) -> bool {
 mod tests {
     use super::{
         RootEnv, auto_workspace_dir_in, clean_path, expand_dir_value_in, expand_vars_lookup,
+        user_config_path_in,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -332,6 +383,78 @@ mod tests {
                 .collect(),
             cwd: PathBuf::from(if cfg!(windows) { "C:\\wd" } else { "/wd" }),
         }
+    }
+
+    // The selection chain touches the filesystem, so the tests root their
+    // homes under target/ — the system Temp is not writable under this
+    // environment's antivirus policy.
+    fn home_dir(name: &str) -> PathBuf {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/userconfig");
+        let dir = base.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_primary_config_file_wins_when_it_exists() {
+        let home = home_dir("primary");
+        std::fs::write(home.join("config.toml"), "language = \"en\"\n").unwrap();
+        let got = user_config_path_in(&env_with(&[("REASONIX_HOME", &home.to_string_lossy())]));
+        assert_eq!(got, clean_path(&home.join("config.toml")));
+    }
+
+    #[test]
+    // Windows has no distinct legacy copy: the default home IS
+    // osUserConfigDir()/reasonix, so the "different from primary" exclusion
+    // makes the fallback unreachable there — same as the reference.
+    #[cfg(unix)]
+    fn a_missing_primary_falls_back_to_the_legacy_os_support_copy() {
+        let home = home_dir("legacy");
+        let support = home_dir("legacy-support");
+        let env = env_with(&[
+            ("REASONIX_HOME", &home.to_string_lossy()),
+            ("USERPROFILE", &support.to_string_lossy()),
+            ("HOME", &support.to_string_lossy()),
+            ("APPDATA", &support.to_string_lossy()),
+        ]);
+        let legacy = env
+            .user_config_dir()
+            .unwrap()
+            .join("reasonix")
+            .join("config.toml");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "language = \"en\"\n").unwrap();
+        assert_eq!(user_config_path_in(&env), legacy);
+    }
+
+    #[test]
+    fn a_pinned_home_skips_the_legacy_chain() {
+        let home = home_dir("pinned");
+        let support = home_dir("pinned-support");
+        let env = env_with(&[
+            ("REASONIX_HOME", &home.to_string_lossy()),
+            ("USERPROFILE", &support.to_string_lossy()),
+            ("HOME", &support.to_string_lossy()),
+            ("APPDATA", &support.to_string_lossy()),
+        ]);
+        let legacy = env
+            .user_config_dir()
+            .unwrap()
+            .join("reasonix")
+            .join("config.toml");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "language = \"en\"\n").unwrap();
+        // The legacy copy exists, but a pinned home makes it invisible: the
+        // primary path is the answer even though nothing is there.
+        let got = user_config_path_in(&env);
+        assert_eq!(got, clean_path(&home.join("config.toml")));
+        assert!(!got.exists());
+    }
+
+    #[test]
+    fn with_no_home_at_all_the_path_is_empty() {
+        assert_eq!(user_config_path_in(&env_with(&[])), PathBuf::new());
     }
 
     #[test]
