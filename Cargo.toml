@@ -84,3 +84,16 @@ thiserror = "2"
 tracing = "0.1"
 unicode-general-category = "0.6"
 unicode-normalization = "0.1"
+
+# Async/HTTP stack (serve slice, M4): runtime, router, SSE framing, config
+# parse. Chosen in docs/tech-choice.md; the supply-chain policy in deny.toml
+# holds for every entry.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time", "fs"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+bytes = "1"
+futures-core = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+toml = "0.8"
+
+# Dev-only: microbenchmarks for the serve/host hot paths (docs/tech-choice.md).
+criterion = "0.5"
