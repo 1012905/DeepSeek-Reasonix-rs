@@ -14,7 +14,7 @@
     {
       "binding": "PAIRING",
       // Run `npx wrangler kv namespace create PAIRING` and paste the printed id.
-      "id": "00000000000000000000000000000000"
+      "id": "e6dea7916018417e92c71ad7b6467bd1"
     }
   ],
 
