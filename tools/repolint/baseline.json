@@ -9,8 +9,8 @@
     "css-important": 127,
     "css-size": 8848,
     "doc-language": 0,
-    "doc-owner": 45,
-    "doc-prose": 5946,
+    "doc-owner": 59,
+    "doc-prose": 6005,
     "error-text": 5,
     "essay": 2518,
     "file-size": 12720,
@@ -24,7 +24,7 @@
     "orphan": 61,
     "process-input": 96,
     "refusal-path": 0,
-    "release-note": 661,
+    "release-note": 666,
     "stray-file": 0,
     "struct-state": 30,
     "temp-dir": 0,
@@ -38,6 +38,10 @@
     "CONTRIBUTING.md": {
       "doc-owner": 1,
       "doc-prose": 1
+    },
+    "OPEN_QUESTIONS.md": {
+      "doc-owner": 1,
+      "doc-prose": 14
     },
     "REASONIX.md": {
       "doc-prose": 90
@@ -151,6 +155,9 @@
     "docs/blockers.md": {
       "doc-prose": 56
     },
+    "docs/contract.md": {
+      "doc-owner": 1
+    },
     "docs/contracts/acp.md": {
       "doc-owner": 1,
       "doc-prose": 181
@@ -206,6 +213,10 @@
     "docs/decisions.md": {
       "doc-prose": 18
     },
+    "docs/go-profile.md": {
+      "doc-owner": 1,
+      "doc-prose": 3
+    },
     "docs/kernel-rs/AGENTS.md": {
       "doc-owner": 1,
       "doc-prose": 10
@@ -219,8 +230,22 @@
     "docs/migration-plan.md": {
       "doc-prose": 4
     },
+    "docs/migration-report.md": {
+      "doc-owner": 1,
+      "doc-prose": 12
+    },
     "docs/migration-state.md": {
-      "doc-prose": 159
+      "doc-prose": 164
+    },
+    "docs/optimization-backlog.md": {
+      "doc-owner": 1
+    },
+    "docs/optimization-plan.md": {
+      "doc-owner": 1
+    },
+    "docs/optimization-review.md": {
+      "doc-owner": 1,
+      "doc-prose": 22
     },
     "docs/parity/BREAKS.md": {
       "doc-owner": 1
@@ -228,6 +253,30 @@
     "docs/parity/LEDGER.md": {
       "doc-owner": 1,
       "doc-prose": 10
+    },
+    "docs/profile-config.md": {
+      "doc-owner": 1
+    },
+    "docs/profile-host.md": {
+      "doc-owner": 1
+    },
+    "docs/profile-serve.md": {
+      "doc-owner": 1,
+      "doc-prose": 1
+    },
+    "docs/profile-session.md": {
+      "doc-owner": 1
+    },
+    "docs/tech-choice.md": {
+      "doc-owner": 1
+    },
+    "docs/wave-18-plan.md": {
+      "doc-owner": 1,
+      "doc-prose": 1
+    },
+    "docs/wave-19-plan.md": {
+      "doc-owner": 1,
+      "doc-prose": 1
     },
     "internal/assembly/boot/boot.go": {
       "essay": 15,
@@ -1562,6 +1611,9 @@
     },
     "internal/tools/jobs/jobs_security_test.go": {
       "essay": 4
+    },
+    "release-notes/studio/0.3.0.md": {
+      "release-note": 5
     },
     "release-notes/studio/2.0.0.md": {
       "release-note": 29
