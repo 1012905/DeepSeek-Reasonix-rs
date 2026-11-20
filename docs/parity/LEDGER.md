@@ -347,8 +347,8 @@ pipe-leading line must be a six-cell ledger row.
 | TOOL-024 | Tools | builtin catalog: 33 registrations (Name/Description/Schema/ReadOnly) | reasonix-tools | todo | M1: docs/contracts/tools.md §2.1 |
 | TOOL-025 | Tools | bash shell tool | reasonix-tools | todo | M1: docs/contracts/tools.md §2.2 |
 | TOOL-026 | Tools | background-job tools (bgjobs.go) | reasonix-tools | todo | M1: docs/contracts/tools.md §2.3 |
-| TOOL-027 | Tools | grep two-variant description | reasonix-tools | todo | M1: docs/contracts/tools.md §2.4 |
-| TOOL-028 | Tools | file read/search tools (read_file, glob, ls, code_index) | reasonix-tools | todo | M1: docs/contracts/tools.md §2.5 |
+| TOOL-027 | Tools | grep two-variant description | reasonix-tools | wip | schema/description contract landed verbatim (grep.rs Tool impl); the ripgrep variant awaits the subprocess engine slice (2026-11-20) |
+| TOOL-028 | Tools | file read/search tools (read_file, glob, ls, code_index) | reasonix-tools | wip | read_file/glob/ls done with Go test tables (tests/builtin_readfile.rs::test_read_file_nested_returns_the_text, tests/builtin_grep.rs::test_grep_glob_matches_file_name_at_any_depth, tests/builtin_glob_ls.rs::test_ls_recursive_skips_noise_dirs); code_index still todo (2026-11-20) |
 | TOOL-029 | Tools | file write tools | reasonix-tools | todo | M1: docs/contracts/tools.md §2.6 |
 | TOOL-030 | Tools | web tools | reasonix-tools | todo | M1: docs/contracts/tools.md §2.7 |
 | TOOL-031 | Tools | browser tools | reasonix-tools | todo | M1: docs/contracts/tools.md §2.8 |
@@ -370,13 +370,13 @@ pipe-leading line must be a six-cell ledger row.
 | TOOL-047 | Tools | jobs wait/watch/echo/peek/views/progress | reasonix-tools | todo | M1: docs/contracts/tools.md §5.2 |
 | TOOL-048 | Tools | jobs completion, finalization, exit_error | reasonix-tools | todo | M1: docs/contracts/tools.md §5.3 |
 | TOOL-049 | Tools | productdocs docs tool (search/read/list + corpus) | reasonix-tools | todo | M1: docs/contracts/tools.md §6 |
-| TOOL-050 | Tools | workspace confinement (confine.go) | reasonix-tools | todo | M1: docs/contracts/tools.md §7.1 |
+| TOOL-050 | Tools | workspace confinement (confine.go) | reasonix-tools | wip | read half + refusal texts done (tests/builtin_confine.rs::test_confine_read_blocks_read_file, test_confine_write_side_refusal_carries_workspace_code, test_confine_rejects_symlink_escape); write-side guard/managed/sessiontemp anchored for the write-tools slice (2026-11-20) |
 | TOOL-051 | Tools | session-data guard | reasonix-tools | todo | M1: docs/contracts/tools.md §7.2 |
 | TOOL-052 | Tools | admission check + network-path refusals | reasonix-tools | todo | M1: docs/contracts/tools.md §7.3 |
 | TOOL-053 | Tools | destructive-delete guard + command line ceiling | reasonix-tools | todo | M1: docs/contracts/tools.md §7.4 |
 | TOOL-054 | Tools | FileViews, receipts, setting, write-path identity, roots | reasonix-tools | todo | M1: docs/contracts/tools.md §7.5 |
 | TOOL-055 | Tools | previews + edit engine + encoding round-trip | reasonix-tools | todo | M1: docs/contracts/tools.md §7.6 |
-| TOOL-056 | Tools | Workspace binding + PathResolver + walk pruning | reasonix-tools | todo | M1: docs/contracts/tools.md §7.7 |
+| TOOL-056 | Tools | Workspace binding + PathResolver + walk pruning | reasonix-tools | wip | walk pruning done (vendorDirs/skipWalkDir/skipForbidDir/WalkConfine in walk.rs tests); PathResolver/ForkFileViews outstanding (2026-11-20) |
 | TOOL-057 | Tools | divergences (parallel_tasks guidance, preview asymmetry, V2 shadow) | reasonix-tools | todo | M1: docs/contracts/tools.md §8 |
 | HOST-001 | Host | main() argv precedence (mac handoff, tree handoff, schedule exec before flags) | apps/reasonix-studio-host | wip | schedule-exec slot + flag precedence done (cli tests); mac/tree handoff machines land with the update slice (2026-11-20) |
 | HOST-002 | Host | Host flag set (-page, -instance-id, -studio-*, -cua-driver, -computer-*-socket, -crash-dir, -strip-package-grants) + modhost embedder | apps/reasonix-studio-host | wip | full flag set parsed with Go flag semantics (args.rs tests); -instance-id answers the real hash; modhost embedder lands with the platform slice (2026-11-20) |

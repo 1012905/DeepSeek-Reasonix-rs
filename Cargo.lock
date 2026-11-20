@@ -921,6 +921,13 @@ version = "0.1.0"
 [[package]]
 name = "reasonix-safety"
 version = "0.1.0"
+dependencies = [
+ "reasonix-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "reasonix-serve"
@@ -1001,6 +1008,16 @@ version = "0.1.0"
 [[package]]
 name = "reasonix-tools"
 version = "0.1.0"
+dependencies = [
+ "reasonix-contract",
+ "reasonix-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "reasonix-tui"

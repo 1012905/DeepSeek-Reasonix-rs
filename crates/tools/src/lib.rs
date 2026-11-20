@@ -17,6 +17,7 @@
 
 pub mod abi;
 pub mod arguments;
+pub mod builtin;
 pub mod invoke;
 pub mod provenance;
 pub mod refusal;
