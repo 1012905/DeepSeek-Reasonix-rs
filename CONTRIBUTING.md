@@ -231,5 +231,6 @@ Open an issue on GitHub with:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the
-same license as the project.
+This project is licensed under GPL-3.0-only; see `LICENSE` and `NOTICE`. By
+contributing, you agree that your contributions are licensed under the same
+terms.

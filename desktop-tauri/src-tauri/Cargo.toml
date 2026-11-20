@@ -3,7 +3,7 @@ name = "reasonix-studio"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
-license = "MIT"
+license = "GPL-3.0-only"
 repository = "https://github.com/esengine/DeepSeek-Reasonix"
 
 [build-dependencies]

@@ -54,7 +54,7 @@ The gallery has four groups:
 | Kind | Source | Editable | Deletable | Exportable |
 | --- | --- | --- | --- | --- |
 | **Base styles** | Six visual directions (Graphite, Aurora, Slate, Carbon, Nocturne, Amber), token-less | no (duplicate first) | no | no |
-| **Official themes** | Eight read-only packs embedded in the installer (manifest + original background + thumbnail, MIT) | no (duplicate first) | no | no |
+| **Official themes** | Eight read-only packs embedded in the installer (manifest + original background + thumbnail, GPL-3.0-only) | no (duplicate first) | no | no |
 | **User themes** | Created in the editor, duplicated, or imported as `.reasonix-theme` | yes | yes | yes |
 | **Plugin themes** | `.reasonix-theme` packs contributed by enabled plugins (Manifest v2 `contributes.themes`), read straight from the plugin root — never copied into the user library | no | no (disable/uninstall the plugin) | no |
 

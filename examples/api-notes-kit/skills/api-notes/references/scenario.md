@@ -8,7 +8,7 @@ reviewed: 2026-10-01
 # Local scenario
 
 The fixture is original sample content distributed under the repository's
-MIT license. It represents a fictional Notes API, not a running service.
+GPL-3.0-only license. It represents a fictional Notes API, not a running service.
 
 ## Input
 
