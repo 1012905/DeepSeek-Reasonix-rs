@@ -839,22 +839,22 @@ dependencies = [
 
 [[package]]
 name = "reasonix"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "reasonix-assembly",
 ]
 
 [[package]]
 name = "reasonix-acp"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-agent"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-assembly"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "reasonix-cli",
@@ -867,11 +867,11 @@ dependencies = [
 
 [[package]]
 name = "reasonix-cli"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-config"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "reasonix-core",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-contract"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "reasonix-core",
  "serde",
@@ -894,7 +894,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "caseless",
  "encoding_rs",
@@ -908,19 +908,19 @@ dependencies = [
 
 [[package]]
 name = "reasonix-ext"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-platform"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-provider"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-safety"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "reasonix-core",
  "serde",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-serve"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "bytes",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-session"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-state"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "fs4",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-studio-host"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "getrandom 0.3.4",
  "reasonix-assembly",
@@ -1003,11 +1003,11 @@ dependencies = [
 
 [[package]]
 name = "reasonix-testkit"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "reasonix-tools"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "reasonix-contract",
  "reasonix-core",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "reasonix-tui"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "regex"
@@ -1740,7 +1740,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "zerocopy"

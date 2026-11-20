@@ -34,7 +34,7 @@ members = [
 exclude = ["desktop-tauri/src-tauri"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"
@@ -45,23 +45,23 @@ publish = false
 # `name.workspace = true` so every edge is declared in exactly one place.
 # Versions must track workspace.package.version: path-only entries read as
 # wildcard versions and fail the cargo-deny wildcard ban.
-reasonix-acp = { path = "crates/acp", version = "0.1.0" }
-reasonix-agent = { path = "crates/agent", version = "0.1.0" }
-reasonix-assembly = { path = "crates/assembly", version = "0.1.0" }
-reasonix-cli = { path = "crates/cli", version = "0.1.0" }
-reasonix-config = { path = "crates/config", version = "0.1.0" }
-reasonix-contract = { path = "crates/contract", version = "0.1.0" }
-reasonix-core = { path = "crates/core", version = "0.1.0" }
-reasonix-ext = { path = "crates/ext", version = "0.1.0" }
-reasonix-platform = { path = "crates/platform", version = "0.1.0" }
-reasonix-provider = { path = "crates/provider", version = "0.1.0" }
-reasonix-safety = { path = "crates/safety", version = "0.1.0" }
-reasonix-serve = { path = "crates/serve", version = "0.1.0" }
-reasonix-session = { path = "crates/session", version = "0.1.0" }
-reasonix-state = { path = "crates/state", version = "0.1.0" }
-reasonix-testkit = { path = "crates/testkit", version = "0.1.0" }
-reasonix-tools = { path = "crates/tools", version = "0.1.0" }
-reasonix-tui = { path = "crates/tui", version = "0.1.0" }
+reasonix-acp = { path = "crates/acp", version = "0.3.0" }
+reasonix-agent = { path = "crates/agent", version = "0.3.0" }
+reasonix-assembly = { path = "crates/assembly", version = "0.3.0" }
+reasonix-cli = { path = "crates/cli", version = "0.3.0" }
+reasonix-config = { path = "crates/config", version = "0.3.0" }
+reasonix-contract = { path = "crates/contract", version = "0.3.0" }
+reasonix-core = { path = "crates/core", version = "0.3.0" }
+reasonix-ext = { path = "crates/ext", version = "0.3.0" }
+reasonix-platform = { path = "crates/platform", version = "0.3.0" }
+reasonix-provider = { path = "crates/provider", version = "0.3.0" }
+reasonix-safety = { path = "crates/safety", version = "0.3.0" }
+reasonix-serve = { path = "crates/serve", version = "0.3.0" }
+reasonix-session = { path = "crates/session", version = "0.3.0" }
+reasonix-state = { path = "crates/state", version = "0.3.0" }
+reasonix-testkit = { path = "crates/testkit", version = "0.3.0" }
+reasonix-tools = { path = "crates/tools", version = "0.3.0" }
+reasonix-tui = { path = "crates/tui", version = "0.3.0" }
 
 # External dependencies (AGENTS.md 10.6). The contract inventory is frozen
 # (docs/contracts/*.md), so product dependencies now enter the workspace.
