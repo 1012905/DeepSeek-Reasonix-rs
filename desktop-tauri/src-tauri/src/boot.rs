@@ -24,6 +24,9 @@ const MIN_SIZE: LogicalSize<f64> = LogicalSize {
     height: 480.0,
 };
 const DRAIN: Duration = Duration::from_secs(3);
+/// How long the exit watcher waits for the quit act to land before reading
+/// the host's death as an early one.
+const QUIT_BEAT: Duration = Duration::from_secs(1);
 const DETAIL_LIMIT: usize = 1800;
 
 /// The lease on the kernel: its stdin, held open for as long as the shell runs.
@@ -151,7 +154,7 @@ fn launch(
         binary: &layout.host,
         args,
         system_language: sys_locale::get_locale(),
-        timeout: host::HANDSHAKE_TIMEOUT,
+        timeout: handshake_timeout(),
         stderr: Arc::new(move |bytes| sink.host(bytes)),
     };
     logs.line(&format!("host: starting {}", layout.host.display()));
@@ -172,9 +175,14 @@ fn watch(app: AppHandle, mut child: Child, ended: Arc<(Mutex<bool>, Condvar)>, l
             return;
         }
         logs.line(&format!("host: exited code={code:?}"));
-        if code != Some(0) {
-            app.exit(1);
+        // The quit act races this thread, landing a beat after the child
+        // dies. Past the beat, any host exit without an orderly quit closes
+        // the shell instead of stranding the window on a dead origin.
+        std::thread::sleep(QUIT_BEAT);
+        if app.state::<Lease>().quitting.load(Ordering::SeqCst) {
+            return;
         }
+        app.exit(1);
     });
 }
 
@@ -189,8 +197,14 @@ fn perform(app: &AppHandle, act: &str) {
     match act {
         "show" => show_main(app),
         "relaunch" => lease.relaunch.store(true, Ordering::SeqCst),
-        "quit" if lease.relaunch.load(Ordering::SeqCst) => app.request_restart(),
-        "quit" => app.exit(0),
+        "quit" if lease.relaunch.load(Ordering::SeqCst) => {
+            lease.quitting.store(true, Ordering::SeqCst);
+            app.request_restart();
+        }
+        "quit" => {
+            lease.quitting.store(true, Ordering::SeqCst);
+            app.exit(0);
+        }
         _ => {}
     }
 }
@@ -208,18 +222,43 @@ fn credential(token: &str) -> cookie::Cookie<'static> {
 }
 
 fn grant(app: &AppHandle, origin: &str) -> tauri::Result<()> {
-    // Bound to the main webview alone: the agent's child webviews share this
-    // window's label but must never reach the shell's verbs or its events.
+    app.add_capability(kernel_page_capability(origin))
+}
+
+// The kernel-page capability. Bound to the main webview alone: tauri
+// OR-matches a capability's window labels against webview labels, so a
+// window arm would carry every guest view added to this window, and a
+// frame inside one that lands on the kernel origin would reach the shell's
+// verbs and its events.
+fn kernel_page_capability(origin: &str) -> CapabilityBuilder {
     let mut capability = CapabilityBuilder::new("kernel-page")
         .remote(format!("{origin}/*"))
         .local(false)
-        .window(MAIN)
         .webview(MAIN)
         .permission("core:event:default");
     for name in commands::NAMES {
         capability = capability.permission(format!("allow-{}", name.replace('_', "-")));
     }
-    app.add_capability(capability)
+    capability
+}
+
+// host.md freezes REASONIX_STUDIO_HANDSHAKE_TIMEOUT_MS as the desktop
+// override; a mangled value keeps the default instead of guessing, and the
+// range stays inside what a scanner-held binary needs versus an abandoned
+// launch.
+fn handshake_timeout_from(raw: Option<&str>) -> Duration {
+    let ms = raw
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(host::HANDSHAKE_TIMEOUT.as_millis() as u64);
+    Duration::from_millis(ms.clamp(1_000, 600_000))
+}
+
+fn handshake_timeout() -> Duration {
+    handshake_timeout_from(
+        std::env::var("REASONIX_STUDIO_HANDSHAKE_TIMEOUT_MS")
+            .ok()
+            .as_deref(),
+    )
 }
 
 // A window larger than the display it opens on puts its own title bar off
@@ -367,6 +406,45 @@ mod tests {
         assert_eq!(cookie.http_only(), Some(true));
         assert_eq!(cookie.same_site(), Some(cookie::SameSite::Strict));
         assert!(cookie.expires().is_none() && cookie.max_age().is_none());
+    }
+
+    #[test]
+    fn the_capability_names_only_the_main_webview() {
+        use tauri::ipc::RuntimeCapability;
+        let tauri::utils::acl::capability::CapabilityFile::Capability(cap) =
+            kernel_page_capability("http://127.0.0.1:9/").build()
+        else {
+            panic!("the kernel page grants through a single capability");
+        };
+        assert!(
+            cap.windows.is_empty(),
+            "a window match carries every guest webview on the main window: tauri OR-matches the webview label against the window label"
+        );
+        assert_eq!(cap.webviews, vec![MAIN.to_string()]);
+        assert!(!cap.local);
+    }
+
+    #[test]
+    fn the_handshake_timeout_override_is_bounded() {
+        assert_eq!(
+            handshake_timeout_from(None),
+            host::HANDSHAKE_TIMEOUT,
+            "no override keeps the frozen default"
+        );
+        assert_eq!(
+            handshake_timeout_from(Some("  junk  ")),
+            host::HANDSHAKE_TIMEOUT,
+            "a mangled override keeps the default"
+        );
+        assert_eq!(handshake_timeout_from(Some("250")), Duration::from_secs(1));
+        assert_eq!(
+            handshake_timeout_from(Some("999999999999")),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            handshake_timeout_from(Some("120000")),
+            Duration::from_secs(120)
+        );
     }
 
     #[test]

@@ -203,11 +203,15 @@ fn attempt(launch: &Launch<'_>) -> Result<Running, StartError> {
         }
         Err(err) => {
             let _ = child.kill();
+            // A killed child is reaped here, not left for the app's
+            // lifetime while a retry spawns a replacement.
+            let _ = child.wait();
             return Err(err);
         }
     };
     let handshake = parse(&line).map_err(|why| {
         let _ = child.kill();
+        let _ = child.wait();
         StartError::Malformed(why)
     })?;
     Ok(Running {
@@ -255,6 +259,13 @@ pub fn read_acts(stdout: BufReader<ChildStdout>, on_act: impl Fn(String) + Send 
             {
                 Ok(0) | Err(_) => return,
                 Ok(_) => {
+                    // host.md: a buffer over the limit without a newline is
+                    // dropped whole — drain the tail so it cannot come back
+                    // around as an act of its own.
+                    if line.last() != Some(&b'\n') {
+                        discard_to_newline(&mut reader);
+                        continue;
+                    }
                     if let Some(act) = parse_act(&String::from_utf8_lossy(&line)) {
                         on_act(act);
                     }
@@ -262,6 +273,25 @@ pub fn read_acts(stdout: BufReader<ChildStdout>, on_act: impl Fn(String) + Send 
             }
         }
     });
+}
+
+/// Consumes the tail of an over-limit line, in bounded steps, to its
+/// newline or the end of the stream.
+fn discard_to_newline(mut reader: &mut BufReader<ChildStdout>) {
+    loop {
+        let mut discard = Vec::new();
+        match (&mut reader)
+            .take(HANDSHAKE_LIMIT)
+            .read_until(b'\n', &mut discard)
+        {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                if discard.last() == Some(&b'\n') {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
