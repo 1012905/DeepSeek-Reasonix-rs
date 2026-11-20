@@ -11,7 +11,7 @@ import (
 )
 
 func TestServeOccupancyFailuresCarryTheirOwnCode(t *testing.T) {
-	kernel, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "i18n", "kernel.ts"))
+	kernel, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop-tauri", "src", "i18n", "kernel.ts"))
 	if err != nil {
 		t.Skipf("no frontend catalogue: %v", err)
 	}

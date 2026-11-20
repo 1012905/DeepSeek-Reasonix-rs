@@ -1,0 +1,168 @@
+import { computed, onWatcherCleanup, toValue, watchEffect, type MaybeRefOrGetter, type Ref } from "vue";
+import { finderFor, type Finder, type FindMode } from "../state/find";
+import type { Item } from "../state/session";
+import { clearFind, currentRange, paintFind } from "./findpaint";
+
+type Land = (
+  block: number,
+  into: number,
+  selector: string,
+  clear?: number,
+  then?: (found: HTMLElement, root: HTMLElement) => boolean,
+) => void;
+
+// The find bar floats over the transcript's top edge, so a found row is landed
+// this far down instead of the usual clearance, or it arrives under the bar.
+const FIND_BAR = 56;
+
+/** Scrolls to the row the find bar is on, each time it moves. The row may sit
+ *  in a block that is not mounted, so it is found by block first, the same way
+ *  the rail lands on a message. */
+export function useFindLanding(
+  find: MaybeRefOrGetter<{ id: string; nth: number; n: number; mode?: FindMode } | null | undefined>,
+  query: MaybeRefOrGetter<string>,
+  hidden: MaybeRefOrGetter<boolean>,
+  blocks: MaybeRefOrGetter<Item[][]>,
+  live: MaybeRefOrGetter<Item | undefined>,
+  land: Land,
+) {
+  const rowBlock = computed(() => {
+    const bs = toValue(blocks);
+    const at = new Map<string, { block: number; into: number }>();
+    bs.forEach((block, b) =>
+      block.forEach((it, i) => at.set(it.id, { block: b, into: block.length > 1 ? i / block.length : 0 })),
+    );
+    const lv = toValue(live);
+    if (lv) at.set(lv.id, { block: bs.length - 1, into: 1 });
+    return at;
+  });
+
+  let found = 0;
+  watchEffect(() => {
+    const hid = toValue(hidden);
+    const f = toValue(find);
+    const q = toValue(query);
+    if (hid || !f || found === f.n) return;
+    found = f.n;
+    const where = rowBlock.value.get(f.id);
+    const finder = finderFor(q, f.mode);
+    const nth = f.nth;
+    const n = f.n;
+    const mine = () => found === n;
+    if (where && finder) land(where.block, where.into, `[data-item="${CSS.escape(f.id)}"]`, FIND_BAR, (row, root) => reveal(row, root, finder, nth, mine));
+  }, { flush: "post" });
+}
+
+/** Puts the occurrence being looked at where it is read, and says whether it
+ *  could: a row can be taller than the view, so its top is not enough. Rows
+ *  above it may still mount and move it, so it holds for a few frames. */
+function reveal(row: HTMLElement, root: HTMLElement, finder: Finder, nth: number, mine: () => boolean, tries = 8): boolean {
+  if (!mine() || !row.isConnected) return false;
+  landingBox(row);
+  const range = currentRange(row, finder, nth);
+  if (!range) {
+    const lazy = [...row.querySelectorAll<HTMLDetailsElement>("details[data-lazy]:not([open])")];
+    for (const fold of lazy) fold.open = true;
+    if (lazy.length > 0 && tries > 0) requestAnimationFrame(() => reveal(row, root, finder, nth, mine, tries - 1));
+    return false;
+  }
+  for (let fold = range.startContainer.parentElement?.closest("details:not([open])"); fold && row.contains(fold);
+    fold = fold.parentElement?.closest("details:not([open])")) {
+    (fold as HTMLDetailsElement).open = true;
+  }
+  if (range.getBoundingClientRect().height === 0) return false;
+  // A long output scrolls inside its own clip, and the view scrolling does not
+  // reach an occurrence that clip holds below its fold.
+  for (let el = range.startContainer.parentElement; el && el !== root; el = el.parentElement) {
+    if (el.scrollHeight <= el.clientHeight + 1 || !/auto|scroll/.test(getComputedStyle(el).overflowY)) continue;
+    const at = range.getBoundingClientRect();
+    const clip = el.getBoundingClientRect();
+    if (at.top < clip.top || at.bottom > clip.bottom) el.scrollTop += at.top - (clip.top + clip.height / 3);
+  }
+  const box = range.getBoundingClientRect();
+  const view = root.getBoundingClientRect();
+  const top = view.top + FIND_BAR;
+  const bottom = view.bottom - view.height / 4;
+  if (box.top < top || box.bottom > bottom) root.scrollTop += box.top - (top + (bottom - top) / 3);
+  if (tries > 0) requestAnimationFrame(() => reveal(row, root, finder, nth, mine, tries - 1));
+  return true;
+}
+
+const GLIDE_MS = 300;
+
+/** Scrolls to `to` over GLIDE_MS, or at once when motion is reduced or there is
+ *  nothing to cover. It stops when `live` turns false: a newer landing owns the scroll. */
+export function glide(root: HTMLElement, to: number, live: () => boolean, done: () => void) {
+  const from = root.scrollTop;
+  if (Math.abs(to - from) < 1 || typeof matchMedia !== "function" || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    root.scrollTop = to;
+    done();
+    return;
+  }
+  const start = performance.now();
+  const step = (now: number) => {
+    if (!live()) return;
+    const k = Math.min(1, Math.max(0, now - start) / GLIDE_MS);
+    root.scrollTop = from + (to - from) * (1 - (1 - k) ** 3);
+    if (k < 1) requestAnimationFrame(step);
+    else done();
+  };
+  requestAnimationFrame(step);
+}
+
+/** What a landing scrolls to: the element with a box, and every fold around it
+ *  opened, since a hit inside a folded group is one nobody can see. */
+export function landingBox(el: HTMLElement): HTMLElement {
+  for (let fold = el.closest("details:not([open])"); fold; fold = fold.parentElement?.closest("details:not([open])") ?? null) {
+    (fold as HTMLDetailsElement).open = true;
+  }
+  return renderedBox(el);
+}
+
+export function renderedBox(el: HTMLElement): HTMLElement {
+  if (el.getClientRects().length > 0) return el;
+  return (el.firstElementChild as HTMLElement | null) ?? el;
+}
+
+/** Keeps the find paint on what is mounted. Rows mount as the reader scrolls and
+ *  as answers stream in, and a paint taken before that misses them, so while a
+ *  query stands it is taken again on either, at most once a frame. */
+export function useFindPaint(
+  flow: Ref<HTMLElement | null>,
+  hidden: MaybeRefOrGetter<boolean>,
+  query: MaybeRefOrGetter<string>,
+  current: MaybeRefOrGetter<string | null>,
+  nth: MaybeRefOrGetter<number>,
+  mode?: MaybeRefOrGetter<FindMode | undefined>,
+) {
+  watchEffect(() => {
+    const hid = toValue(hidden);
+    const q = toValue(query);
+    const cur = toValue(current);
+    const n = toValue(nth);
+    const m = toValue(mode);
+    if (hid || !q.trim()) {
+      clearFind();
+      return;
+    }
+    let frame = 0;
+    const paint = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!flow.value?.isConnected) return;
+        paintFind(flow.value, q, cur === null ? null : { id: cur, nth: n }, m);
+      });
+    };
+    paint();
+    addEventListener("scroll", paint, true);
+    const watch = new MutationObserver(paint);
+    if (flow.value) watch.observe(flow.value, { childList: true, subtree: true, characterData: true });
+    onWatcherCleanup(() => {
+      cancelAnimationFrame(frame);
+      removeEventListener("scroll", paint, true);
+      watch.disconnect();
+      clearFind();
+    });
+  }, { flush: "post" });
+}

@@ -13,7 +13,7 @@ import (
 type wireConstantMirror struct{ goFile, goName, tsFile, tsName string }
 
 var mirroredWireConstants = []wireConstantMirror{
-	{"internal/contract/event/notice_codes.go", "NoticeCodeSessionTreeChanged", "desktop/frontend-next/src/port/tree_events.ts", "NoticeCodeSessionTreeChanged"},
+	{"internal/contract/event/notice_codes.go", "NoticeCodeSessionTreeChanged", "desktop-tauri/src/port/tree_events.ts", "NoticeCodeSessionTreeChanged"},
 }
 
 func wireConstantFindings(root string, mirrors []wireConstantMirror) []Finding {

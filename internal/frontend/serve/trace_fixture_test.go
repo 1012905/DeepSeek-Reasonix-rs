@@ -13,10 +13,10 @@ import (
 	"reasonix/internal/session/control"
 )
 
-// traceFixturePath is where the desktop's reducer parity test reads these from.
-// The frames have to come from the production assembly or that test proves only
-// that a hand-written array round-trips through a reducer.
-const traceFixturePath = "../../../desktop/frontend-next/src/e2e/fixtures/trace_readings.json"
+// traceFixturePath is the committed turn both of the session's readings share;
+// it was captured from the production assembly, so the round trip proves the
+// reducer rather than a hand-written array.
+const traceFixturePath = "testdata/trace_readings.json"
 
 // traceFixture is one turn as both readings, with the run-to-run noise removed
 // so the file is stable enough to commit and diff.

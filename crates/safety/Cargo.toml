@@ -1,7 +1,10 @@
 [package]
 name = "reasonix-safety"
+description = "Security invariants: path rules, shell AST safety, redaction, SSRF guards"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-repository.workspace = true
+publish.workspace = true
+
+[dependencies]

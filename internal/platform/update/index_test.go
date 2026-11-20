@@ -27,9 +27,9 @@ const sampleIndex = `{
   "updatedAt": "2026-09-01T00:00:00Z",
   "versions": [
     {"version":"2.0.0","tag":"studio-v2.0.0","channel":"stable","publishedAt":"2026-09-01T00:00:00Z",
-     "manifest":"https://dl.reasonix.io/studio-v2.0.0/latest.json"},
+     "manifest":"https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v2.0.0/latest.json"},
     {"version":"1.25.1","tag":"desktop-v1.25.1","channel":"stable","publishedAt":"2026-08-12T10:00:00Z",
-     "manifest":"https://dl.reasonix.io/desktop-v1.25.1/latest.json"}
+     "manifest":"https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/desktop-v1.25.1/latest.json"}
   ]
 }`
 
@@ -166,7 +166,7 @@ func TestCatalogReadsCarryTheClientIdentity(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agents = append(agents, r.Header.Get("User-Agent"))
-		_, _ = w.Write([]byte(strings.ReplaceAll(sampleIndex, "https://dl.reasonix.io", srv.URL)))
+		_, _ = w.Write([]byte(strings.ReplaceAll(sampleIndex, "https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download", srv.URL)))
 	}))
 	defer srv.Close()
 	ctx := context.Background()

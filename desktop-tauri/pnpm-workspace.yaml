@@ -5,3 +5,6 @@ allowBuilds:
   esbuild: true
 onlyBuiltDependencies:
   - esbuild
+
+overrides:
+  redos-detector: file:./vendor/redos-detector-6.1.4.tgz

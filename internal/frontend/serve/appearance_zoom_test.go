@@ -111,7 +111,7 @@ func TestOutOfRangeStoredZoomReadsClampedAndSurvivesUnrelatedSaves(t *testing.T)
 // named presets have to sit inside it.
 func TestFrontendFixtureAndPresetsFollowTheDeclaredRange(t *testing.T) {
 	read := func(rel string) string {
-		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", rel))
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop-tauri", "src", rel))
 		if err != nil {
 			t.Fatal(err)
 		}

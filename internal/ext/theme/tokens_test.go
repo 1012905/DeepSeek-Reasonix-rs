@@ -237,7 +237,7 @@ func TestShippedPacksMeetSyntaxContrast(t *testing.T) {
 // frontend's; a token one side knows and the other does not is either accepted
 // and never painted, or painted and never accepted.
 func TestThemeTokenVocabularyMatchesTheFrontend(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "ui", "theme.ts"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop-tauri", "src", "ui", "theme.ts"))
 	if err != nil {
 		t.Skipf("frontend source not present: %v", err)
 	}

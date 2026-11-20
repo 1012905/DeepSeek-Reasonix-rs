@@ -1,0 +1,11 @@
+[package]
+name = "reasonix"
+description = "Config- and plugin-driven coding agent CLI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+reasonix-assembly.workspace = true

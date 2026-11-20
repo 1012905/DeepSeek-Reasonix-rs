@@ -35,4 +35,4 @@ done
 sudo apt-get purge -y reasonix-studio
 test ! -e "$shell"
 test ! -e /usr/lib/reasonix-studio/reasonix-studio-update-helper
-test ! -e /usr/share/polkit-1/actions/io.reasonix.studio.update.policy
+test ! -e /usr/share/polkit-1/actions/com.esengine.reasonix-studio.update.policy

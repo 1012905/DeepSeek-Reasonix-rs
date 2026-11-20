@@ -194,28 +194,19 @@ make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
 
 #### Studio
 
-Studio additionally requires **Node 24+ and pnpm 10**
-(`npm install -g pnpm@10`) for the frontend.
-
-```sh
-make studio
-```
-
-See the [Studio build guide](desktop/README.md#prerequisites) for platform
-webview dependencies and Linux build tags.
-
-#### Studio Tauri shell (desktop-tauri)
-
-The Tauri shell is the target desktop stack (Rust + Vue) and runs beside the
-Electron shell during the transition. It needs Node 24+, pnpm 10 and a stable
-Rust toolchain; on Linux, cargo also needs the Tauri system libraries
+Studio is the Tauri + Vue desktop app. It requires **Node 24+, pnpm 10 and a
+stable Rust toolchain**; on Linux, cargo also needs the Tauri system libraries
 (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`,
 `librsvg2-dev`).
 
 ```sh
-make studio-tauri-test            # frontend build + vitest wire-parity witness
-make studio-tauri-check           # cargo check of the Rust shell
+make studio                        # build and launch the app
+make studio-tauri-test             # frontend build + vitest wire-parity witness
+make studio-tauri-check            # cargo check of the Rust shell
 ```
+
+Packaging is unsigned locally: `pnpm -C desktop-tauri tauri build` writes the
+platform installers under `desktop-tauri/src-tauri/target/release/bundle/`.
 
 ## Quick start
 

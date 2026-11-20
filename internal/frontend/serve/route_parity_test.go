@@ -17,7 +17,7 @@ import (
 // therefore answers with HTML where JSON belongs, which is indistinguishable
 // from a broken endpoint — and only in `vite dev`, so tests and production
 // stay green while the thing a developer is looking at does not work.
-const viteConfig = "../../../desktop/frontend-next/vite.config.ts"
+const viteConfig = "../../../desktop-tauri/vite.config.ts"
 
 var routesArray = regexp.MustCompile(`(?s)const ROUTES = \[(.*?)\]`)
 

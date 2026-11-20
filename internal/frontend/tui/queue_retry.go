@@ -8,7 +8,7 @@ import (
 	"reasonix/internal/base/i18n"
 )
 
-// retrySafeCode mirrors RETRY_SAFE in desktop/frontend-next/src/ui/Queue.tsx:
+// retrySafeCode mirrors RETRY_SAFE in desktop-tauri/src/ui/Queue.vue:
 // the one held code the kernel knows never reached the model. Every other code
 // on an uncertain entry may have run, so sending it again could repeat a turn.
 const retrySafeCode = "steer_unapplied"
@@ -20,7 +20,7 @@ func mayHaveRun(it InboxItem) bool {
 }
 
 // retryHeldText words why the queue was left alone, keyed by the code the way
-// desktop/frontend-next/src/i18n/queue_why.ts does. A code this build has no
+// desktop-tauri/src/i18n/queue_why.ts does. A code this build has no
 // sentence for keeps the kernel's own reason, as the desktop does.
 func retryHeldText(it InboxItem) string {
 	why := i18n.M.QueueBlockWhy[it.BlockCode]

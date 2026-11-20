@@ -5,13 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,16 +51,13 @@ var cacheFile = regexp.MustCompile(`^[0-9a-f]{64}\.json$`)
 var pruneMu sync.Mutex
 
 type cacheEntry struct {
-	Version      int             `json:"v"`
-	Key          string          `json:"key"`
-	ETag         string          `json:"etag,omitempty"`
-	LastModified string          `json:"lastModified,omitempty"`
-	FetchedAt    time.Time       `json:"fetchedAt"`
-	Body         json.RawMessage `json:"body"`
+	Version   int             `json:"v"`
+	Key       string          `json:"key"`
+	FetchedAt time.Time       `json:"fetchedAt"`
+	Body      json.RawMessage `json:"body"`
 }
 
-// diskCache keeps the last good answer per anonymous browse request. Only
-// requests that carry no credential reach it, so nothing here is per-account.
+// diskCache keeps the last good answer per anonymous browse request.
 type diskCache struct {
 	dir        string
 	maxEntries int
@@ -86,20 +84,6 @@ func WithRefresh(ctx context.Context) context.Context {
 }
 
 func refreshAsked(ctx context.Context) bool { return ctx.Value(refreshKey{}) == true }
-
-// noStore reports an answer the registry marked private or not to be kept,
-// which is how it labels anything tied to an identity or not a plain success.
-func noStore(h http.Header) bool {
-	for _, line := range h.Values("Cache-Control") {
-		for part := range strings.SplitSeq(line, ",") {
-			name, _, _ := strings.Cut(strings.TrimSpace(part), "=")
-			if n := strings.ToLower(name); n == "no-store" || n == "private" {
-				return true
-			}
-		}
-	}
-	return false
-}
 
 func (d *diskCache) key(host, path string, query url.Values) string {
 	sum := sha256.Sum256([]byte("market-cache/v1\n" + host + "\n" + path + "\n" + query.Encode()))
@@ -128,8 +112,8 @@ func (d *diskCache) load(key string) (cacheEntry, bool) {
 	return e, true
 }
 
-func (d *diskCache) store(key string, h http.Header, body []byte) {
-	e := cacheEntry{Version: cacheEntryVersion, Key: key, ETag: h.Get("ETag"), LastModified: h.Get("Last-Modified"), FetchedAt: cacheNow().UTC(), Body: body}
+func (d *diskCache) store(key string, body []byte) {
+	e := cacheEntry{Version: cacheEntryVersion, Key: key, FetchedAt: cacheNow().UTC(), Body: body}
 	d.write(e)
 }
 
@@ -146,8 +130,6 @@ func (d *diskCache) write(e cacheEntry) {
 	}
 	d.prune()
 }
-
-func (d *diskCache) remove(key string) { _ = os.Remove(d.path(key)) }
 
 func (d *diskCache) prune() {
 	pruneMu.Lock()
@@ -184,4 +166,95 @@ func (d *diskCache) prune() {
 		total -= kept[0].size
 		kept = kept[1:]
 	}
+}
+
+// cachedRegistry answers browse reads from disk only when the registry cannot.
+type cachedRegistry struct {
+	Registry
+	cache *diskCache
+}
+
+// WithCacheRegistry wraps a registry so browse reads can fall back to a
+// previously verified answer. Installs use the unwrapped source.
+func WithCacheRegistry(reg Registry, root string) Registry {
+	if strings.TrimSpace(root) == "" {
+		return reg
+	}
+	return &cachedRegistry{Registry: reg, cache: newDiskCache(filepath.Join(root, "market"))}
+}
+
+func (c *cachedRegistry) List(ctx context.Context, q Query) (Page, error) {
+	v := url.Values{}
+	v.Set("kind", q.Kind)
+	v.Set("q", q.Q)
+	v.Set("sort", q.Sort)
+	v.Set("offset", strconv.Itoa(q.Offset))
+	if q.Pinned {
+		v.Set("pinned", "1")
+	}
+	key := c.cache.key("registry", "/packages", v)
+	held, have := c.cache.load(key)
+	if have && !refreshAsked(ctx) && c.cache.fresh(held) {
+		var page Page
+		if json.Unmarshal(held.Body, &page) == nil {
+			return page, nil
+		}
+	}
+	page, err := c.Registry.List(ctx, q)
+	if err == nil {
+		page.Cache = nil
+		if raw, marshalErr := json.Marshal(page); marshalErr == nil {
+			c.cache.store(key, raw)
+		}
+		return page, nil
+	}
+	if !have || ctx.Err() != nil || !isBrowseFailure(err) {
+		return Page{}, err
+	}
+	var stale Page
+	if json.Unmarshal(held.Body, &stale) != nil {
+		return Page{}, err
+	}
+	stale.Cache = noteFor(held, err)
+	return stale, nil
+}
+
+func (c *cachedRegistry) Detail(ctx context.Context, slug string) (Detail, error) {
+	key := c.cache.key("registry", "/packages/"+slug, nil)
+	held, have := c.cache.load(key)
+	if have && !refreshAsked(ctx) && c.cache.fresh(held) {
+		var detail Detail
+		if json.Unmarshal(held.Body, &detail) == nil {
+			return detail, nil
+		}
+	}
+	detail, err := c.Registry.Detail(ctx, slug)
+	if err == nil {
+		detail.Cache = nil
+		if raw, marshalErr := json.Marshal(detail); marshalErr == nil {
+			c.cache.store(key, raw)
+		}
+		return detail, nil
+	}
+	if !have || ctx.Err() != nil || !isBrowseFailure(err) {
+		return Detail{}, err
+	}
+	var stale Detail
+	if json.Unmarshal(held.Body, &stale) != nil {
+		return Detail{}, err
+	}
+	stale.Cache = noteFor(held, err)
+	return stale, nil
+}
+
+func isBrowseFailure(err error) bool {
+	return errors.Is(err, ErrUnreachable) || errors.Is(err, ErrBadResponse)
+}
+
+func noteFor(held cacheEntry, err error) *CacheNote {
+	cause := CacheCauseBadResponse
+	if errors.Is(err, ErrUnreachable) {
+		cause = CacheCauseUnreachable
+	}
+	return &CacheNote{CachedAt: held.FetchedAt.UTC().Format(time.RFC3339), Cause: cause}
 }

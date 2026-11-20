@@ -36,7 +36,7 @@ func TestUnknownPathIsProduction(t *testing.T) {
 }
 
 // A directory name is not a toolchain contract. This test asserted the
-// opposite until `desktop/frontend-next/src/i18n/format.ts` turned up under
+// opposite until `desktop-tauri/src/i18n/format.ts` turned up under
 // the rule: a number-formatting module, waived out of review for sitting in a
 // directory named i18n. Stylesheets and fixtures were waived the same way, and
 // this repo has shipped a swallowed CSS brace and a duplicated locale key.

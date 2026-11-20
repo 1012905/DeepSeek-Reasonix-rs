@@ -12,8 +12,8 @@ const scope = (...files) =>
 
 test("neutral paths do not need the macOS and Windows legs", () => {
   assert.equal(scope("docs/a.md", "README.md", "release-notes/studio/1.md"), "false");
-  assert.equal(scope("desktop/frontend-next/src/a.tsx", "workers/crash-report/src/a.ts"), "false");
-  assert.equal(scope("desktop-tauri/src/App.vue", "desktop/frontend-next/src/a.tsx"), "false");
+  assert.equal(scope("workers/crash-report/src/a.ts"), "false");
+  assert.equal(scope("desktop-tauri/src/App.vue"), "false");
   assert.equal(scope("internal/model/openai/client.go", "internal/contract/tool/tool.go"), "false");
 });
 
@@ -29,7 +29,6 @@ test("platform paths and unknown paths need them", () => {
     "internal/state/mutation/capacity_test.go",
     "internal/platform/update/a.go",
     "cmd/reasonix/main.go",
-    "desktop/electron/main.ts",
     "go.mod",
     ".github/workflows/ci.yml",
     "scripts/install-smoke.ps1",

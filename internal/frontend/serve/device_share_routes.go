@@ -32,21 +32,9 @@ func (h *Hub) registerShareRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /share/port", h.shareSetPort)
 	mux.HandleFunc("POST /share/close", h.shareClose)
 	mux.HandleFunc("POST /share/offer", h.shareOffer)
-	mux.HandleFunc("POST /share/cloud-offer", h.shareCloudOffer)
 	mux.HandleFunc("POST /share/revoke", h.shareRevoke)
 	mux.HandleFunc("GET /share/remember", h.shareRememberGet)
 	mux.HandleFunc("POST /share/remember", h.shareRememberSave)
-	h.registerPhoneRoutes(mux)
-}
-
-func (h *Hub) shareCloudOffer(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	offer, err := h.opts.Share.CloudOffer()
-	if err != nil {
-		refuse(w, http.StatusConflict, codeShareCloud, err.Error(), nil)
-		return
-	}
-	writeJSON(w, offer)
 }
 
 func (h *Hub) shareStatus(w http.ResponseWriter, _ *http.Request) {
@@ -56,13 +44,18 @@ func (h *Hub) shareStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Hub) shareOpen(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		IP string `json:"ip"`
+		IP     string `json:"ip"`
+		Public bool   `json:"public"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IP == "" {
 		missingField(w, "ip")
 		return
 	}
-	st, err := h.opts.Share.Open(body.IP)
+	open := h.opts.Share.Open
+	if body.Public {
+		open = h.opts.Share.OpenPublic
+	}
+	st, err := open(body.IP)
 	switch {
 	case errors.Is(err, ErrShareAddress):
 		refuse(w, http.StatusBadRequest, codeShareAddress, err.Error(), map[string]any{"ip": body.IP})

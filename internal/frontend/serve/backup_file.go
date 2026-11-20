@@ -12,10 +12,10 @@ import (
 	"reasonix/internal/ext/configbackup"
 )
 
-// A backup file is the account backup's sealed envelope, saved by the person.
+// A backup file is a sealed config envelope, saved and opened by the person.
 // These routes serve the window only: the file can hold keys, so a paired
-// device (and the relay a phone arrives by) gets nothing here. The kernel never
-// writes the file; the window saves and opens it, so no plaintext touches disk.
+// device gets nothing here. The kernel never writes the file; the window saves
+// and opens it, so no plaintext touches disk.
 func (s *Server) registerBackupFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /backups/file", s.backupFileCatalog)
 	mux.HandleFunc("POST /backups/file/export", s.exportBackupFile)
@@ -131,4 +131,61 @@ func (s *Server) applyBackupFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applyBackupPlan(w, r)
+}
+
+// One planner per process: the machine being restored is one machine, however
+// many panes are looking at it.
+var backupPlanner = configbackup.NewPlanner()
+
+func (s *Server) applyBackupPlan(w http.ResponseWriter, r *http.Request) {
+	var req configbackup.ApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badBody(w)
+		return
+	}
+	if strings.TrimSpace(req.PlanID) == "" {
+		missingField(w, "planId")
+		return
+	}
+	res, err := backupPlanner.Apply(req)
+	if err != nil {
+		refuseBackup(w, err)
+		return
+	}
+	out := map[string]any{"applied": res.Applied, "plugins": res.Plugins, "failed": res.Failed}
+	if len(res.Applied) > 0 {
+		if err := s.reloadExtensions(r.Context()); err != nil {
+			out["reloadError"] = err.Error()
+		}
+	}
+	writeJSON(w, out)
+}
+
+// refuseBackup projects the class the kernel already decided. Anything it does
+// not name is an internal failure, never a claim that the request was wrong.
+func refuseBackup(w http.ResponseWriter, err error) {
+	var consent *configbackup.ConsentError
+	switch {
+	case errors.As(err, &consent):
+		refuse(w, http.StatusConflict, "backup.consent_required", err.Error(), map[string]any{"ids": consent.IDs})
+	case errors.Is(err, configbackup.ErrWeakPassphrase):
+		refuse(w, http.StatusBadRequest, "backup.weak_passphrase", err.Error(),
+			map[string]any{"min": configbackup.MinPassphraseRunes})
+	case errors.Is(err, configbackup.ErrNoCategories), errors.Is(err, configbackup.ErrUnknownCategory):
+		refuse(w, http.StatusBadRequest, "backup.bad_categories", err.Error(), nil)
+	case errors.Is(err, configbackup.ErrCannotDecrypt):
+		refuse(w, http.StatusUnprocessableEntity, "backup.cannot_decrypt", err.Error(), nil)
+	case errors.Is(err, configbackup.ErrUnsupportedFormat):
+		refuse(w, http.StatusUnprocessableEntity, "backup.unsupported_format", err.Error(), nil)
+	case errors.Is(err, configbackup.ErrMalformed):
+		refuse(w, http.StatusUnprocessableEntity, "backup.malformed", err.Error(), nil)
+	case errors.Is(err, configbackup.ErrTooLarge):
+		refuse(w, http.StatusRequestEntityTooLarge, "backup.too_large", err.Error(), nil)
+	case errors.Is(err, configbackup.ErrPlanExpired):
+		refuse(w, http.StatusGone, "backup.plan_expired", err.Error(), nil)
+	case errors.Is(err, configbackup.ErrUnknownItem):
+		refuse(w, http.StatusBadRequest, "backup.unknown_item", err.Error(), nil)
+	default:
+		refuse(w, http.StatusBadGateway, "backup.cloud_unavailable", err.Error(), map[string]any{"detail": err.Error()})
+	}
 }

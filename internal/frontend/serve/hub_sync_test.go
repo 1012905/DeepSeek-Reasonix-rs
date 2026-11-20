@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"reasonix/internal/base/testenv"
-	"reasonix/internal/platform/remotecloud"
 )
 
 type treeReplay struct {
@@ -29,7 +28,7 @@ type treeReplay struct {
 	Complete  bool              `json:"complete"`
 }
 
-func TestTreeChangesReachBothClientsAndReplayAfterDisconnect(t *testing.T) {
+func TestTreeChangesReachClientsAndReplayAfterDisconnect(t *testing.T) {
 	t.Setenv("REASONIX_HOME", testenv.TempDir(t))
 	root := testenv.TempDir(t)
 	if err := addRememberedWorkspace(t.Context(), root); err != nil {
@@ -42,18 +41,6 @@ func TestTreeChangesReachBothClientsAndReplayAfterDisconnect(t *testing.T) {
 	srv := httptest.NewServer(operatorHandler(h))
 	defer srv.Close()
 	cursor := hubGet[treeReplay](t, srv, "/tree/events/replay?lastEventId=0").Watermark
-	readPhone := func() []treeWorkspace {
-		t.Helper()
-		response, err := h.CloudDesktop(t.Context(), remotecloud.DesktopRequest{Method: http.MethodGet, Path: "/tree"}, "phone")
-		if err != nil || response.Status != http.StatusOK {
-			t.Fatalf("phone tree: %v, status %d", err, response.Status)
-		}
-		var tree []treeWorkspace
-		if err := json.Unmarshal(response.Body, &tree); err != nil {
-			t.Fatal(err)
-		}
-		return tree
-	}
 	for _, step := range []struct {
 		route                   string
 		body                    map[string]any
@@ -80,12 +67,6 @@ func TestTreeChangesReachBothClientsAndReplayAfterDisconnect(t *testing.T) {
 		}
 		cursor = replay.Watermark
 		desktop := hubGet[[]treeWorkspace](t, srv, "/tree")
-		phone := readPhone()
-		left, _ := json.Marshal(desktop)
-		right, _ := json.Marshal(phone)
-		if !bytes.Equal(left, right) {
-			t.Fatalf("%s: desktop and phone IDs/metadata differ", step.route)
-		}
 		rows := desktop[0].Sessions
 		if step.empty {
 			if len(rows) != 0 {
@@ -97,14 +78,7 @@ func TestTreeChangesReachBothClientsAndReplayAfterDisconnect(t *testing.T) {
 			t.Fatalf("%s tree: %+v", step.route, rows)
 		}
 	}
-	response, err := h.CloudDesktop(t.Context(), remotecloud.DesktopRequest{Method: http.MethodGet, Path: "/tree/events/replay?lastEventId=0"}, "phone")
-	if err != nil || response.Status != http.StatusOK {
-		t.Fatalf("phone reconnect replay: %v, %d", err, response.Status)
-	}
-	var replay treeReplay
-	if err := json.Unmarshal(response.Body, &replay); err != nil {
-		t.Fatal(err)
-	}
+	replay := hubGet[treeReplay](t, srv, "/tree/events/replay?lastEventId=0")
 	if replay.Watermark != cursor || len(replay.Frames) < 5 {
 		t.Fatalf("reconnect missed mutations: %+v", replay)
 	}

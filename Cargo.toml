@@ -1,16 +1,33 @@
+# Reasonix Rust kernel — Cargo workspace.
+#
+# Layout and dependency direction are frozen in docs/kernel-rs/AGENTS.md 4.2
+# and docs/adr/0001. The two shippable binaries live in apps/; everything
+# under crates/ is a library; xtask carries repository automation. The
+# contract inventory is frozen (docs/contracts), so product dependencies
+# enter the workspace under the supply-chain policy in deny.toml.
 [workspace]
 resolver = "3"
 members = [
-    "crates/base",
+    "apps/reasonix",
+    "apps/reasonix-studio-host",
+    "crates/acp",
+    "crates/agent",
+    "crates/assembly",
+    "crates/cli",
+    "crates/config",
     "crates/contract",
-    "crates/state",
+    "crates/core",
+    "crates/ext",
+    "crates/platform",
+    "crates/provider",
     "crates/safety",
-    "crates/model",
-    "crates/tools",
-    "crates/runtime",
-    "crates/session",
     "crates/serve",
-    "crates/boot",
+    "crates/session",
+    "crates/state",
+    "crates/testkit",
+    "crates/tools",
+    "crates/tui",
+    "xtask",
 ]
 # The Tauri shell is its own workspace: a different toolchain profile and a
 # dependency graph that must not enter the kernel's Cargo.lock.
@@ -19,19 +36,51 @@ exclude = ["desktop-tauri/src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.99.1"
 license = "MIT"
-repository = "https://github.com/esengine/DeepSeek-Reasonix"
+publish = false
 
-# Pinned once here; members opt in with `<dep> = { workspace = true }`.
 [workspace.dependencies]
+# Internal crate graph (AGENTS.md 4.2). Members consume these via
+# `name.workspace = true` so every edge is declared in exactly one place.
+# Versions must track workspace.package.version: path-only entries read as
+# wildcard versions and fail the cargo-deny wildcard ban.
+reasonix-acp = { path = "crates/acp", version = "0.1.0" }
+reasonix-agent = { path = "crates/agent", version = "0.1.0" }
+reasonix-assembly = { path = "crates/assembly", version = "0.1.0" }
+reasonix-cli = { path = "crates/cli", version = "0.1.0" }
+reasonix-config = { path = "crates/config", version = "0.1.0" }
+reasonix-contract = { path = "crates/contract", version = "0.1.0" }
+reasonix-core = { path = "crates/core", version = "0.1.0" }
+reasonix-ext = { path = "crates/ext", version = "0.1.0" }
+reasonix-platform = { path = "crates/platform", version = "0.1.0" }
+reasonix-provider = { path = "crates/provider", version = "0.1.0" }
+reasonix-safety = { path = "crates/safety", version = "0.1.0" }
+reasonix-serve = { path = "crates/serve", version = "0.1.0" }
+reasonix-session = { path = "crates/session", version = "0.1.0" }
+reasonix-state = { path = "crates/state", version = "0.1.0" }
+reasonix-testkit = { path = "crates/testkit", version = "0.1.0" }
+reasonix-tools = { path = "crates/tools", version = "0.1.0" }
+reasonix-tui = { path = "crates/tui", version = "0.1.0" }
+
+# External dependencies (AGENTS.md 10.6). The contract inventory is frozen
+# (docs/contracts/*.md), so product dependencies now enter the workspace.
+# Each must stay pure Rust with a permissive license and be justified by
+# the crate that pulls it in.
+caseless = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+encoding_rs = "0.8"
+fs4 = "0.13"
+getrandom = "0.3"
+hostname = "0.4"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["full"] }
-axum = "0.8"
-rusqlite = { version = "0.32", features = ["bundled"] }
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "stream",
-    "native-tls",
-] }
+serde_ignored = "0.1"
+serde_json = { version = "1", features = ["raw_value"] }
+sha2 = "0.10"
+# Test-only: temporary directories for state/contract integration tests
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+unicode-general-category = "0.6"
+unicode-normalization = "0.1"

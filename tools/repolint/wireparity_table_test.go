@@ -98,11 +98,11 @@ func sortedCopy(names []string) []string {
 // has to name the field, or a reviewer cannot tell a drift from a stale row.
 func TestAddedWireMirrorDroppedFieldIsNamed(t *testing.T) {
 	root := treeRoot(t)
-	const pair = `{"internal/frontend/serve/backup.go", "createBackupRequest", tsBackupFile, "BackupCreateRequest"}`
+	const pair = `{"internal/ext/configbackup/snapshot.go", "CategoryInfo", tsBackupFile, "BackupCategoryInfo"}`
 	var m wireMirror
 	for _, candidate := range mirroredWireTypesTail {
-		if candidate.goFile == "internal/frontend/serve/backup.go" && candidate.goType == "createBackupRequest" &&
-			candidate.tsFile == tsBackupFile && candidate.tsType == "BackupCreateRequest" {
+		if candidate.goFile == "internal/ext/configbackup/snapshot.go" && candidate.goType == "CategoryInfo" &&
+			candidate.tsFile == tsBackupFile && candidate.tsType == "BackupCategoryInfo" {
 			m = candidate
 			break
 		}
@@ -125,10 +125,10 @@ func TestAddedWireMirrorDroppedFieldIsNamed(t *testing.T) {
 	}
 	body := string(raw)
 	fields, line, found := tsInterfaceFields(body, m.tsType)
-	if !found || !slices.Contains(fields, "passphrase") {
-		t.Fatalf("%s does not declare passphrase in the tree", m.tsType)
+	if !found || !slices.Contains(fields, "consent") {
+		t.Fatalf("%s does not declare consent in the tree", m.tsType)
 	}
-	dropped := strings.Replace(body, "  passphrase: string;\n", "", 1)
+	dropped := strings.Replace(body, "  consent: boolean;\n", "", 1)
 	if dropped == body {
 		t.Fatal("the test could not find the field to drop")
 	}
@@ -137,9 +137,9 @@ func TestAddedWireMirrorDroppedFieldIsNamed(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("findings = %+v, want exactly the dropped field", got)
 	}
-	if !strings.Contains(got[0].Msg, `sends "passphrase"`) || got[0].File != m.tsFile {
-		t.Fatalf("finding = %s:%d %s: %s, want it to name passphrase against %s",
+	if !strings.Contains(got[0].Msg, `sends "consent"`) || got[0].File != m.tsFile {
+		t.Fatalf("finding = %s:%d %s: %s, want it to name consent against %s",
 			got[0].File, got[0].Line, got[0].Rule, got[0].Msg, m.tsFile)
 	}
-	t.Logf("dropping passphrase reported: %s:%d %s", got[0].File, line, got[0].Msg)
+	t.Logf("dropping consent reported: %s:%d %s", got[0].File, line, got[0].Msg)
 }

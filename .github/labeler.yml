@@ -40,12 +40,10 @@ tui:
 desktop:
   - changed-files:
       - any-glob-to-any-file:
-          - 'desktop/**'
+          - 'desktop-tauri/**'
 
 updater:
   - changed-files:
       - any-glob-to-any-file:
-          - 'desktop/cmd/sign/**'
-          - 'desktop/updater*.go'
-          - 'scripts/desktop-build.sh'
+          - 'internal/platform/update/**'
           - '.github/workflows/release*.yml'

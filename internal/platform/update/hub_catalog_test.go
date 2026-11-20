@@ -33,8 +33,8 @@ func (a *answersCatalog) RoundTrip(r *http.Request) (*http.Response, error) {
 // through the target version's own manifest -- so a fixture without one lists
 // nothing at all.
 const twoReleases = `{"versions":[
-  {"version":"2.11.0","tag":"studio-v2.11.0","manifest":"https://dl.reasonix.io/studio/2.11.0/manifest.json"},
-  {"version":"2.9.0","tag":"studio-v2.9.0","manifest":"https://dl.reasonix.io/studio/2.9.0/manifest.json"}
+  {"version":"2.11.0","tag":"studio-v2.11.0","manifest":"https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v2.11.0/latest.json"},
+  {"version":"2.9.0","tag":"studio-v2.9.0","manifest":"https://github.com/1012905/DeepSeek-Reasonix-rs/releases/download/studio-v2.9.0/latest.json"}
 ]}`
 
 func hubFor(t *testing.T, rt *answersCatalog, running string) VersionHub {

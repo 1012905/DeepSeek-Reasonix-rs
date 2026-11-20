@@ -11,7 +11,7 @@ const maxFileLines = 1000
 // a ceiling there fires on every new label without ever pointing at something
 // worth splitting.
 var sizeExemptPrefixes = []string{
-	"desktop/frontend-next/src/i18n/",
+	"desktop-tauri/src/i18n/",
 }
 
 func sizeExempt(rel string) bool {

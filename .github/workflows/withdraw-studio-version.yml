@@ -3,12 +3,14 @@ name: Withdraw a Studio version
 # Pulls a published Studio release out of the update catalog (or puts it back),
 # so installs stop being offered it without waiting for a new release. Only the
 # catalog changes: the release's files stay where they are, and a withdrawn
-# release can be restored with the same run.
+# release can be restored with the same run. The catalog is the versions.json
+# asset of the latest release, so a withdrawal that demotes the latest slot
+# hands the catalog to the release that takes it.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to withdraw or restore, for example 2.36.0"
+        description: "Version to withdraw or restore, for example 0.1.0"
         required: true
         type: string
       reason:
@@ -41,44 +43,38 @@ jobs:
 
       - name: Update the Studio catalog
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           REASON: ${{ inputs.reason }}
           RESTORE: ${{ inputs.restore }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          HAS_R2: ${{ secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' && secrets.R2_ACCOUNT_ID != '' && secrets.R2_BUCKET != '' }}
         run: |
-          if [ "$HAS_R2" != "true" ]; then
-            echo "::error::R2 credentials are not configured, so the catalog cannot be changed"
-            exit 1
-          fi
+          set -euo pipefail
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::version must look like 2.36.0"
+            echo "::error::version must look like 0.1.0"
             exit 1
           fi
-          aws configure set aws_access_key_id "${{ secrets.R2_ACCESS_KEY_ID }}"
-          aws configure set aws_secret_access_key "${{ secrets.R2_SECRET_ACCESS_KEY }}"
-          aws configure set default.region auto
-          endpoint="https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
           at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          current=/tmp/studio-versions-current.json
-          next=/tmp/studio-versions-next.json
-          aws s3 cp "s3://${R2_BUCKET}/studio/versions.json" "$current" --endpoint-url "$endpoint"
+          work="$(mktemp -d)"
+          holder="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          gh release download "$holder" --repo "$GITHUB_REPOSITORY" --pattern versions.json --dir "$work"
+          current="$work/versions.json"
+          mkdir -p "$work/next"
+          next="$work/next/versions.json"
           if [ "$RESTORE" = "true" ]; then
             bash scripts/withdraw-version.sh "$current" --restore "$VERSION" "$at" > "$next"
             jq -e --arg v "$VERSION" '.versions | map(select((.version | ltrimstr("v")) == $v)) | length == 1' "$next" >/dev/null
+            gh release upload "$holder" "$next" --clobber --repo "$GITHUB_REPOSITORY"
           else
             bash scripts/withdraw-version.sh "$current" "$VERSION" "$REASON" "$at" > "$next"
             jq -e --arg v "$VERSION" '(.versions | map(select((.version | ltrimstr("v")) == $v)) | length == 0) and (.withdrawn | map(select((.version | ltrimstr("v")) == $v)) | length == 1)' "$next" >/dev/null
+            # Demote before resolving the upload target: withdrawing the release
+            # that holds the latest slot moves the catalog to its successor.
+            gh release edit "studio-v${VERSION}" --prerelease --latest=false --repo "$GITHUB_REPOSITORY"
+            target="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+            if [ -z "$target" ]; then
+              echo "::error::no stable release remains to carry the catalog"
+              exit 1
+            fi
+            gh release upload "$target" "$next" --clobber --repo "$GITHUB_REPOSITORY"
           fi
-          aws s3 cp "$next" "s3://${R2_BUCKET}/studio/versions.json" \
-            --endpoint-url "$endpoint" \
-            --content-type "application/json; charset=utf-8" \
-            --cache-control "public, max-age=300, stale-if-error=86400"
           echo "Studio catalog updated for $VERSION (restore=$RESTORE)"
-
-      - name: Keep the GitHub release off the latest slot
-        if: ${{ !inputs.restore }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-        run: gh release edit "studio-v${VERSION}" --prerelease --latest=false --repo "$GITHUB_REPOSITORY"

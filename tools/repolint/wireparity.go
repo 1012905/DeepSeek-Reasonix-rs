@@ -13,31 +13,31 @@ import (
 
 // Where the desktop re-declares the kernel's wire types by hand.
 const (
-	tsWireFile      = "desktop/frontend-next/src/port/wire.ts"
-	tsPortFile      = "desktop/frontend-next/src/port/port.ts"
-	tsLeaseFile     = "desktop/frontend-next/src/port/workspace_lease.ts"
-	tsBoundaryFile  = "desktop/frontend-next/src/port/boundary.ts"
-	tsRemoteFile    = "desktop/frontend-next/src/port/remote.ts"
-	tsSessionFile   = "desktop/frontend-next/src/port/session.ts"
-	tsSubagentFile  = "desktop/frontend-next/src/port/subagent.ts"
-	tsProcessFile   = "desktop/frontend-next/src/port/process.ts"
-	tsVersionFile   = "desktop/frontend-next/src/port/version.ts"
-	tsModelFile     = "desktop/frontend-next/src/port/model.ts"
-	tsMcpFile       = "desktop/frontend-next/src/port/mcp.ts"
-	tsScheduleFile  = "desktop/frontend-next/src/port/schedule.ts"
-	tsReplayFile    = "desktop/frontend-next/src/port/surface_replay.ts"
-	tsShellFile     = "desktop/frontend-next/src/port/shell.ts"
-	tsShareFile     = "desktop/frontend-next/src/port/share.ts"
-	tsProviderFile  = "desktop/frontend-next/src/port/provider.ts"
-	tsFeedbackFile  = "desktop/frontend-next/src/port/feedback.ts"
-	tsWorkspaceFile = "desktop/frontend-next/src/port/workspace.ts"
-	tsTerminalFile  = "desktop/frontend-next/src/port/terminal.ts"
-	tsLookFile      = "desktop/frontend-next/src/port/look.ts"
-	tsHubFile       = "desktop/frontend-next/src/port/hub.ts"
-	tsMuxFile       = "desktop/frontend-next/src/port/mux.ts"
-	tsPluginFile    = "desktop/frontend-next/src/port/plugin.ts"
-	tsChartFile     = "desktop/frontend-next/src/ui/chart/spec.ts"
-	tsSurfaceFile   = "desktop/frontend-next/src/ui/surface/spec.ts"
+	tsWireFile      = "desktop-tauri/src/port/wire.ts"
+	tsPortFile      = "desktop-tauri/src/port/port.ts"
+	tsLeaseFile     = "desktop-tauri/src/port/workspace_lease.ts"
+	tsBoundaryFile  = "desktop-tauri/src/port/boundary.ts"
+	tsRemoteFile    = "desktop-tauri/src/port/remote.ts"
+	tsSessionFile   = "desktop-tauri/src/port/session.ts"
+	tsSubagentFile  = "desktop-tauri/src/port/subagent.ts"
+	tsProcessFile   = "desktop-tauri/src/port/process.ts"
+	tsVersionFile   = "desktop-tauri/src/port/version.ts"
+	tsModelFile     = "desktop-tauri/src/port/model.ts"
+	tsMcpFile       = "desktop-tauri/src/port/mcp.ts"
+	tsScheduleFile  = "desktop-tauri/src/port/schedule.ts"
+	tsReplayFile    = "desktop-tauri/src/port/surface_replay.ts"
+	tsShellFile     = "desktop-tauri/src/port/shell.ts"
+	tsShareFile     = "desktop-tauri/src/port/share.ts"
+	tsProviderFile  = "desktop-tauri/src/port/provider.ts"
+	tsFeedbackFile  = "desktop-tauri/src/port/feedback.ts"
+	tsWorkspaceFile = "desktop-tauri/src/port/workspace.ts"
+	tsTerminalFile  = "desktop-tauri/src/port/terminal.ts"
+	tsLookFile      = "desktop-tauri/src/port/look.ts"
+	tsHubFile       = "desktop-tauri/src/port/hub.ts"
+	tsMuxFile       = "desktop-tauri/src/port/mux.ts"
+	tsPluginFile    = "desktop-tauri/src/port/plugin.ts"
+	tsChartFile     = "desktop-tauri/src/ui/chart/spec.ts"
+	tsSurfaceFile   = "desktop-tauri/src/ui/surface/spec.ts"
 )
 
 // tuiInboxFile is where the terminal re-declares the kernel's inbox wire types
@@ -58,14 +58,14 @@ var mirroredWireTypesHead = []wireMirror{
 	{"internal/base/workspacefile/file.go", "Ref", tsWorkspaceFile, "FileRef"},
 	{"internal/base/workspacefile/file.go", "Info", tsWorkspaceFile, "PreviewInfo"},
 	{"internal/contract/delivery/delivery.go", "File", tsWorkspaceFile, "DeliveredFile"},
-	{"internal/frontend/serve/side.go", "SideProgress", "desktop/frontend-next/src/port/side.ts", "SideProgress"},
+	{"internal/frontend/serve/side.go", "SideProgress", "desktop-tauri/src/port/side.ts", "SideProgress"},
 	{"internal/platform/worktree/source.go", "Source", tsWorkspaceFile, "WorktreeSource"},
 	{"internal/frontend/serve/workspace_source.go", "worktreeSourcesView", tsWorkspaceFile, "WorktreeSources"},
 	{"internal/frontend/serve/workspace_source.go", "worktreeSelection", tsWorkspaceFile, "WorktreeSelection"},
 	{"internal/session/control/workspace_preparation.go", "WorkspacePreparationStatus", tsWorkspaceFile, "WorktreePreparation"},
-	{"internal/contract/surfacespec/action_message.go", "Action", "desktop/frontend-next/src/port/surface.ts", "SurfaceAction"},
-	{"internal/session/control/surface_actions.go", "SurfaceActionRequest", "desktop/frontend-next/src/port/surface.ts", "SurfaceActionRequest"},
-	{"internal/session/control/surface_actions.go", "SurfaceActionRecord", "desktop/frontend-next/src/port/surface.ts", "SurfaceActionRecord"},
+	{"internal/contract/surfacespec/action_message.go", "Action", "desktop-tauri/src/port/surface.ts", "SurfaceAction"},
+	{"internal/session/control/surface_actions.go", "SurfaceActionRequest", "desktop-tauri/src/port/surface.ts", "SurfaceActionRequest"},
+	{"internal/session/control/surface_actions.go", "SurfaceActionRecord", "desktop-tauri/src/port/surface.ts", "SurfaceActionRecord"},
 	{"internal/contract/event/event.go", "AskAnswer", tsWireFile, "AskAnswer"},
 	{"internal/contract/eventwire/ask.go", "AskQuestion", tsWireFile, "AskQuestion"},
 	{"internal/contract/surfacespec/spec.go", "Spec", tsSurfaceFile, "SurfaceSpec"},
@@ -73,11 +73,11 @@ var mirroredWireTypesHead = []wireMirror{
 	{"internal/contract/surfacespec/spec.go", "Field", tsWireFile, "SurfaceField"},
 	{"internal/contract/surfacespec/spec.go", "Diff", tsWireFile, "SurfaceDiff"},
 	{"internal/contract/surfacespec/spec.go", "Option", tsWireFile, "SurfaceOption"},
-	{"internal/contract/surfacespec/image.go", "Image", "desktop/frontend-next/src/port/surface-rich.ts", "SurfaceImage"},
-	{"internal/contract/surfacespec/rich.go", "Location", "desktop/frontend-next/src/port/surface-rich.ts", "SurfaceLocation"},
-	{"internal/contract/surfacespec/rich.go", "Fact", "desktop/frontend-next/src/port/surface-rich.ts", "SurfaceFact"},
-	{"internal/contract/surfacespec/rich.go", "Dataset", "desktop/frontend-next/src/port/surface-rich.ts", "SurfaceDataset"},
-	{"internal/contract/surfacespec/rich.go", "Series", "desktop/frontend-next/src/port/surface-rich.ts", "SurfaceSeries"},
+	{"internal/contract/surfacespec/image.go", "Image", "desktop-tauri/src/port/surface-rich.ts", "SurfaceImage"},
+	{"internal/contract/surfacespec/rich.go", "Location", "desktop-tauri/src/port/surface-rich.ts", "SurfaceLocation"},
+	{"internal/contract/surfacespec/rich.go", "Fact", "desktop-tauri/src/port/surface-rich.ts", "SurfaceFact"},
+	{"internal/contract/surfacespec/rich.go", "Dataset", "desktop-tauri/src/port/surface-rich.ts", "SurfaceDataset"},
+	{"internal/contract/surfacespec/rich.go", "Series", "desktop-tauri/src/port/surface-rich.ts", "SurfaceSeries"},
 
 	{"internal/contract/eventwire/extension.go", "ExtensionViewNode", tsWireFile, "ExtensionViewNode"},
 	{"internal/contract/eventwire/extension.go", "ExtensionSurface", tsWireFile, "ExtensionSurface"},
@@ -140,7 +140,6 @@ var mirroredWireTypesHead = []wireMirror{
 	// Who can reach this window from another device. A device the page cannot
 	// list is one the person at the window cannot see to disconnect.
 	{"internal/frontend/serve/device_share.go", "ShareStatus", tsShareFile, "ShareStatus"},
-	{"internal/frontend/serve/device_share.go", "CloudRemoteStatus", tsShareFile, "CloudRemoteStatus"},
 	{"internal/frontend/serve/device_share.go", "ShareAddress", tsShareFile, "ShareAddress"},
 	{"internal/frontend/serve/device_share.go", "ShareOffer", tsShareFile, "ShareOffer"},
 	{"internal/frontend/serve/device_registry.go", "DeviceView", tsShareFile, "PairedDevice"},
@@ -219,8 +218,6 @@ var mirroredWireTypesHead = []wireMirror{
 	{"internal/session/control/auto_archive.go", "AutoArchiveSettings", tsBoundaryFile, "AutoArchiveSettings"},
 	{"internal/frontend/serve/notifications.go", "NotifyPrefs", tsPortFile, "NotifyPrefs"},
 	{"internal/frontend/serve/notifications.go", "PhoneNotifyPrefs", tsPortFile, "PhoneNotifyPrefs"},
-	{"internal/frontend/serve/share_phones.go", "PhoneView", tsShareFile, "PhoneView"},
-	{"internal/frontend/serve/share_phones.go", "PhoneList", tsShareFile, "PhoneList"},
 	// RemoteHostEdit is left out on purpose: the kernel still takes the single
 	// `workspace` an old row was saved with, which the page deliberately does
 	// not send. An under-filled request is not a picture that cannot be read.
@@ -296,10 +293,6 @@ var mirroredWireTypesHead = []wireMirror{
 	{"internal/platform/feedback/types.go", "ReplyReceipt", tsFeedbackFile, "FeedbackReplyReceipt"},
 	{"internal/platform/feedback/types.go", "Mine", tsFeedbackFile, "FeedbackMine"},
 	{"internal/platform/feedback/types.go", "Promotion", tsFeedbackFile, "FeedbackPromotion"},
-	{"internal/platform/feedback/board.go", "Board", tsFeedbackFile, "FeedbackBoard"},
-	{"internal/platform/feedback/board.go", "BoardEntry", tsFeedbackFile, "FeedbackBoardEntry"},
-	{"internal/platform/feedback/board.go", "BoardRelease", tsFeedbackFile, "FeedbackBoardRelease"},
-	{"internal/platform/feedback/board.go", "BoardMe", tsFeedbackFile, "FeedbackBoardMe"},
 	{"internal/platform/feedback/types.go", "Profile", tsFeedbackFile, "FeedbackProfile"},
 	{"internal/platform/feedback/types.go", "EffectiveLimits", tsFeedbackFile, "FeedbackEffectiveLimits"},
 	{"internal/frontend/serve/feedback.go", "feedbackEnvView", tsFeedbackFile, "FeedbackEnv"},

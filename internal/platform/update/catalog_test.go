@@ -13,8 +13,8 @@ func TestStudioCatalogNamesTheStudioLine(t *testing.T) {
 	if StudioCatalog == "" {
 		t.Fatal("StudioCatalog is empty, so every Options built from it fails at fetch")
 	}
-	if !strings.Contains(StudioCatalog, "/studio/") {
-		t.Fatalf("StudioCatalog does not name the studio line (%q); its entries would name another product's artifacts", StudioCatalog)
+	if !strings.HasPrefix(StudioCatalog, StudioReleases+"/") || !strings.HasSuffix(StudioCatalog, "/latest/download/versions.json") {
+		t.Fatalf("StudioCatalog does not name this line's latest release asset (%q); its entries would name another product's artifacts", StudioCatalog)
 	}
 }
 

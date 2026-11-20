@@ -12,7 +12,7 @@
 #
 #   update-versions-index.sh <existing-index|-> <version> <tag> <channel> <published-at> [keep] [notes-url]
 #
-# notes-url names the version's already-uploaded release notes object. Without
+# notes-url names the version's already-uploaded notes.md release asset. Without
 # it the entry carries no notes field, which is how a version with no notes reads.
 set -euo pipefail
 
@@ -28,6 +28,7 @@ channel="$4"
 published_at="$5"
 keep="${6:-20}"
 notes="${7:-}"
+repo="${GITHUB_REPOSITORY:-1012905/DeepSeek-Reasonix-rs}"
 
 for value in "$version" "$tag" "$channel" "$published_at"; do
   if [ -z "$value" ]; then
@@ -36,9 +37,9 @@ for value in "$version" "$tag" "$channel" "$published_at"; do
   fi
 done
 case "$notes" in
-  ''|https://dl.reasonix.io/studio/notes/*.md) ;;
+  ''|"https://github.com/$repo/releases/download/studio-v"*/notes.md) ;;
   *)
-    echo "::error::notes-url must be an object under https://dl.reasonix.io/studio/notes/, got $notes" >&2
+    echo "::error::notes-url must be the notes.md release asset of a studio tag on https://github.com/$repo, got $notes" >&2
     exit 1
     ;;
 esac
@@ -74,6 +75,7 @@ printf '%s' "$base" | jq \
   --arg channel "$channel" \
   --arg publishedAt "$published_at" \
   --arg notes "$notes" \
+  --arg repo "$repo" \
   --argjson keep "$keep" '
   def semver: [splits("[.-]")] | map(select(test("^[0-9]+$")) | tonumber);
   ([.withdrawn // [] | .[].version | ltrimstr("v")]) as $gone
@@ -88,7 +90,7 @@ printf '%s' "$base" | jq \
           tag: $tag,
           channel: $channel,
           publishedAt: $publishedAt,
-          manifest: ("https://dl.reasonix.io/" + $tag + "/latest.json"),
+          manifest: ("https://github.com/" + $repo + "/releases/download/" + $tag + "/latest.json"),
         } + (if $notes == "" then {} else {notes: $notes} end)]
       # Existing entries win: unique_by keeps the first of each group, so a
       # rerun cannot rewrite what was already published under that version.

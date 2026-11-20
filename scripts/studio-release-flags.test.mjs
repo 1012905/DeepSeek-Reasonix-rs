@@ -6,40 +6,21 @@ import { fileURLToPath } from "node:url";
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "studio-release-flags.sh");
 
-const tags = [
-  "studio-v2.9.0",
-  "studio-v2.10.0",
-  "studio-v2.28.0",
-  "studio-v2.29.0-rc.1",
-  "studio-v2.30.0-preview.2",
-  "studio-v2.27.3",
-];
-
-function flags(tag, candidate, listed = tags) {
-  const run = spawnSync("bash", [script, tag, candidate], { input: listed.join("\n") + "\n", encoding: "utf8" });
-  assert.equal(run.status, 0, run.stderr);
-  return run.stdout.trim().split("\n");
+function flags(tag, candidate, tags) {
+  const out = spawnSync("bash", [script, tag, candidate], { encoding: "utf8", input: tags.join("\n") + "\n" });
+  assert.equal(out.status, 0, out.stderr);
+  return out.stdout.trim().split("\n");
 }
 
-test("the highest stable tag takes latest and is not a prerelease", () => {
-  assert.deepEqual(flags("studio-v2.28.0", "false"), ["--latest"]);
+test("the first release of a new major line takes latest past a retired line", () => {
+  assert.deepEqual(flags("studio-v0.1.0", "false", ["studio-v2.61.0", "studio-v0.1.0"]), ["--latest"]);
 });
 
-test("an older stable tag does not take latest, numerically ordered", () => {
-  assert.deepEqual(flags("studio-v2.27.3", "false"), ["--latest=false"]);
-  assert.deepEqual(flags("studio-v2.9.0", "false"), ["--latest=false"]);
+test("a higher tag of the same line wins, an older tag does not take the badge back", () => {
+  assert.deepEqual(flags("studio-v0.2.0", "false", ["studio-v0.1.0", "studio-v0.2.0"]), ["--latest"]);
+  assert.deepEqual(flags("studio-v0.1.0", "false", ["studio-v0.1.0", "studio-v0.2.0"]), ["--latest=false"]);
 });
 
-test("a candidate stays a prerelease even above every stable tag", () => {
-  assert.deepEqual(flags("studio-v2.29.0-rc.1", "true"), ["--prerelease", "--latest=false"]);
-  assert.deepEqual(flags("studio-v2.30.0-preview.2", "true"), ["--prerelease", "--latest=false"]);
-});
-
-test("a prerelease tag never counts as the highest stable tag", () => {
-  assert.deepEqual(flags("studio-v2.28.0", "false", tags.concat("studio-v2.99.0-rc.1")), ["--latest"]);
-});
-
-test("the only stable tag is latest, and a tag list without stable tags takes none", () => {
-  assert.deepEqual(flags("studio-v2.0.0", "false", ["studio-v2.0.0"]), ["--latest"]);
-  assert.deepEqual(flags("studio-v2.0.0", "false", ["studio-v2.1.0-rc.1"]), ["--latest=false"]);
+test("a prerelease takes neither latest nor the catalog", () => {
+  assert.deepEqual(flags("studio-v0.3.0-rc1", "true", ["studio-v0.2.0", "studio-v0.3.0-rc1"]), ["--prerelease", "--latest=false"]);
 });

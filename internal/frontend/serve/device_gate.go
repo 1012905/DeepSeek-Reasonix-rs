@@ -20,12 +20,13 @@ const (
 	// DeviceLeavePath is where a device unpairs itself.
 	DeviceLeavePath = "/device/leave"
 
-	codeDeviceHost         = "device.host_rejected"
-	codeDeviceOrigin       = "device.origin_rejected"
-	codeDeviceUnauthorized = "device.unauthorized"
-	codeDevicePairing      = "device.pairing_invalid"
-	codeDeviceMisconfig    = "device.misconfigured"
-	codeNotADevice         = "device.not_a_device"
+	codeDeviceHost             = "device.host_rejected"
+	codeDeviceOrigin           = "device.origin_rejected"
+	codeDeviceUnauthorized     = "device.unauthorized"
+	codeDevicePairing          = "device.pairing_invalid"
+	codeDevicePairingThrottled = "device.pairing_throttled"
+	codeDeviceMisconfig        = "device.misconfigured"
+	codeNotADevice             = "device.not_a_device"
 
 	deviceCookieMaxAge = 30 * 24 * 60 * 60
 )
@@ -42,6 +43,10 @@ type DeviceGateOptions struct {
 	Page fs.FS
 	// Machine names the computer the device reaches, for the device to show.
 	Machine string
+	// Public marks the self-signed HTTPS door reachable from the internet. It
+	// must be secure, and it spends a per-client pairing budget so a six-digit
+	// code cannot be guessed at leisure.
+	Public bool
 }
 
 // DeviceSelf is a paired device's answer about itself: which of the host's
@@ -65,6 +70,15 @@ func NewDeviceGate(next http.Handler, opts DeviceGateOptions) http.Handler {
 		})
 	}
 	reg := opts.Registry
+	if opts.Public && !secure {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			refuse(w, http.StatusInternalServerError, codeDeviceMisconfig, "a public door must be served over HTTPS", nil)
+		})
+	}
+	var limiter *pairLimiter
+	if opts.Public {
+		limiter = newPairLimiter()
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Host, authority) {
 			refuse(w, http.StatusForbidden, codeDeviceHost, "this listener does not answer for that host", nil)
@@ -75,6 +89,10 @@ func NewDeviceGate(next http.Handler, opts DeviceGateOptions) http.Handler {
 			return
 		}
 		if r.URL.Path == PairPath {
+			if limiter != nil && !limiter.allow(remoteIP(r)) {
+				refuse(w, http.StatusTooManyRequests, codeDevicePairingThrottled, "too many pairing attempts; wait and show a new code", nil)
+				return
+			}
 			pairDevice(w, r, reg, secure)
 			return
 		}

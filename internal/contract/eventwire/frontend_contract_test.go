@@ -15,7 +15,7 @@ import (
 // sent {model, effort}, so every card fell through to a fallback that reported
 // a delegate's step count as a number of delegates.
 func TestFrontendTypesReadOnlyFieldsTheWireCarries(t *testing.T) {
-	tsPath := filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "port", "wire.ts")
+	tsPath := filepath.Join("..", "..", "..", "desktop-tauri", "src", "port", "wire.ts")
 	tsSrc, err := os.ReadFile(tsPath)
 	if err != nil {
 		t.Skipf("frontend wire types unavailable: %v", err)

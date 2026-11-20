@@ -20,10 +20,10 @@ test "$(rpm -qp --qf '%{ARCH}' "$rpm")" = "$rpm_arch"
 
 dpkg-deb -c "$deb" > "$stage/deb-contents"
 grep -qE '^-rwxr-xr-x (root/root|0/0) +[0-9]+ .* \./usr/lib/reasonix-studio/reasonix-studio-update-helper$' "$stage/deb-contents"
-grep -qE '^-rw-r--r-- (root/root|0/0) +[0-9]+ .* \./usr/share/polkit-1/actions/io.reasonix.studio.update.policy$' "$stage/deb-contents"
+grep -qE '^-rw-r--r-- (root/root|0/0) +[0-9]+ .* \./usr/share/polkit-1/actions/com.esengine.reasonix-studio.update.policy$' "$stage/deb-contents"
 rpm -qp --qf '[%{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME} %{FILENAMES}\n]' "$rpm" > "$stage/rpm-contents"
 grep -qx -- '-rwxr-xr-x root root /usr/lib/reasonix-studio/reasonix-studio-update-helper' "$stage/rpm-contents"
-grep -qx -- '-rw-r--r-- root root /usr/share/polkit-1/actions/io.reasonix.studio.update.policy' "$stage/rpm-contents"
+grep -qx -- '-rw-r--r-- root root /usr/share/polkit-1/actions/com.esengine.reasonix-studio.update.policy' "$stage/rpm-contents"
 
 dpkg-deb -x "$deb" "$stage/deb"
 mkdir "$stage/rpm"

@@ -4,8 +4,9 @@
 # with the repository's studio-v* tags on stdin.
 #
 # A candidate (semver prerelease segment) is a prerelease and never latest. A
-# stable tag is latest only when no higher stable studio tag exists, so
-# recovering an older tag cannot take the badge back from a newer release.
+# stable tag is latest when it is the highest stable tag of its own major line,
+# so recovering an older tag cannot take the badge back and a retired line
+# (2.x) never outranks the line being released.
 set -euo pipefail
 
 tag="${1:?tag}"
@@ -16,7 +17,9 @@ if [ "$candidate" = "true" ]; then
 	exit 0
 fi
 
-stable='^studio-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+version="${tag#studio-v}"
+major="${version%%.*}"
+stable="^studio-v${major}\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 highest="$(
 	{ grep -E "$stable" || true; } |
 		sed 's/^studio-v//' |

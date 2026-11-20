@@ -1,0 +1,78 @@
+// The window's door for phones: a second listener on a private address that a
+// paired device reaches the same panes through. Mirrors serve.ShareStatus,
+// serve.ShareOffer and serve.DeviceView.
+
+// lan is Wi-Fi or Ethernet; virtual is a VPN or proxy tunnel a phone usually
+// cannot reach; public is a globally routable IPv6 the HTTPS door serves. The
+// kernel lists them in that order, so the first is the default.
+export type AddressKind = "lan" | "tailnet" | "virtual" | "public";
+
+export interface ShareAddress {
+  interface: string;
+  ip: string;
+  kind: AddressKind;
+}
+
+export interface PairedDevice {
+  id: string;
+  name: string;
+  pairedAt: string;
+  lastSeen: string;
+  // Holding an event stream open now: a page on screen.
+  online: boolean;
+}
+
+// A paired device's answer about itself. Mirrors serve.DeviceSelf.
+export interface DeviceSelf {
+  id: string;
+  // The number the window lists it under, so both say 设备 N.
+  ordinal: number;
+  machine: string;
+}
+
+export interface ShareStatus {
+  open: boolean;
+  // True when the open door is the self-signed HTTPS one on a public address.
+  public?: boolean;
+  // The fixed port the user chose; absent means the system picks one each time.
+  port?: number;
+  origin?: string;
+  // SHA-256 of the public door's certificate, so the window can show what a
+  // browser warns about.
+  certFingerprint?: string;
+  addresses: ShareAddress[];
+  publicAddresses?: ShareAddress[];
+  devices: PairedDevice[];
+  offerExpires?: string;
+}
+
+export interface ShareOffer {
+  url: string;
+  // An SVG document, drawn dark on light whatever the theme so it scans.
+  qr: string;
+  expires: string;
+}
+
+export interface SharePort {
+  // Null where this kernel has no window to share from: a browser tab, or a
+  // phone that is itself paired.
+  shareStatus(): Promise<ShareStatus | null>;
+  openShare(ip: string): Promise<ShareStatus>;
+  // The same door on a globally routable IPv6, behind the self-signed HTTPS
+  // listener: reachable from another network without a relay or a domain.
+  openPublicShare(ip: string): Promise<ShareStatus>;
+  closeShare(): Promise<ShareStatus>;
+  // Zero clears the choice. Used the next time the door opens.
+  setSharePort(port: number): Promise<ShareStatus>;
+  // Whether this install keeps the phones that paired across restarts. Null
+  // where the reading failed: the share routes exist only on a window's kernel.
+  shareRemember(): Promise<{ remember: boolean } | null>;
+  setShareRemember(remember: boolean): Promise<{ remember: boolean }>;
+  offerShare(): Promise<ShareOffer>;
+  revokeDevice(id: string): Promise<ShareStatus>;
+  // What this page is to the kernel: a paired device, or null for the window
+  // and for a browser on a networked serve.
+  device(): Promise<DeviceSelf | null>;
+  // Unpairs this device from its own side.
+  leaveDevice(): Promise<void>;
+}

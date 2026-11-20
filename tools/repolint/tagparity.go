@@ -15,7 +15,7 @@ import (
 // typed it.
 const (
 	goTagFile = "internal/state/sessionstore/preview.go"
-	tsTagFile = "desktop/frontend-next/src/state/session.ts"
+	tsTagFile = "desktop-tauri/src/state/session.ts"
 )
 
 var (

@@ -87,6 +87,8 @@ type Server struct {
 	// already holds the startup session's lease; nil (tests, embedded use)
 	// disables lease gating.
 	leases *control.SessionLeaseKeeper
+	// relay is this pane's cloud presence; zero until the window enables it.
+	relay relayManager
 	// stance is the hub's Ask/Auto/YOLO posture, shared by every pane it drives.
 	// Nil for a server outside a hub, which speaks only for itself.
 	stance *approvalStance

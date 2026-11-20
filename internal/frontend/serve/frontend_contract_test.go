@@ -15,7 +15,7 @@ import (
 // is not a fault, since the CLI and the setup page reach some of them, while a
 // call with no route always is.
 func TestFrontendCallsOnlyPathsThisPackageServes(t *testing.T) {
-	front := filepath.Join("..", "..", "..", "desktop", "frontend-next", "src", "port")
+	front := filepath.Join("..", "..", "..", "desktop-tauri", "src", "port")
 	entries, err := os.ReadDir(front)
 	if err != nil {
 		t.Skipf("frontend port layer unavailable: %v", err)

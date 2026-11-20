@@ -21,8 +21,10 @@ var (
 	// could tell the reviewed material from whatever the source holds today.
 	// Installing it anyway takes the person's explicit trust (Request.Trust).
 	ErrUnpinned = errors.New("market: approved version is not pinned to reviewed content")
-	// ErrBadSource: the approved row names something this side will not fetch —
-	// a local path, a plain-http address, an unknown kind.
+	// ErrUnpreviewed: an unreviewed install must carry the digest its preview
+	// showed, since no reviewer has bound one.
+	ErrUnpreviewed = errors.New("market: unreviewed install without a previewed digest")
+	// ErrBadSource: the signed row names something this side will not fetch.
 	ErrBadSource = errors.New("market: approved version names an uninstallable source")
 	// ErrInvalidPluginSource identifies an invalid commit-pinned GitHub directory.
 	ErrInvalidPluginSource = errors.New("market: plugin or theme source must be an HTTPS GitHub tree URL pinned to a full 40-character lowercase hexadecimal commit")
@@ -46,25 +48,25 @@ type Request struct {
 	Digest  string `json:"digest,omitempty"`
 }
 
-// Service joins the registry to install_source.
+// Service joins the signed registry to install_source.
 type Service struct {
 	Registry Registry
-	// Owner reads the signed-in account's own packages, for PlanOwn and InstallOwn.
-	Owner Owner
 	// Home is the Reasonix home the ledger lives under.
 	Home string
 	// NewInstaller returns install_source. It must require an approved plan so
 	// an apply without a planId answers with the plan instead of installing.
 	NewInstaller func() *installsource.Tool
 	Now          func() time.Time
-	// Report and InstallKey (the market's InstallID) tell the registry an
-	// install landed. Either left empty sends nothing; the host leaves them
-	// empty unless the person has anonymous usage statistics switched on.
-	Report     InstallReporter
-	InstallKey string
 }
 
-const reportTimeout = 10 * time.Second
+// Installer names the install_source kind a listing kind installs through.
+// A theme ships inside a plugin package.
+func Installer(kind string) string {
+	if kind == "theme" {
+		return "plugin"
+	}
+	return kind
+}
 
 // Outcome is install_source's own answer plus which approved version it was.
 type Outcome struct {
@@ -101,26 +103,26 @@ func (s *Service) run(ctx context.Context, req Request, apply bool) (Outcome, er
 		if digest := strings.TrimSpace(req.Digest); digest != "" && digest != v.ContentHash {
 			return Outcome{Version: v}, fmt.Errorf("%w: %s was pinned since it was previewed", ErrVersionChanged, req.Slug)
 		}
-		return s.execute(ctx, detail.Package, v, v.ContentHash, false, false, req, apply)
+		return s.execute(ctx, detail.Package, v, v.ContentHash, false, req, apply)
 	}
 	if !req.Trust {
 		return Outcome{Version: v}, fmt.Errorf("%w: %s@%s", ErrUnpinned, detail.Package.Slug, v.Version)
 	}
-	return s.previewPinned(ctx, detail.Package, v, false, req, apply)
+	return s.previewPinned(ctx, detail.Package, v, req, apply)
 }
 
 // previewPinned plans or applies a version no reviewer bound a digest to. The
 // preview's own digest becomes the pin, so apply lands exactly what the person
 // confirmed or nothing, and a source that cannot be pinned is refused here.
-func (s *Service) previewPinned(ctx context.Context, pkg Package, v Version, own bool, req Request, apply bool) (Outcome, error) {
+func (s *Service) previewPinned(ctx context.Context, pkg Package, v Version, req Request, apply bool) (Outcome, error) {
 	if apply {
 		digest := strings.TrimSpace(req.Digest)
 		if !installsource.IsContentDigest(digest) {
 			return Outcome{Version: v}, ErrUnpreviewed
 		}
-		return s.execute(ctx, pkg, v, digest, true, own, req, true)
+		return s.execute(ctx, pkg, v, digest, true, req, true)
 	}
-	out, err := s.execute(ctx, pkg, v, "", true, own, req, false)
+	out, err := s.execute(ctx, pkg, v, "", true, req, false)
 	if err != nil {
 		return out, err
 	}
@@ -135,7 +137,7 @@ func (s *Service) previewPinned(ctx context.Context, pkg Package, v Version, own
 // execute plans or applies v of pkg through install_source, refusing material
 // whose digest is not expect. Every caller has settled which version and which
 // digest the person may install before reaching here; own is the publisher's.
-func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect string, unreviewed, own bool, req Request, apply bool) (Outcome, error) {
+func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect string, unreviewed bool, req Request, apply bool) (Outcome, error) {
 	body := map[string]any{
 		"source":  v.Source,
 		"kind":    Installer(pkg.Kind),
@@ -176,11 +178,6 @@ func (s *Service) execute(ctx context.Context, pkg Package, v Version, expect st
 			if err := saveRecord(s.Home, rec); err != nil {
 				fields["ledgerError"], _ = json.Marshal(err.Error())
 			}
-			// A publisher's own unreviewed install is not a listed package's
-			// install; the registry would not count it anyway.
-			if !own {
-				s.report(ctx, pkg.Slug)
-			}
 		}
 	}
 	return Outcome{Fields: fields, Version: v, Unreviewed: unreviewed}, nil
@@ -196,19 +193,6 @@ func (s *Service) themeCheck(ctx context.Context, body map[string]any, slug stri
 		return fmt.Errorf("%w: %s", ErrNotTheme, slug)
 	}
 	return nil
-}
-
-// report is fire-and-forget: a count the registry missed is not worth holding
-// the install's answer for, and outlives the request that triggered it.
-func (s *Service) report(ctx context.Context, slug string) {
-	if s.Report == nil || s.InstallKey == "" {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
-		defer cancel()
-		_ = s.Report.ReportInstall(ctx, slug, s.InstallKey)
-	}()
 }
 
 func (s *Service) now() time.Time {

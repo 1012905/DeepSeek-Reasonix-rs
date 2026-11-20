@@ -34,6 +34,10 @@ import (
 // runtime it opens is labelled with it, so the answer lives in one place.
 func (h *Hub) surface() surface.Surface { return h.opts.Surface.Or(surface.Serve) }
 
+// accountsBaseURL feeds boot.Options.AccountsURL, the identity service address
+// the assembly's feedback service reads.
+func accountsBaseURL() string { return strings.TrimSpace(os.Getenv("REASONIX_ACCOUNTS_URL")) }
+
 // decorateSink applies the host's sink wrapper, if it asked for one.
 func (h *Hub) decorateSink(sink event.Sink) event.Sink {
 	if h.opts.DecorateSink == nil {

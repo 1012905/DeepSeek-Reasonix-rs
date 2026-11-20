@@ -4,8 +4,8 @@
 // package is kept is its declaration: moving it is the one way to change what it
 // may depend on, and a reader sees the layer before opening a file. A package
 // may import its own layer and any layer below; directories sharing a rank are
-// independent peers, not a pool. What sits above internal/ — cmd, desktop,
-// benchmarks, tools — are hosts and assemble everything.
+// independent peers, not a pool. What sits above internal/ — cmd, benchmarks,
+// tools — are hosts and assemble everything.
 package main
 
 import (

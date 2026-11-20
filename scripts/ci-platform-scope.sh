@@ -6,10 +6,10 @@
 # set below names what is provably platform-neutral, never the reverse.
 set -euo pipefail
 
-neutral_dir='^(docs/|release-notes/|workers/|benchmarks/|npm/|examples/|desktop/frontend-next/|desktop-tauri/)'
+neutral_dir='^(docs/|release-notes/|workers/|benchmarks/|npm/|examples/|desktop-tauri/)'
 # Kernel packages whose behaviour is OS-specific (files, processes, shells,
 # sandboxes, sockets, paths) even where no file carries a build tag.
-platform_dir='^(internal/(safety|platform|base|state|ext|tools|session|assembly)/|internal/runtime/(isolation|delegation)/|cmd/|sdk/|tools/|scripts/|desktop/(electron|cmd|packaging|computer-helper|internal)/|\.github/)'
+platform_dir='^(internal/(safety|platform|base|state|ext|tools|session|assembly)/|internal/runtime/(isolation|delegation)/|cmd/|sdk/|tools/|scripts/|\.github/)'
 platform_file='(^|/)(go\.(mod|sum)|Makefile)$|\.(nsh|nsi|ps1|sh|bat|cmd)$|_(windows|darwin|linux|unix|bsd)(_test)?\.go$'
 
 seen=0
