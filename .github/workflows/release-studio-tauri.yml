@@ -63,6 +63,18 @@ jobs:
             echo "candidate=$candidate"; } >> "$GITHUB_OUTPUT"
           echo "resolved $tag -> $version at $SHA (candidate=$candidate)"
 
+      - name: Require the tag to match the shipped version
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          conf="$(git show "$SHA:desktop-tauri/src-tauri/tauri.conf.json" | jq -r .version)"
+          if [ "$conf" != "${VERSION#v}" ]; then
+            echo "::error::tauri.conf.json version ($conf) does not match the release tag (${VERSION#v}); the updater manifest would disagree with the installed product"
+            exit 1
+          fi
+
       - name: Require versioned release notes
         env:
           SHA: ${{ steps.release.outputs.sha }}

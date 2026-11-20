@@ -10,7 +10,7 @@ pipe-leading line must be a six-cell ledger row.
 | ID | Area | Reference | Rust | Status | Evidence |
 |---|---|---|---|---|---|
 | INFRA-001 | Infra | Go kernel builds via go build | Cargo workspace | done | cargo build --workspace --release exit 0 (2026-11-13) |
-| INFRA-002 | Infra | Six-target release pipeline | CI build matrix | wip | .github/workflows/ci.yml authored; first CI run pending |
+| INFRA-002 | Infra | Six-target release pipeline | CI build matrix | done | studio-v0.3.0 cut through release-studio-tauri.yml (2026-11-20); ci.yml kernel job gates fmt/clippy/test + xtask parity/deps (2026-11-21) |
 | INFRA-003 | Infra | gofmt clean tree | rustfmt gate | done | cargo fmt --all --check exit 0 (2026-11-13) |
 | INFRA-004 | Infra | go vet and staticcheck | clippy gate | done | cargo clippy --workspace --all-targets --all-features -- -D warnings exit 0 (2026-11-13) |
 | INFRA-005 | Infra | go test on the module | workspace tests | done | cargo test --workspace --all-features: 45 passed, 0 failed (2026-11-13) |

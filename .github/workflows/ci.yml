@@ -90,6 +90,26 @@ jobs:
   # detector reports the diff is unrelated, every step skips and each leg
   # reports success in seconds. `always()` also keeps the legs alive when
   # the changes job itself fails (fail-open: an empty output != 'false').
+  # The Rust kernel workspace (crates/, apps/, xtask/). The Go matrix gates
+  # the live backend; this gates the rewrite that is to replace it, plus the
+  # two repo gates the kernel carries itself (parity ledger, layering).
+  kernel:
+    needs: changes
+    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: test
+        run: cargo test --workspace --all-features
+      - name: parity ledger
+        run: cargo xtask parity --check
+      - name: dependency direction
+        run: cargo xtask deps --check
   # A pull request with no platform-relevant change moves the macOS and
   # Windows legs onto an ubuntu runner with every step skipped: the check
   # names the ruleset requires still report, without a scarce runner.
@@ -543,7 +563,7 @@ jobs:
           cache: true
 
       - name: install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
       - name: govulncheck
         run: govulncheck ./...
