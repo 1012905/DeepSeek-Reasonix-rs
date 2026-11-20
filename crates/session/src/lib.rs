@@ -1,12 +1,14 @@
 //! Hub read side: the remembered workspace list, the workspace tree, and the
-//! session listings both frontends render.
+//! session listings both frontends render, plus the controller write side
+//! that starts and steers turns.
 //!
 //! Parity target: `reference/.../internal/state/workspacelist` plus the read
 //! half of `internal/frontend/serve` (`hub_tree.go`, `sessions_list.go`,
-//! `hub.go` Hub). The write-side machine (open/publish runtimes, tree
-//! mutations) is not part of this build; every such request is answered with
-//! a typed refusal instead of a fake success (docs/contract.md §3, §4.1).
-//! Wire shapes are frozen in docs/contracts/http.md §1.2/§7.
+//! `hub.go` Hub), and `internal/session/control`'s turn group. The runtime
+//! open/publish machine is not part of this build; every such request is
+//! answered with a typed refusal instead of a fake success
+//! (docs/contract.md §3, §4.1). Wire shapes are frozen in
+//! docs/contracts/http.md §1.2/§7.
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +19,7 @@ pub mod model;
 pub mod paths;
 pub mod title;
 pub mod tree;
+pub mod turns;
 pub mod workspacelist;
 
 /// Shared scratch space for tests. The workspace target directory is used
