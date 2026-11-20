@@ -1,28 +1,54 @@
-//! The read-only builtin tool slice (wave 19 plan, slice 2): read_file,
-//! glob, ls, grep, and the read-side half of the workspace confinement
-//! machinery (confine.go). Parity targets live in each module's docs; the
-//! write-side machines the confine constructors also bind are anchored in
-//! [`confine::anchors`], not forged.
+//! The builtin tool slice: the read tools (read_file, glob, ls, grep) from
+//! waves 17-19 and the write/edit family (write_file, edit_file,
+//! multi_edit, move_file) with the workspace confinement machinery they
+//! share (confine.go). Parity targets live in each module's docs.
 
 #![forbid(unsafe_code)]
 
 pub mod anchors;
 pub mod confine;
+pub mod editengine;
+pub mod editfile;
+pub mod editsource;
+pub mod fileencode;
+pub mod fuzzyedit;
 pub mod gitignore;
 pub mod glob;
 pub mod globengine;
 pub mod grep;
 pub mod listdir;
+pub mod movefile;
+pub mod multiedit;
 pub mod network;
 pub mod pathgo;
 pub mod readfile;
+pub mod receipt;
 pub mod secretpaths;
 pub mod walk;
+pub mod writeatomic;
+pub mod writefile;
+pub mod writepaths;
 
 pub use anchors::{CODE_WRITE_OUTSIDE_SCOPE, ConfineError, confine_write_side_resolved};
 pub use confine::{
-    CODE_READ_OUTSIDE_SCOPE, confine, confine_opened, confine_read, confine_resolved,
-    confine_scope, read_outside_scope, real_path, real_roots, within, within_fold,
+    CODE_READ_OUTSIDE_SCOPE, ManagedConfigHook, SessionDataGuardHook, SessionTempSource,
+    WriteHooks, confine, confine_opened, confine_read, confine_resolved, confine_scope,
+    confine_write, read_outside_scope, real_path, real_roots, under_session_temp, within,
+    within_fold,
+};
+pub use editengine::{
+    EditApplyResult, EditRange, EditReplacementReceipt, apply_old_string_edit, matched_range_sample,
+};
+pub use editfile::EditFileTool;
+pub use editsource::{
+    CODE_OVERWRITE_READ_FORBIDDEN, CODE_OVERWRITE_READ_OUTSIDE_SCOPE, CODE_READ_FORBIDDEN,
+    EditReadPolicy, EditSource, FileOverlay, FileViewsHook, OVERWRITE_READ_ACCESS_DENIED_MESSAGE,
+    WriteReceipt, check_overwrite_read_access, check_read_target_access, read_edit_source,
+    source_for_write, write_file_encoded,
+};
+pub use fileencode::{ERR_UNENCODABLE, UnencodableError, encode, encode_bytes};
+pub use fuzzyedit::{
+    fuzzy_edit_ranges, multi_edit_failure, old_string_not_found_error, old_string_not_unique_error,
 };
 pub use glob::{
     GLOB_DEFAULT_TIMEOUT, GLOB_MAX_RESULTS, GLOB_MAX_TIMEOUT, GlobTool, glob_base, glob_walk_root,
@@ -32,11 +58,22 @@ pub use grep::{
     format_grep, grep_glob_matches, resolve_search, timeout as tool_timeout,
 };
 pub use listdir::ListDirTool;
+pub use movefile::{MoveFileTool, RenameFn, is_cross_device, std_rename};
+pub use multiedit::{EditStep, MultiEditTool};
 pub use network::{
     CODE_NETWORK_PATH_OUTSIDE_SCOPE, ResolvedPath, is_network_path, refuse_network_path,
 };
 pub use readfile::{READ_FILE_DEFAULT_LIMIT, ReadFileTool};
+pub use receipt::{
+    MAX_CAPTURED_RECEIPT_SPAN_BYTES, MAX_POST_WRITE_RECEIPT_BYTES, POST_WRITE_RECEIPT_TRUNCATED,
+    POST_WRITE_SPAN_TRUNCATED, with_actual_post_write_receipts,
+};
 pub use secretpaths::{protect_sensitive_files, set_protect_sensitive_files};
+pub use writefile::WriteFileTool;
+pub use writepaths::{
+    ERR_WRITE_PATH_REQUIRED, SESSION_TEMP_ENV_KEYS, canonical_write_path, canonical_writer_path,
+    resolve_session_temp, resolve_write_paths,
+};
 
 use std::sync::Arc;
 
@@ -71,8 +108,55 @@ pub fn confine_readers(forbid_roots: &[String]) -> Vec<Arc<dyn Tool>> {
     ]
 }
 
+/// confine.go `ConfineWriters` for the writer family this slice migrated:
+/// the file-writing built-ins bound to roots — the only directories they
+/// may modify. Empty roots yields unconfined writers. guard rejects
+/// Reasonix's own session stores even inside the roots; managed names the
+/// config files writable outside the roots after a fresh human approval.
+/// The Go members notebook_edit, delete_range and delete_symbol land with
+/// their own slices.
+pub fn confine_writers(
+    roots: &[String],
+    guard: Option<Arc<dyn SessionDataGuardHook>>,
+    managed: Option<Arc<dyn ManagedConfigHook>>,
+) -> Vec<Arc<dyn Tool>> {
+    let rs = real_roots(roots);
+    let guard = guard.clone();
+    let managed = managed.clone();
+    vec![
+        Arc::new(WriteFileTool {
+            roots: rs.clone(),
+            guard: guard.clone(),
+            managed: managed.clone(),
+            ..WriteFileTool::default()
+        }),
+        Arc::new(EditFileTool {
+            roots: rs.clone(),
+            guard: guard.clone(),
+            managed: managed.clone(),
+            ..EditFileTool::default()
+        }),
+        Arc::new(MultiEditTool {
+            roots: rs.clone(),
+            guard: guard.clone(),
+            managed: managed.clone(),
+            ..MultiEditTool::default()
+        }),
+        Arc::new(MoveFileTool {
+            roots: rs,
+            guard,
+            managed,
+            ..MoveFileTool::default()
+        }),
+    ]
+}
+
 /// The unconfined instances a composition root overrides, mirroring the Go
-/// init-time registrations for the readers of this slice.
+/// init-time registrations for this slice's tools.
 pub fn unconfined_readers() -> Vec<Arc<dyn Tool>> {
     confine_readers(&[])
+}
+
+pub fn unconfined_writers() -> Vec<Arc<dyn Tool>> {
+    confine_writers(&[], None, None)
 }
