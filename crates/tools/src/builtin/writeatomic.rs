@@ -84,9 +84,12 @@ fn apply_perm(file: &mut fs::File, perm: u32) -> io::Result<()> {
     }
 }
 
-fn unix_perm(info: &fs::Metadata, _default_perm: u32) -> u32 {
+fn unix_perm(info: &fs::Metadata, default_perm: u32) -> u32 {
     #[cfg(unix)]
     {
+        // The mode carries the permission; the default matters only to the
+        // non-unix arm.
+        let _ = default_perm;
         use std::os::unix::fs::PermissionsExt;
         info.permissions().mode() & 0o777
     }

@@ -175,9 +175,12 @@ pub fn is_cross_device(err: &io::Error) -> bool {
 /// Go `os.SameFile`. Unix compares device and inode. Windows std exposes
 /// no stable file index, so equal canonical paths stand in — that covers
 /// the case-only rename this check guards.
-fn same_file(_src: &str, _dst: &str, a: &fs::Metadata, b: &fs::Metadata) -> bool {
+fn same_file(src: &str, dst: &str, a: &fs::Metadata, b: &fs::Metadata) -> bool {
     #[cfg(unix)]
     {
+        // The identity is dev+ino; the spellings matter only to the Windows
+        // arm's canonical-path compare.
+        let _ = (src, dst);
         use std::os::unix::fs::MetadataExt;
         a.dev() == b.dev() && a.ino() == b.ino()
     }
