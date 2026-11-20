@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 reasonix-config = { workspace = true }
 reasonix-contract = { workspace = true }
+# [secrets] arms the read-tool denylists at boot (Go build.go:230).
+reasonix-tools = { workspace = true }
 reasonix-session = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }

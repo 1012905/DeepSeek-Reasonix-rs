@@ -120,6 +120,7 @@ struct LayerDelta {
     language: Option<String>,
     serve: Option<PartialServe>,
     desktop: Option<PartialDesktop>,
+    secrets: Option<PartialSecrets>,
     storage: Option<BTreeMap<String, String>>,
 }
 
@@ -132,6 +133,12 @@ struct PartialServe {
     behind_proxy: Option<bool>,
     share_port: Option<i64>,
     remember_paired_devices: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PartialSecrets {
+    protect_sensitive_files: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -151,6 +158,13 @@ fn apply_layer(config: &mut Config, delta: LayerDelta, project_scope: bool) {
     if !project_scope {
         if let Some(serve) = delta.serve {
             apply_serve(&mut config.serve, serve);
+        }
+        if let Some(secrets) = delta.secrets {
+            // A workspace file never arms or disarms the denylists
+            // (load_project.go userGlobals holds SecretsConfig).
+            if let Some(value) = secrets.protect_sensitive_files {
+                config.secrets.protect_sensitive_files = value;
+            }
         }
         if let Some(storage) = delta.storage {
             config.storage = storage;
@@ -346,6 +360,41 @@ state = "D:/elsewhere"
             loaded.storage.get("state").map(String::as_str),
             Some("C:/state")
         );
+    }
+
+    #[test]
+    fn the_user_layer_arms_secrets_and_the_project_layer_cannot() {
+        // load_project.go userGlobals: SecretsConfig is the user's — a
+        // cloned repository neither arms nor disarms the denylists.
+        let dir = temp_dir();
+        let user = write(
+            &dir,
+            "user.toml",
+            "[secrets]
+protect_sensitive_files = true
+",
+        );
+        let loaded = Config::load(&[&user]).expect("user secrets load");
+        assert!(loaded.secrets.protect_sensitive_files);
+        let project = write(
+            &dir,
+            "project.toml",
+            "[secrets]
+protect_sensitive_files = false
+",
+        );
+        let loaded = Config::load(&[&user, &project]).expect("layered secrets load");
+        assert!(loaded.secrets.protect_sensitive_files);
+        let absent_user = dir.path().join("absent-user.toml");
+        let project_only = write(
+            &dir,
+            "project-only.toml",
+            "[secrets]
+protect_sensitive_files = true
+",
+        );
+        let loaded = Config::load(&[absent_user, project_only]).expect("project-only load");
+        assert!(!loaded.secrets.protect_sensitive_files);
     }
 
     #[test]

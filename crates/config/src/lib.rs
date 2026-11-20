@@ -18,10 +18,12 @@ pub mod language;
 pub mod load;
 pub mod model;
 pub mod paths;
+pub mod secrets;
 pub mod serve;
 
 pub use language::normalize_language;
 pub use load::ConfigError;
 pub use model::Config;
 pub use paths::{auto_workspace_dir, reasonix_home_dir, user_config_path};
+pub use secrets::SecretsSection;
 pub use serve::{AuthMode, ServeSection, host_serve_section};

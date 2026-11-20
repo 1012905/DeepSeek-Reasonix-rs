@@ -37,7 +37,17 @@ pub fn load_config(cwd: &Path) -> Result<Config, ConfigError> {
     let layered: Vec<PathBuf> = std::iter::once(user_config_path())
         .chain(std::iter::once(project_config_path(cwd)))
         .collect();
-    Config::load(&layered)
+    let config = Config::load(&layered)?;
+    arm_secrets(&config);
+    Ok(config)
+}
+
+/// Arms the read-tool denylists from the loaded config. [secrets] is
+/// user-global, so arming package globals right after the load — before any
+/// subprocess can spawn — is correct for every concurrent workspace (Go
+/// build.go arms the same globals).
+pub fn arm_secrets(config: &Config) {
+    reasonix_tools::builtin::set_protect_sensitive_files(config.secrets.protect_sensitive_files);
 }
 
 /// Go `config.ReasonixHomeDir()`, re-exported for the host's `-instance-id`
@@ -61,6 +71,22 @@ mod tests {
             .prefix(name)
             .tempdir_in(&base)
             .expect("create boot test temp dir")
+    }
+
+    // [secrets] arms the read-tool denylists at boot (Go build.go:230): the
+    // loaded value reaches the tools global, default off.
+    #[test]
+    fn a_configured_secrets_toggle_arms_the_read_denylists() {
+        reasonix_tools::builtin::set_protect_sensitive_files(false);
+        arm_secrets(&Config {
+            secrets: reasonix_config::SecretsSection {
+                protect_sensitive_files: true,
+            },
+            ..Config::default()
+        });
+        assert!(reasonix_tools::builtin::protect_sensitive_files());
+        arm_secrets(&Config::default());
+        assert!(!reasonix_tools::builtin::protect_sensitive_files());
     }
 
     // M-2: two coexisting project files must read the root one only — the
