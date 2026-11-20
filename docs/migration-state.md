@@ -9,9 +9,29 @@ reviewed: 2026-11-18
 
 续跑时先读这一份。每个波次结束都要更新它；不许让它描述的树比真实的树旧。
 
-最后更新：2026-11-20（波次 17：Rust 内核 host 启动切片——config/session/serve 三 crate
+最后更新：2026-11-20（波次 17–19：Rust 内核 host 启动切片 + 工具 ABI/权限核 + bash AST 引擎/只读工具——config/session/serve 三 crate
 落地 + apps/reasonix-studio-host 端到端接线；账本 done 69→103；release 冒烟 8 契约行为
 全过；分支 `rust-migration`）。
+
+## 波次 18–19 改了什么（写侧链条前半）
+
+- **波次 18**（`docs/wave-18-plan.md`）：`crates/tools`（contract/tool ABI：Tool trait +
+  CapabilitySet/Registry/argument envelope/Refusal/NestedCallID/schema canonicalize，
+  63 测试）与 `crates/safety::permission`（permrule/Policy/Gate/write fence/session
+  grants/inline-code，57 测试 + 8 锚位）。账本 done 103→117。审查放行（零 MAJOR）。
+- **波次 19**（`docs/wave-19-plan.md`）：
+  - 切片 1：bash AST 引擎——词法核携带结构（joins/spans/stdin-heredoc/negation），
+    `shellparse_analysis`（SplitTopLevel/CompoundLeaves/PeelWrappers/ApprovalFeatures/
+    Glob/Mask），`safety::shellsafe` 判定表，network AST 化（redirect 原文拼写归一、
+    word-skeleton 网络操作数）。10 锚位测试去 ignore 全绿。SAFETY-008/009 done。
+  - 切片 2：只读 builtin 工具——confine 读半/secretpaths/network/pathgo/globengine
+    （Go filepath+doublestar 行为级）/gitignore/walk 剪枝/read_file 窗口/ls/grep 两相。
+    tools 150 测试绿。TOOL-028/050/027/056 wip（裁剪面：code_index/rg 子进程/confine
+    写侧/PathResolver）。
+- 账本：done **119**、wip 29、todo 424（起点 done 69）。
+- 分支 `rust-migration` 累计 25 提交；workspace 55 套件全绿；clippy/fmt/xtask 全 0。
+- 裁剪链下一环：builtin 写类（TOOL-029）→ jobs（TOOL-046..048）→ confine 写侧 →
+  rg 子进程 → agent 循环（B-008）→ serve 写路由。
 
 ## 波次 17 改了什么（Rust 内核 host 启动切片）
 
