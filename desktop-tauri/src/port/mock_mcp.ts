@@ -52,16 +52,19 @@ export class MockMcp extends MockProvider {
         { name: "convert_time", description: "Convert a wall-clock time between two zones.", readOnly: true },
       ],
     },
-    // 待命和连不上的那两个也有说明 —— 那是上次连上时它们自己给的答复，界面里
-    // 必须看得出这一点。待命是缓存命中的常态：工具在目录里，进程等第一次调用。
+    // The standby and the failed one carry descriptions too — their own
+    // answers from the last connect, which the UI must be able to show.
+    // Standby is the cache-hit norm: the tool is in the catalog, the
+    // process waits for its first call.
     {
       name: "context7", state: "standby", enabled: true, tools: 1, transport: "http", remembered: true,
       description: "Up-to-date library documentation, pulled per package and version.",
       toolList: [{ name: "get_library_docs", description: "Fetch docs for a resolved library ID.", readOnly: true }],
     },
     {
-      // 真实的连不上就是这个长度：端点把整句话都塞进 error，而它有多长不由我们
-      // 定 —— 右栏那一行必须扛得住，否则名字先被挤没。
+      // A real failure is exactly this long: the endpoint stuffs the whole
+      // sentence into error and its length is not ours to choose — the
+      // right-hand row must survive it, or the name is squeezed out first.
       name: "figma", state: "failed", enabled: true, transport: "http", tools: 1, httpStatus: 401,
       error: "401 unauthorized: figma-mcp needs a personal access token with file_read scope; set FIGMA_TOKEN and reconnect",
       description: "Read Figma files, frames and comments.", remembered: true, stale: true,

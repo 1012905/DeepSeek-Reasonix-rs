@@ -1,8 +1,10 @@
 <script lang="ts">
 import { computed, onUnmounted, ref, toValue, watch, type ComputedRef, type MaybeRefOrGetter } from "vue";
 
-// 墙钟跨三个数量级 —— 一次读文件 0.2s，一条 bash 一分钟 —— 线性映射会把快的
-// 那一批全挤成一个点。对数摊开它们，条只说长短，是什么类别由轨道那条线说。
+// Wall-clock spans three orders of magnitude — a 0.2s file read, a minute
+// of bash — and a linear mapping crushes the fast batch into one dot. A
+// log scale spreads them; the bar carries only the length, the track's
+// line carries the category.
 function tookWidth(ms: number) {
   return 3 + Math.log10(1 + (ms / 1000) * 9) * 22;
 }
