@@ -1,14 +1,15 @@
-//! Workspace confinement, read side (confine.go §7.1): path resolution,
-//! forbid-read deny checks, and read-scope refusals, plus the shared path
-//! primitives (`real_path`, `within`, `within_fold`, `real_roots`).
-//!
-//! The write-side half (confineWrite / session-data guard / managed-config
-//! approval / session-temp expansion) is anchored in [`crate::builtin::anchors`],
-//! not implemented here. Sibling modules carry the tools and engines.
+//! Workspace confinement (confine.go §7.1): path resolution, forbid-read
+//! deny checks, read-scope refusals, the write-side boundary check
+//! (`confine_write`), and the shared path primitives (`real_path`,
+//! `within`, `within_fold`, `real_roots`). The session-data guard,
+//! managed-config approval and session-temp manager are other slices'
+//! machines; the writers reach them through the hook traits below.
 
 #![forbid(unsafe_code)]
 
 use std::path::Path;
+
+use std::sync::Arc;
 
 use crate::builtin::anchors::{CODE_WRITE_OUTSIDE_SCOPE, ConfineError};
 use crate::builtin::pathgo;
@@ -22,6 +23,40 @@ use crate::refusal::Refusal;
 /// `workspace.read_outside_scope` — a read refused for resolving outside
 /// every read root, symlinks resolved (confine.go).
 pub const CODE_READ_OUTSIDE_SCOPE: &str = "workspace.read_outside_scope";
+
+/// The session-data guard hook (confine.go `SessionDataGuard.Check`): one
+/// policy the composition root binds, refusing writes into Reasonix's own
+/// session stores. `None` is Go's zero value — unconfined.
+pub trait SessionDataGuardHook: Send + Sync {
+    fn check(&self, target: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// The managed-config hook (confine.go `ManagedConfigPaths`): names the
+/// Reasonix-owned config files writable outside the roots after a fresh
+/// per-write human approval. `None` is Go's zero value — no escape hatch.
+pub trait ManagedConfigHook: Send + Sync {
+    fn matches(&self, target: &str) -> bool;
+    fn approve(&self, target: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// The session-temp hook (confine.go `sessiontemp.Manager`, the slice of it
+/// the writers need): the directory a run's scratch files live under.
+pub trait SessionTempSource: Send + Sync {
+    /// The session temp dir if the generation already exists.
+    fn dir(&self) -> Option<String>;
+    /// Creates the generation when needed (Go `Acquire`/`Release`).
+    fn ensure_dir(&self) -> Option<String> {
+        self.dir()
+    }
+}
+
+/// An owned hook set the writers share (Go: the struct fields).
+#[derive(Clone, Default)]
+pub struct WriteHooks {
+    pub guard: Option<Arc<dyn SessionDataGuardHook>>,
+    pub managed: Option<Arc<dyn ManagedConfigHook>>,
+    pub session_temp: Option<Arc<dyn SessionTempSource>>,
+}
 
 /// confine.go `confineRead`: target inside a forbidRoot, a credential file,
 /// or — with the protect toggle on — a sensitive path. Empty deny surface is
@@ -231,6 +266,103 @@ pub fn confine_opened(scope: &[String], path: &str) -> Option<Refusal> {
     }
     let real = real_path(path).unwrap_or_else(|_| path.to_owned());
     confine_scope(scope, &real)
+}
+
+/// confine.go `confineWrite`, the write-tool boundary check. Order is
+/// frozen: workspace confinement first; inside the roots or under the
+/// session temp → the session-data guard; a network refusal passes
+/// through; a non-managed target gets the confinement error plus the
+/// session-temp alternative; a managed config file needs the guard and
+/// then a fresh per-write human approval. A write can be inside the roots
+/// (a home-directory workspace covering the state root) and still be
+/// refused when it targets Reasonix's own session stores.
+pub fn confine_write(
+    roots: &[String],
+    hooks: &WriteHooks,
+    target: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let confine_err = confine(roots, target);
+    let confine_err = match confine_err {
+        Ok(()) => return guard_check(hooks, target),
+        Err(err) => err,
+    };
+    if under_session_temp(hooks.session_temp.as_deref(), target) {
+        return guard_check(hooks, target);
+    }
+    if confine_err.is_network() {
+        return Err(Box::new(confine_err));
+    }
+    let managed_matches = hooks.managed.as_ref().is_some_and(|m| m.matches(target));
+    if !managed_matches {
+        return Err(with_session_temp_alternative(
+            hooks.session_temp.as_deref(),
+            confine_err,
+        ));
+    }
+    guard_check(hooks, target)?;
+    match hooks
+        .managed
+        .as_ref()
+        .expect("checked above")
+        .approve(target)
+    {
+        Ok(()) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// The session-data guard check with Go's zero-value semantics: no hook is
+/// unconfined.
+fn guard_check(
+    hooks: &WriteHooks,
+    target: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match hooks.guard.as_ref() {
+        None => Ok(()),
+        Some(guard) => guard.check(target),
+    }
+}
+
+/// confine.go `withSessionTempAlternative` names the one writable place
+/// outside the roots, so a refused scratch write has somewhere to go that
+/// is not the repository.
+fn with_session_temp_alternative(
+    temp: Option<&dyn SessionTempSource>,
+    err: ConfineError,
+) -> Box<dyn std::error::Error + Send + Sync> {
+    let Some(dir) = temp.and_then(|t| t.dir()) else {
+        return Box::new(err);
+    };
+    if dir.is_empty() {
+        return Box::new(err);
+    }
+    let suffix = format!("; scratch files may also go under $TMPDIR ({dir})");
+    match err {
+        ConfineError::Outside(mut refusal) => {
+            refusal.message += &suffix;
+            Box::new(ConfineError::Outside(refusal))
+        }
+        ConfineError::Resolve { target, message } => Box::new(ConfineError::Resolve {
+            target,
+            message: format!("{message}{suffix}"),
+        }),
+        other => Box::new(other),
+    }
+}
+
+/// confine.go `underSessionTemp`: whether target sits in the session's own
+/// temporary directory. Bash already writes there — it is where $TMPDIR
+/// points — so a writer refusing it sends a run that was told to keep
+/// scratch out of the repository back into the repository.
+pub fn under_session_temp(temp: Option<&dyn SessionTempSource>, target: &str) -> bool {
+    let Some(dir) = temp.and_then(|t| t.dir()) else {
+        return false;
+    };
+    if dir.is_empty() {
+        return false;
+    }
+    let roots = real_roots(std::slice::from_ref(&dir));
+    !roots.is_empty() && confine(&roots, target).is_ok()
 }
 
 /// The stat `missing_root` consumes (roots.rs convention).

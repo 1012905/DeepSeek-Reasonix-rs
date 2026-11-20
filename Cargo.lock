@@ -1112,6 +1112,7 @@ version = "0.3.0"
 name = "reasonix-tools"
 version = "0.3.0"
 dependencies = [
+ "encoding_rs",
  "reasonix-contract",
  "reasonix-core",
  "regex",
