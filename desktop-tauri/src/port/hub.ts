@@ -658,6 +658,10 @@ export class SseHub implements HubPort {
     return this.post<ShareStatus>("/share/open", { ip });
   }
 
+  openPublicShare(ip: string) {
+    return this.post<ShareStatus>("/share/open", { ip, public: true });
+  }
+
   closeShare() {
     return this.post<ShareStatus>("/share/close", {});
   }

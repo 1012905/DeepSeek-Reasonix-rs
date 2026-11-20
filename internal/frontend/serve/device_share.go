@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -65,9 +66,11 @@ func (s *DeviceShare) remembers() bool {
 }
 
 type shareListener struct {
-	origin string
-	stop   context.CancelFunc
-	done   chan struct{}
+	origin      string
+	fingerprint string
+	public      bool
+	stop        context.CancelFunc
+	done        chan struct{}
 }
 
 // ShareAddress is one address a share can listen on.
@@ -90,18 +93,24 @@ const (
 	// AddressVirtual is anything else: a VPN or proxy tunnel, a VM switch.
 	// Listed, because it may be what someone wants, but never the default.
 	AddressVirtual AddressKind = "virtual"
+	// AddressPublic is a globally routable IPv6 address: the direct door that
+	// needs no third party, served over the self-signed HTTPS listener alone.
+	AddressPublic AddressKind = "public"
 )
 
-var addressRank = map[AddressKind]int{AddressLAN: 0, AddressTailnet: 1, AddressVirtual: 2}
+var addressRank = map[AddressKind]int{AddressLAN: 0, AddressTailnet: 1, AddressVirtual: 2, AddressPublic: 3}
 
 // ShareStatus is the whole state a window draws its sharing panel from.
 type ShareStatus struct {
-	Open         bool           `json:"open"`
-	Port         int            `json:"port,omitempty"`
-	Origin       string         `json:"origin,omitempty"`
-	Addresses    []ShareAddress `json:"addresses"`
-	Devices      []DeviceView   `json:"devices"`
-	OfferExpires *time.Time     `json:"offerExpires,omitempty"`
+	Open            bool           `json:"open"`
+	Public          bool           `json:"public"`
+	Port            int            `json:"port,omitempty"`
+	Origin          string         `json:"origin,omitempty"`
+	CertFingerprint string         `json:"certFingerprint,omitempty"`
+	Addresses       []ShareAddress `json:"addresses"`
+	PublicAddresses []ShareAddress `json:"publicAddresses"`
+	Devices         []DeviceView   `json:"devices"`
+	OfferExpires    *time.Time     `json:"offerExpires,omitempty"`
 }
 
 // ShareOffer is a pairing code as a device receives it: a link that carries the
@@ -151,6 +160,24 @@ func (s *DeviceShare) Open(ip string) (ShareStatus, error) {
 	if !slices.ContainsFunc(s.addresses(), func(a ShareAddress) bool { return a.IP == ip }) {
 		return s.Status(), ErrShareAddress
 	}
+	return s.openOn(ip, false)
+}
+
+// publicAddresses is the public-door address source; a variable seam so tests
+// bind a loopback listener instead of a real global address.
+var publicAddresses = PublicAddresses
+
+// OpenPublic listens on one of the machine's globally routable IPv6 addresses,
+// behind the self-signed HTTPS listener: the door that reaches this computer
+// from another network without a relay or a domain.
+func (s *DeviceShare) OpenPublic(ip string) (ShareStatus, error) {
+	if !slices.ContainsFunc(publicAddresses(), func(a ShareAddress) bool { return a.IP == ip }) {
+		return s.Status(), ErrShareAddress
+	}
+	return s.openOn(ip, true)
+}
+
+func (s *DeviceShare) openOn(ip string, public bool) (ShareStatus, error) {
 	s.turn.Lock()
 	defer s.turn.Unlock()
 	// An install that does not remember paired devices gets the share it always
@@ -167,17 +194,34 @@ func (s *DeviceShare) Open(ip string) (ShareStatus, error) {
 	if handler == nil {
 		return s.Status(), ErrShareUnattached
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(ip, s.listenPort()))
+	address := net.JoinHostPort(ip, s.listenPort())
+	var ln net.Listener
+	var cert tls.Certificate
+	var fingerprint string
+	var err error
+	if public {
+		cert, fingerprint, err = shareCertificate(netip.MustParseAddr(ip))
+		if err != nil {
+			return s.Status(), err
+		}
+		ln, err = tls.Listen("tcp", address, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+	} else {
+		ln, err = net.Listen("tcp", address)
+	}
 	if err != nil {
 		if addrInUse(err) {
 			return s.Status(), fmt.Errorf("%w: %w", ErrSharePortInUse, err)
 		}
 		return s.Status(), err
 	}
-	origin := "http://" + ln.Addr().String()
+	scheme := "http://"
+	if public {
+		scheme = "https://"
+	}
+	origin := scheme + ln.Addr().String()
 	ctx, stop := context.WithCancel(context.Background())
-	live := &shareListener{origin: origin, stop: stop, done: make(chan struct{})}
-	gate := NewDeviceGate(handler, DeviceGateOptions{Registry: s.registry, Origin: origin, Page: s.page, Machine: machineName()})
+	live := &shareListener{origin: origin, fingerprint: fingerprint, public: public, stop: stop, done: make(chan struct{})}
+	gate := NewDeviceGate(handler, DeviceGateOptions{Registry: s.registry, Origin: origin, Page: s.page, Machine: machineName(), Public: public})
 	s.mu.Lock()
 	s.live = live
 	s.mu.Unlock()
@@ -320,9 +364,9 @@ func (s *DeviceShare) Status() ShareStatus {
 	live := s.live
 	port := s.port
 	s.mu.Unlock()
-	st := ShareStatus{Port: port, Addresses: s.addresses(), Devices: s.registry.Devices()}
+	st := ShareStatus{Port: port, Addresses: s.addresses(), PublicAddresses: PublicAddresses(), Devices: s.registry.Devices()}
 	if live != nil {
-		st.Open, st.Origin = true, live.origin
+		st.Open, st.Origin, st.Public, st.CertFingerprint = true, live.origin, live.public, live.fingerprint
 	}
 	if exp, ok := s.registry.OfferExpires(); ok {
 		st.OfferExpires = &exp
@@ -345,6 +389,37 @@ func machineName() string {
 func OffInternet(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	return ip.IsLoopback() || ip.IsPrivate() || tailnetPrefix.Contains(ip)
+}
+
+// PublicAddresses is every globally routable IPv6 address on an up interface:
+// the addresses a device on another network can reach without a relay.
+func PublicAddresses() []ShareAddress {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	out := []ShareAddress{}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			pfx, err := netip.ParsePrefix(a.String())
+			if err != nil {
+				continue
+			}
+			ip := pfx.Addr().Unmap()
+			if !ip.Is6() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate() {
+				continue
+			}
+			out = append(out, ShareAddress{Interface: iface.Name, IP: ip.String(), Kind: AddressPublic})
+		}
+	}
+	return out
 }
 
 // PrivateAddresses is every private IPv4 address on an up interface, the ones

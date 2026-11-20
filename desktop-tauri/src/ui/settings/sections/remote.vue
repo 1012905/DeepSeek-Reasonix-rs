@@ -7,6 +7,7 @@ import SectionCard from "../../SectionCard.vue";
 import { drawsHere } from "./nesting";
 import RemoteHosts from "../parts/data-remote-hosts.vue";
 import RemotePhone from "../parts/data-remote-phone.vue";
+import RemotePublic from "../parts/data-remote-public.vue";
 
 // Other machines, and the phones that reach this one. The host book belongs to
 // the window rather than to a pane, so the hub answers it and not the port the
@@ -30,5 +31,7 @@ const port = computed(() => props.settingsProps.networkPort ?? props.settingsPro
     </Group>
 
     <RemotePhone :hub="settingsProps.hub" :port="port" :on-error="settingsProps.onError" />
+
+    <RemotePublic :hub="settingsProps.hub" :on-error="settingsProps.onError" />
   </SectionCard>
 </template>

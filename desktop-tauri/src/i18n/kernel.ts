@@ -303,6 +303,7 @@ const SAID: Record<string, string> = {
   "device.origin_rejected": "kernel.the_request_came_from_another",
   "device.unauthorized": "kernel.this_device_is_not_paired",
   "device.pairing_invalid": "kernel.that_pairing_code_is_no",
+  "device.pairing_throttled": "kernel.too_many_pairing_attempts",
   "device.not_a_device": "kernel.this_is_not_a_paired",
   "device.misconfigured": "kernel.the_sharing_listener_is_not",
   "share.closed": "kernel.phone_access_is_off_turn",

@@ -3,8 +3,9 @@
 // serve.ShareOffer and serve.DeviceView.
 
 // lan is Wi-Fi or Ethernet; virtual is a VPN or proxy tunnel a phone usually
-// cannot reach. The kernel lists them in that order, so the first is the default.
-export type AddressKind = "lan" | "tailnet" | "virtual";
+// cannot reach; public is a globally routable IPv6 the HTTPS door serves. The
+// kernel lists them in that order, so the first is the default.
+export type AddressKind = "lan" | "tailnet" | "virtual" | "public";
 
 export interface ShareAddress {
   interface: string;
@@ -31,10 +32,16 @@ export interface DeviceSelf {
 
 export interface ShareStatus {
   open: boolean;
+  // True when the open door is the self-signed HTTPS one on a public address.
+  public?: boolean;
   // The fixed port the user chose; absent means the system picks one each time.
   port?: number;
   origin?: string;
+  // SHA-256 of the public door's certificate, so the window can show what a
+  // browser warns about.
+  certFingerprint?: string;
   addresses: ShareAddress[];
+  publicAddresses?: ShareAddress[];
   devices: PairedDevice[];
   offerExpires?: string;
 }
@@ -51,6 +58,9 @@ export interface SharePort {
   // phone that is itself paired.
   shareStatus(): Promise<ShareStatus | null>;
   openShare(ip: string): Promise<ShareStatus>;
+  // The same door on a globally routable IPv6, behind the self-signed HTTPS
+  // listener: reachable from another network without a relay or a domain.
+  openPublicShare(ip: string): Promise<ShareStatus>;
   closeShare(): Promise<ShareStatus>;
   // Zero clears the choice. Used the next time the door opens.
   setSharePort(port: number): Promise<ShareStatus>;

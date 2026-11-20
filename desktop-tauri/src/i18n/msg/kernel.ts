@@ -344,6 +344,7 @@ export const KERNEL: Messages = {
   "kernel.that_page_could_not_be": { zh: "打不开这个网页：{error}", en: "That page could not be opened: {error}" },
   "kernel.that_page_is_not_studio": { zh: "该页面不属于 Studio，无法对其操作", en: "That page is not Studio itself, so it may not drive it" },
   "kernel.that_pairing_code_is_no": { zh: "配对码已失效：可能已被使用、已过期，或已换了新码。请在电脑上重新显示二维码。", en: "That pairing code is no longer valid: it was used, expired, or replaced. Show a new code on the computer." },
+  "kernel.too_many_pairing_attempts": { zh: "配对尝试过于频繁，已暂时拦截。请稍后在电脑上重新显示二维码。", en: "Too many pairing attempts; this address is briefly blocked. Show a new code on the computer shortly." },
   "kernel.that_path_is_not_inside": { zh: "该路径不属于任何已知的工作区", en: "That path is not inside any known workspace" },
   "kernel.that_path_is_outside_the": { zh: "该路径位于会话目录之外", en: "That path is outside the conversations directory" },
   "kernel.that_path_is_outside_the_2": { zh: "该路径不在当前工作区内", en: "That path is outside the current workspace" },

@@ -746,3 +746,20 @@ $ go test ./internal/frontend/serve/ -run "Market|Registry" # 绿
 $ go run ./tools/repolint -changed                  # clean
 $ 线上实拉：List 4 条；Resolve+Fetch release-notes sha256 通过
 ```
+
+## 波次 17 改了什么（无域名跨网络直连）
+
+设备自身的公网 IPv6 + 自签 HTTPS 直连门（D25）。中继与局域网保留为兜底，不是主路径。
+
+**波次 17 验证**：
+
+```
+$ go build ./... && go vet ./...                    # 0
+$ go test serve -run "Public|PairLimiter|Share|Refusal|Parity|Device"  # 绿
+$ golangci-lint v2.12.2（GOTOOLCHAIN=go1.26.7）      # 0 issues
+$ go run ./tools/repolint -changed                  # clean
+$ vue-tsc -b --force                                # 0
+$ vitest run                                        # 304 文件全绿
+```
+
+入站端口放行、手机 IPv6 与首次证书警告需用户侧确认。

@@ -649,3 +649,17 @@ Release 资产发布（`releases/latest/download/index.json` + `.minisig`），�
 
 **验证**：`go build/vet` 0；golangci 0；registry/market 测试绿；serve market 用例绿；
 repolint clean；真实线上拉取 4 条并完成一次内容 sha256 校验。
+
+## D25 —— 跨网络直连运行任务的设备（无域名）
+
+用户重申「无论是否在同一网络下都可用、不用域名、直接使用运行任务的设备」。本方案在这台机器的
+全局 IPv6 上开一扇门，页面与内核由设备自己提供，不经任何第三方服务。
+
+- 内核新增自签 HTTPS（ECDSA P-256，IP SAN，指纹上报设置卡），只在用户显式开启时绑定公网地址。
+- `PublicAddresses()` 只列全局 IPv6；`OpenPublic` 拒绝私有地址，沿用配对 Cookie、Host/Origin 门。
+- 公网门对 `/pair` 加预算：同一 IP 每 10 分钟 8 次、全局 60 次；超限返回 `device.pairing_throttled`。
+- 设置卡显示地址、证书指纹、浏览器警告与路由器放行提示；直连不可用时回退到中继卡或局域网门。
+- `REASONIX_RELAY_URL` 仍是兜底中继，地址可由用户换成任何可达服务；不是主路径。
+
+**验证**：serve 公网门/限流/HTTPS 测试绿；拒绝码两端一致；vue-tsc 0；vitest 304 文件全绿；
+golangci 0；repolint clean。真机入站需在用户路由器放行端口，且手机侧要有 IPv6。
