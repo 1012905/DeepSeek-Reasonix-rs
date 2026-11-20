@@ -16,6 +16,7 @@ pub mod listen;
 pub mod page;
 pub mod refuse;
 pub mod router;
+pub mod sink;
 
 // Host wiring surface (docs/contract.md S3): the four calls a host needs to
 // open the loopback control plane.
