@@ -349,3 +349,31 @@ m-4/m-5/m-6/m-7 可先在账本对应行注记证据缺口，随各自机器波�
   自施优化（deny 规则免二次解析、正则改手写校验免 regex 依赖）均有测试对照，属 L2。
 - 下一片解锁：bash AST 引擎（shellparse AnalyzeApprovalFeatures/SplitTopLevel/
   CompoundLeaves 等）装入 `set_bash_analysis` 即翻 SAFETY-008/009 的 8+2 锚位。
+
+---
+
+# 追加审查（波次 19 切片 1：bash AST 引擎）
+
+> 审查人：主 Agent（切片 1 由主 Agent 亲自实现——前派代理两次上游中断零落盘）。
+> 审查基准：Go 侧 shellparse/shellsafe/permission 的全部 *_test.go 用例表。
+
+## 发现与修正（实现过程中即时闭环）
+
+| # | 类别 | 问题 | 修正 |
+|---|---|---|---|
+| 1 | 词法核 | `&&`/`\|\|`/`\|` 只标 join 不推左操作数，复合语句折成单条 Control | 三个连接符现在都推左操作数（BinaryCmd 形状）；既有 69 测试保持绿 |
+| 2 | 账本对齐 | `Bash(go test *)` 对复合语句经 matchGlob 兜底误匹配 | prefix 分支改为 `return bash_prefix_matches(...)`（Go 的 return 语义：复合语句永不落回 raw glob） |
+| 3 | 安全判定 | redirect 归一用静态词提取，`$null`/`2>&1` 无法判定 | redirect_is_safe 读原始 span 拼写，剥 op 与 fd 前缀 |
+| 4 | 安全判定 | `$(pwd)` 内嵌 substitution 无法解析 | 词法核新增 `WordPart::CmdSubst(inner)`（保留内文）；resolved-substitution 只在双引号上下文走嵌套只读判定 |
+| 5 | 未加引号 `$()` | CmdSubst 变体曾丢 NestedExecution 语义 | analyze_approval_features 的 expansion 探测含 CmdSubst |
+
+## 伪优化/并发专项
+
+无 unsafe、无超计划行为改动；OnceLock 引擎安装位幂等（`install()` 用 load+store 而非
+swap，避免布尔反转可读性陷阱）；全部新代码无 unwrap/expect（测试除外）。
+
+## 验收核对
+
+- bash_anchors 8+2 锚位全部去 ignore 转绿（oracle 表逐用例）
+- core 69 + safety 66 全绿；workspace 51 套件全绿；clippy -D warnings 0；fmt 0
+- 账本 SAFETY-008/009 → done（done 119）

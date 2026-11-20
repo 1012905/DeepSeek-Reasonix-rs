@@ -357,3 +357,34 @@ MCP bind、target access、peer/settings/elicit 等 trait 锚位随签名留注�
 - 分支 `rust-migration` 累计 18 提交；51 套件全绿；clippy/fmt/deps/parity 全 0。
 - 解锁下一片：bash AST 引擎（装入 `set_bash_analysis` 翻 SAFETY-008/009）→
   builtin 工具目录（TOOL-024..035）→ agent 循环（B-008）→ serve 写路由。
+
+---
+
+# 追加：波次 19 切片 1（bash AST 引擎）
+
+## 摘要
+
+| 项 | 结果 |
+|---|---|
+| 账本 | done **117 → 119**（SAFETY-008/009）、wip 25、todo 428 |
+| 新增 Rust | ~2.6k 行（词法核结构改造 + shellparse_analysis + safety::shellsafe + 引擎装配 + network AST 化） |
+| 测试 | core 69 + safety 66 全绿；**10 个锚位测试去 ignore 全绿**（Go oracle 表逐用例）；workspace 51 套件全绿 |
+
+## 关键语义对齐（oracle 发现）
+
+1. 词法核 `&&`/`||`/`|` 推左操作数——复合语句的 BinaryCmd 形状（此前折成单条 Control 语句）。
+2. Bash prefix 规则经 `bashPrefixMatches` 单独作答：复合语句永不落回 raw glob（Go permission.go 的 return 语义，波次 18 移植时的 if-let 链漏掉了）。
+3. redirect 归一按原始拼写判定（`$null`/`NUL`/`2>&1`），span 由词法核携带。
+4. `$(...)` 捕获内文：resolved-substitution（双引号内、单条静态只读子命令）在只读分类中可解析；未加引号的 `$(` 保持 NestedExecution fail-closed。
+5. 网络操作数走 word skeleton（动态段置 NUL、brace 变体展开、PowerShell provider 前缀剥离），Windows 判定与 Go `holdWindowsShellPaths` 测试语义一致。
+
+## 引擎 seam 收口
+
+`BashAnalysis` trait（波次 18 冻结）+ `AstBashAnalysis`（默认引擎）+ `StaticBashAnalysis`
+（保留为显式覆盖通道）。8+2 锚位测试不再是锚位——它们是常规回归测试。
+
+## 下一片
+
+read-only builtin 工具（TOOL-028/050：confine/read_file/glob/ls/grep）进行中
+（Agent-ReadonlyTools）；其后 builtin 写类（TOOL-029）→ jobs（TOOL-046..048）→
+agent 循环（B-008）→ serve 写路由。
