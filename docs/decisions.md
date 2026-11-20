@@ -663,3 +663,12 @@ repolint clean；真实线上拉取 4 条并完成一次内容 sha256 校验。
 
 **验证**：serve 公网门/限流/HTTPS 测试绿；拒绝码两端一致；vue-tsc 0；vitest 304 文件全绿；
 golangci 0；repolint clean。真机入站需在用户路由器放行端口，且手机侧要有 IPv6。
+
+## D26 —— 价格确认日期续期（实读，不伪造）
+
+CI 的 `TestCatalogPricesHaveBeenCheckedRecently` 在 2026-11-20 对 2026-08-22 的行到期。
+
+- 真实执行 `make pricecheck`：DeepSeek 与 LongCat 的美元/人民币页面均与目录一致。
+- MiMo 页面由浏览器实读：V2.5 系列已于 2026-10-21 下线，当前列 V2.6（已有独立确认日期）。
+- 仅把共享 `checkedOn` 续到 2026-11-20，不改任何价格（变更只追加的规则不动）。
+- MiMo 旧行是「厂商不再列示的最后已知价格」，不是「今天仍在售」。
