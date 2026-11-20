@@ -66,7 +66,11 @@ var chineseStatutoryHolidays = []string{
 }
 
 // checkedOn is when the tables below were last read off the vendors' pages.
-const checkedOn = "2026-08-22"
+// On 2026-11-20: LongCat's USD/CNY pages still list the same rates (pricecheck
+// agreed); the MiMo page has retired V2.5 since 2026-10-21, so those rows are
+// confirmed as the last known rates of models the vendor no longer lists.
+// No rate was edited: V2.6 rows carry their own mimoCheckedOn date.
+const checkedOn = "2026-11-20"
 
 // deepseekCheckedOn is when the DeepSeek rows were last read off that vendor's
 // page. Separate from checkedOn, because confirming one vendor's prices says

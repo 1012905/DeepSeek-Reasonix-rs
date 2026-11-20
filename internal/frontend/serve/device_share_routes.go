@@ -44,13 +44,18 @@ func (h *Hub) shareStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Hub) shareOpen(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		IP string `json:"ip"`
+		IP     string `json:"ip"`
+		Public bool   `json:"public"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IP == "" {
 		missingField(w, "ip")
 		return
 	}
-	st, err := h.opts.Share.Open(body.IP)
+	open := h.opts.Share.Open
+	if body.Public {
+		open = h.opts.Share.OpenPublic
+	}
+	st, err := open(body.IP)
 	switch {
 	case errors.Is(err, ErrShareAddress):
 		refuse(w, http.StatusBadRequest, codeShareAddress, err.Error(), map[string]any{"ip": body.IP})

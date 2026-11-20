@@ -374,6 +374,11 @@ export class MockHub implements HubPort {
     return Promise.resolve({ ...this.share });
   }
 
+  openPublicShare(ip: string) {
+    this.share = { ...this.share, open: true, public: true, origin: `https://[${ip}]:${this.share.port ?? 41234}`, certFingerprint: "00".repeat(32), devices: [] };
+    return Promise.resolve({ ...this.share });
+  }
+
   setSharePort(port: number) {
     this.share = { ...this.share, port: port || undefined };
     return Promise.resolve({ ...this.share });

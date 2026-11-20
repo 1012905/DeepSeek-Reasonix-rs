@@ -465,3 +465,14 @@ reviewed: 2026-11-17
   affected network needs a proxy, a domain attached to this Cloudflare account,
   or a self-hosted relay elsewhere. `REASONIX_RELAY_URL` is set to the deployed
   `wss://reasonix-studio-web.246839837.workers.dev`.
+
+## Direct door prerequisites
+
+- The device needs a globally routable IPv6 and the phone must have IPv6 as
+  well; the router/firewall must allow inbound TCP on the selected port. The
+  browser shows a self-signed certificate warning once; the fingerprint is in
+  the settings card so it can be checked out of band.
+- ISP IPv6 prefixes can rotate: the address shown in the card is the current
+  one, and a phone paired on an old address has to scan a new code.
+- Fallback when either condition fails: the existing LAN/Tailscale door, or the
+  relay card (`REASONIX_RELAY_URL`) on a network where that host is reachable.

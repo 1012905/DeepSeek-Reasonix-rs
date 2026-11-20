@@ -649,3 +649,26 @@ Release 资产发布（`releases/latest/download/index.json` + `.minisig`），�
 
 **验证**：`go build/vet` 0；golangci 0；registry/market 测试绿；serve market 用例绿；
 repolint clean；真实线上拉取 4 条并完成一次内容 sha256 校验。
+
+## D25 —— 跨网络直连运行任务的设备（无域名）
+
+用户重申「无论是否在同一网络下都可用、不用域名、直接使用运行任务的设备」。本方案在这台机器的
+全局 IPv6 上开一扇门，页面与内核由设备自己提供，不经任何第三方服务。
+
+- 内核新增自签 HTTPS（ECDSA P-256，IP SAN，指纹上报设置卡），只在用户显式开启时绑定公网地址。
+- `PublicAddresses()` 只列全局 IPv6；`OpenPublic` 拒绝私有地址，沿用配对 Cookie、Host/Origin 门。
+- 公网门对 `/pair` 加预算：同一 IP 每 10 分钟 8 次、全局 60 次；超限返回 `device.pairing_throttled`。
+- 设置卡显示地址、证书指纹、浏览器警告与路由器放行提示；直连不可用时回退到中继卡或局域网门。
+- `REASONIX_RELAY_URL` 仍是兜底中继，地址可由用户换成任何可达服务；不是主路径。
+
+**验证**：serve 公网门/限流/HTTPS 测试绿；拒绝码两端一致；vue-tsc 0；vitest 304 文件全绿；
+golangci 0；repolint clean。真机入站需在用户路由器放行端口，且手机侧要有 IPv6。
+
+## D26 —— 价格确认日期续期（实读，不伪造）
+
+CI 的 `TestCatalogPricesHaveBeenCheckedRecently` 在 2026-11-20 对 2026-08-22 的行到期。
+
+- 真实执行 `make pricecheck`：DeepSeek 与 LongCat 的美元/人民币页面均与目录一致。
+- MiMo 页面由浏览器实读：V2.5 系列已于 2026-10-21 下线，当前列 V2.6（已有独立确认日期）。
+- 仅把共享 `checkedOn` 续到 2026-11-20，不改任何价格（变更只追加的规则不动）。
+- MiMo 旧行是「厂商不再列示的最后已知价格」，不是「今天仍在售」。
