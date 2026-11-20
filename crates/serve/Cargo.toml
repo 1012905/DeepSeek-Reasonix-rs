@@ -14,8 +14,12 @@ reasonix-contract = { workspace = true }
 reasonix-tools = { workspace = true }
 reasonix-session = { workspace = true }
 axum = { workspace = true }
+bcrypt = { workspace = true }
 bytes = { workspace = true }
 getrandom = { workspace = true }
+# Session-cookie signature and the PBKDF2 session-key derivation (auth.go).
+hmac = { workspace = true }
+sha2 = { workspace = true }
 # Listen shape (hyper-util is already in the graph through axum): the frozen
 # binding contract needs ReadHeaderTimeout, which axum::serve does not expose.
 hyper = "1"

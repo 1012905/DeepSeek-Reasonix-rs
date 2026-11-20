@@ -14,6 +14,7 @@ pub mod eventstream;
 pub mod gate;
 pub mod listen;
 pub mod page;
+pub mod password;
 pub mod refuse;
 pub mod router;
 
