@@ -453,6 +453,15 @@ impl Default for Broadcaster {
 /// entity lives in serve; session only carries the marker trait.
 impl BroadcasterHandle for Broadcaster {}
 
+/// The terminal sink of the emit pipeline (docs/contracts/sse.md §5): boot
+/// wraps the broadcaster in mark-embedded-diffs → coalesce → sync → quote
+/// before emitters ever see it, and `emit` is never blocking.
+impl crate::sink::Sink for Broadcaster {
+    fn emit(&self, e: Event) {
+        Broadcaster::emit(self, e);
+    }
+}
+
 /// Go `peer message` notice codes that re-open the session list
 /// (broadcaster.go's observer switch).
 fn peer_message_code(code: &str) -> bool {
@@ -825,5 +834,35 @@ mod tests {
         }));
         assert!(!droppable(&tool_result("t1")));
         assert!(!droppable(&Event::default()));
+    }
+
+    // Ported: assembly order Coalesce → Sync → [Broadcaster] (Go build.go:239
+    // with the broadcaster as the frontend sink): a delta burst merges before
+    // the boundary event, and the coalescer's window uses the tokio clock.
+    #[tokio::test(start_paused = true)]
+    async fn the_emit_pipeline_merges_bursts_before_the_broadcaster() {
+        use crate::sink::{DEFAULT_STREAM_DELTA_WINDOW, coalesce, sync_sink};
+        let b = Arc::new(Broadcaster::new());
+        let mut ch = b.subscribe(SubscriptionMode::From(0));
+        let pipeline = coalesce(
+            sync_sink(Arc::clone(&b) as Arc<dyn crate::sink::Sink>),
+            DEFAULT_STREAM_DELTA_WINDOW,
+        );
+        pipeline.emit(text_event("a"));
+        pipeline.emit(text_event("b"));
+        pipeline.emit(text_event("c"));
+        pipeline.emit(Event {
+            kind: "turn_done".to_owned(),
+            ..Event::default()
+        });
+        let mut texts = String::new();
+        for _ in 0..2 {
+            let f = ch.recv().await.expect("frame");
+            let w: serde_json::Value = serde_json::from_slice(&f.data).unwrap();
+            if w["kind"] == "text" {
+                texts.push_str(w["text"].as_str().unwrap());
+            }
+        }
+        assert_eq!(texts, "abc", "burst must merge ahead of the boundary");
     }
 }

@@ -974,6 +974,7 @@ dependencies = [
  "hyper-util",
  "reasonix-config",
  "reasonix-contract",
+ "reasonix-core",
  "reasonix-session",
  "reasonix-tools",
  "serde",

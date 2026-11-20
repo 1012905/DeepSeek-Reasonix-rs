@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod diff;
 pub mod fileencoding;
 pub mod filelock;
 pub mod fileutil;
