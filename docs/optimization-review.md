@@ -306,3 +306,46 @@ session/serve/assembly/host 全部测试与三项基准，全部通过/可复现
 **建议随修正一并处理（不阻塞放行）**：m-1（launch 项目优先，一行改动）、
 m-2（token panic 改 Result）、m-8（config 测试/基准换 target 临时目录）；
 m-4/m-5/m-6/m-7 可先在账本对应行注记证据缺口，随各自机器波次补齐。
+
+---
+
+# 追加审查（波次 18：工具 ABI + 权限判定核）
+
+> 审查人：主 Agent（复核口径同波次 17：Go 测试 oracle 对照 + 门实跑）。日期 2026-11-20。
+
+## 范围
+
+- `crates/tools/`（11 源文件 + 5 测试文件，63 测试）—— Agent-ToolAbi 产出
+- `crates/safety/src/permission/`（12 文件，57 测试 + 8 锚位）—— Agent-Permission 产出
+
+## 复核结论：放行（零 MAJOR/MINOR）
+
+- **oracle 对照**：Go arguments_test 20 用例、invoke_test 全用例、TestParseRule 17 用例、
+  registry/contract/provenance/write_fence/verdict/gate 测试表逐用例移植，测试名语义对应。
+- **并发纪律**：registry 单锁内快照、锁外回调（AB-BA 死锁有回归测试
+  `contract_entries_does_not_hold_registry_lock_across_tool_callbacks`）；permission 的
+  Mutex 用 `PoisonError::into_inner` 中毒恢复（不 panic）；无跨 await 持锁。
+- **错误身份**：Refusal{code}、BlockedError downcast、GateError thiserror——
+  全树无错误字符串匹配（仓库 error-text 铁律），审查未发现违例。
+- **诚实锚位**：mvdan AST 级 bash 分析以 `BashAnalysis` trait + fail-closed
+  `StaticBashAnalysis` 表达，8 个 `#[ignore]` 锚位测试携带 Go oracle 表原文——
+  不伪造只读/网络判定（sensitive 路径纪律）。
+- **伪优化专项**：无 unsafe、无超计划行为改动；OPT-T001..003（L2）为结构收敛，
+  无需基准。
+- **主 Agent 三项决策（记录）**：① `BashAnalysis` trait + OnceLock 引擎 seam 为冻结面；
+  ② origin 显式参数化（替代 Go context value）；③ CapabilitySet TypeId-downcast 认可。
+
+## OPT 条目证据核对（波次 18 增量）
+
+| OPT | 级别 | 状态 |
+|---|---|---|
+| OPT-T001 错误分类单点化 | L2 | 落盘（disabled→MCP disabled→held 同序测试） |
+| OPT-T002 schema 快照一次化 | L2 | 落盘（schemas_canonicalizes_once_per_tool） |
+| OPT-T003 duplicate-key 前置 | L2 | 落盘（unwrap_arguments_cases 三形态） |
+
+## 备注
+
+- permission 面（原计划表 OPT-001..020 之外）无既有热点条目；两 Agent 的迁移内
+  自施优化（deny 规则免二次解析、正则改手写校验免 regex 依赖）均有测试对照，属 L2。
+- 下一片解锁：bash AST 引擎（shellparse AnalyzeApprovalFeatures/SplitTopLevel/
+  CompoundLeaves 等）装入 `set_bash_analysis` 即翻 SAFETY-008/009 的 8+2 锚位。
