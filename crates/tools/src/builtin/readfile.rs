@@ -8,7 +8,7 @@ use std::io::{BufReader, Chain, Cursor, Read};
 
 use serde_json::Value;
 
-use super::confine::{confine_opened, confine_read, confine_scope, real_path};
+use super::confine::{confine_opened, confine_read, confine_scope};
 use super::network::{ResolvedPath, resolve_readable_path};
 use crate::abi::{CallContext, Tool, ToolResult};
 
@@ -86,8 +86,10 @@ impl ReadFileTool {
             Ok(f) => f,
             Err(err) => return Err(read_error(display_path, &rp, err)),
         };
-        if let Some(r) = confine_opened(&self.read_roots, &real_path(&rp.path).unwrap_or_default())
-        {
+        // confine_opened owns the re-resolution and its fallback spelling;
+        // a resolve failure here must recheck the opened path, not an empty
+        // one that reads as outside every root.
+        if let Some(r) = confine_opened(&self.read_roots, &rp.path) {
             return Err(Box::new(r));
         }
 

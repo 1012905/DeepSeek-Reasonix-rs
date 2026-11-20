@@ -12,13 +12,11 @@ use crate::shellsafe;
 /// the AST-capable shellparse).
 pub(crate) static AST_ENGINE: AstBashAnalysis = AstBashAnalysis;
 
-/// Installs the AST engine over the static one. `true` on the first call.
+/// Installs the AST engine. `true` on the first call; once anything else
+/// holds the seam ([`crate::permission::bash::set_bash_analysis`]) the
+/// engine it installed keeps answering instead of being silently bypassed.
 pub fn install() -> bool {
-    let first = !crate::permission::bash::AST_INSTALLED.load(std::sync::atomic::Ordering::Relaxed);
-    if first {
-        crate::permission::bash::AST_INSTALLED.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-    first
+    crate::permission::bash::set_bash_analysis(Box::new(AstBashAnalysis))
 }
 
 #[derive(Debug, Default, Clone, Copy)]
