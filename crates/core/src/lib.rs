@@ -13,3 +13,4 @@ pub mod filelock;
 pub mod fileutil;
 pub mod secrets;
 pub mod shellparse;
+pub mod shellparse_analysis;

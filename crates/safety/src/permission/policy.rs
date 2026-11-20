@@ -477,9 +477,21 @@ fn raw_rule_subject_matches(rule: &Rule, subject: &str) -> bool {
 fn raw_bash_prefix_matches(base: &str, subject: &str) -> bool {
     let (base_fields, malformed) = super::shellparse::static_fields(base);
     if malformed.is_empty() && !base_fields.is_empty() {
-        let (fields, subject_malformed) = super::shellparse::static_fields(subject);
-        if subject_malformed.is_empty() && prefix_fields_match(&base_fields, &fields) {
+        // The command prefix reads through wrappers: AnalyzeApprovalFeatures
+        // answers the as-written argv, PeelWrappers each layer a wrapper
+        // hands the call to (reference bash.go rawBashPrefixMatches).
+        if let Some(features) =
+            reasonix_core::shellparse_analysis::analyze_approval_features(subject)
+            && prefix_fields_match(&base_fields, &features.command_prefix)
+        {
             return true;
+        }
+        if let Ok(inv) = reasonix_core::shellparse_analysis::peel_wrappers(subject) {
+            for layer in &inv.layers {
+                if prefix_fields_match(&base_fields, layer) {
+                    return true;
+                }
+            }
         }
     }
     let base = base.trim();
@@ -638,15 +650,14 @@ pub(crate) fn rule_subject_matches(rule: &Rule, subject: &str) -> bool {
         return rule.subject == subject;
     }
     if canonical_rule_tool(&rule.tool) == "bash" {
-        if let Some(base) = bash_colon_prefix_base(&rule.subject)
-            && bash_prefix_matches(&base, subject)
-        {
-            return true;
+        // A bash prefix rule answers through bashPrefixMatches alone: the
+        // prefix must name the subject's command as a static command, so a
+        // compound statement never falls through to the raw glob.
+        if let Some(base) = bash_colon_prefix_base(&rule.subject) {
+            return bash_prefix_matches(&base, subject);
         }
-        if let Some(base) = legacy_bash_space_star_prefix_base(&rule.subject)
-            && bash_prefix_matches(&base, subject)
-        {
-            return true;
+        if let Some(base) = legacy_bash_space_star_prefix_base(&rule.subject) {
+            return bash_prefix_matches(&base, subject);
         }
     }
     match_glob(&rule.subject, subject)
@@ -1194,5 +1205,41 @@ mod tests {
         // Depends on the compound-segment analysis the static engine does not
         // carry yet; the AST engine slice unignores these.
         let _ = cmd_args("git status");
+    }
+}
+
+#[cfg(test)]
+mod probe_pol {
+    use super::*;
+    #[test]
+    fn probe_compound() {
+        let cls = bash_analysis().approval_class("go test ./legacy && rm -rf /tmp/x");
+        println!("class compound => {:?}", cls);
+        let cls1 = bash_analysis().approval_class("go test ./legacy");
+        println!("class seg1 => {:?}", cls1);
+        let cls2 = bash_analysis().approval_class("rm -rf /tmp/x");
+        println!("class seg2 => {:?}", cls2);
+        let split = reasonix_core::shellparse_analysis::split_top_level(
+            "go test ./legacy && rm -rf /tmp/x",
+        );
+        println!("split => {:?}", split.clone().map(|x| x.0.clone()));
+        let (argv, m) =
+            reasonix_core::shellparse::static_fields("go test ./legacy && rm -rf /tmp/x");
+        println!("static_fields compound => argv={argv:?} m={m:?}");
+        let base = bash_colon_prefix_base("go test *")
+            .or_else(|| legacy_bash_space_star_prefix_base("go test *"));
+        println!("prefix base => {:?}", base);
+        if let Some(b) = base.clone() {
+            println!(
+                "bash_prefix_matches => {}",
+                bash_prefix_matches(&b, "go test ./legacy && rm -rf /tmp/x")
+            );
+        }
+        let m2 = rule_matches_string(
+            "Bash(go test *)",
+            "bash",
+            "go test ./legacy && rm -rf /tmp/x",
+        );
+        println!("match => {}", m2);
     }
 }

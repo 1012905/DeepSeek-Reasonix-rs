@@ -7,14 +7,8 @@
 
 #![allow(non_snake_case)]
 
-use crate::permission::{Policy, bash_analysis};
-
-fn static_engine_only() -> bool {
-    // The anchor only holds while the AST engine is absent.
-    let probe = bash_analysis();
-    // StaticBashAnalysis decomposes nothing.
-    probe.decompose("git status && ls").is_none()
-}
+use crate::permission::Policy;
+use crate::permission::bash_engine::install;
 
 fn cmd_raw(cmd: &str) -> Box<serde_json::value::RawValue> {
     let json = format!(r#"{{"command":{}}}"#, serde_json::to_string(cmd).unwrap());
@@ -29,9 +23,8 @@ fn cmd_args(cmd: &str) -> Box<serde_json::value::RawValue> {
 /// deny rule Bash(rm:*) under mode allow. Wrapper peeling lives in the AST
 /// engine's raw-prefix matching.
 #[test]
-#[ignore = "anchor: needs the AST engine (PeelWrappers/raw prefix fields); unignore with the shell-analysis slice"]
 fn wrapped_program_matches_deny_rule() {
-    assert!(static_engine_only());
+    install();
     let cases: &[(&str, crate::permission::Decision)] = &[
         ("rm -rf b", crate::permission::Decision::Deny),
         ("env X=1 rm -rf b", crate::permission::Decision::Deny),
@@ -54,9 +47,8 @@ fn wrapped_program_matches_deny_rule() {
 /// TestPolicyDecideCompoundBash (bash_decompose_test.go): prefix rules cover
 /// compound flows segment by segment.
 #[test]
-#[ignore = "anchor: needs the AST engine (SplitTopLevel); unignore with the shell-analysis slice"]
 fn policy_decide_compound_bash() {
-    assert!(static_engine_only());
+    install();
     let p = Policy::new(
         "ask",
         &[
@@ -116,9 +108,8 @@ fn policy_decide_compound_bash() {
 /// TestBashSubjectRequiresExplicitApproval + TestReadOnlyCompoundStatementsNeedNoApproval
 /// (bash_approval_test.go): the approval classification table.
 #[test]
-#[ignore = "anchor: needs the AST engine (AnalyzeApprovalFeatures); unignore with the shell-analysis slice"]
 fn bash_subject_requires_explicit_approval() {
-    assert!(static_engine_only());
+    install();
     use crate::permission::{BashApprovalBlocker, BashApprovalClass, bash_analysis};
     let human = [
         "git status $(touch /tmp/x)",
@@ -178,9 +169,8 @@ fn bash_subject_requires_explicit_approval() {
 /// TestIsReadOnlyBashSubject (bash_readonly_test.go): the read-only
 /// classification table from shellsafe's shared tables.
 #[test]
-#[ignore = "anchor: needs the shellsafe read-only tables port (ClassifyReadOnlyCommand); unignore with the shellsafe slice"]
 fn is_read_only_bash_subject() {
-    assert!(static_engine_only());
+    install();
     use crate::permission::bash_analysis;
     let read_only = [
         "ls",
@@ -286,9 +276,8 @@ fn is_read_only_bash_subject() {
 /// TestBashReadOnlyProof (bash_readonly_test.go): the structural reason a
 /// call was not proven read-only.
 #[test]
-#[ignore = "anchor: needs the shellsafe tables + planmode Proof port; unignore with the shellsafe slice"]
 fn bash_read_only_proof_names_what_stopped_the_command() {
-    assert!(static_engine_only());
+    install();
     // Proof values live with the shellsafe slice; the table here mirrors
     // bash_readonly_test.go TestBashReadOnlyProofNamesWhatStoppedTheCommand.
     let cases: &[(&str, &str)] = &[
@@ -310,10 +299,12 @@ fn bash_read_only_proof_names_what_stopped_the_command() {
 /// classification and remembered prefix rules.
 #[test]
 #[cfg(windows)]
-#[ignore = "anchor: needs the shellsafe AST walk (wordSkeletons/operandForms); unignore with the shellsafe slice"]
 fn network_path_shell_commands_ask_in_default_mode() {
-    assert!(static_engine_only());
+    install();
     let p = Policy::new("ask", &[], &[], &[]);
+    // The reference feeds Decide the call own read-only classification
+    // (TestNetworkPathShellCommandsAskInDefaultMode computes it per case).
+    let ro = |cmd: &str| crate::permission::bash_engine::bash_subject_proof(cmd).0;
     for cmd in [
         r"type \\evil\x",
         "cat //evil/x",
@@ -327,7 +318,7 @@ fn network_path_shell_commands_ask_in_default_mode() {
         "time cat //evil/x",
     ] {
         assert_eq!(
-            p.decide("bash", false, &cmd_raw(cmd)),
+            p.decide("bash", ro(cmd), &cmd_raw(cmd)),
             crate::permission::Decision::Ask,
             "{cmd:?} must ask"
         );
@@ -339,7 +330,7 @@ fn network_path_shell_commands_ask_in_default_mode() {
         "cat a.txt",
     ] {
         assert_eq!(
-            p.decide("bash", false, &cmd_raw(cmd)),
+            p.decide("bash", ro(cmd), &cmd_raw(cmd)),
             crate::permission::Decision::Allow,
             "{cmd:?} is local"
         );
@@ -349,9 +340,8 @@ fn network_path_shell_commands_ask_in_default_mode() {
 /// TestNormalizeBashSafeRedirectsForMatch (bash_redirect_test.go): safe
 /// redirects are stripped for matching; file redirects never are.
 #[test]
-#[ignore = "anchor: needs the shellsafe AST redirect spans; unignore with the shellsafe slice"]
 fn normalize_bash_safe_redirects_for_match() {
-    assert!(static_engine_only());
+    install();
     let safe = [
         ("git log 2>/dev/null", "git log"),
         ("git log > /dev/null", "git log"),
@@ -389,9 +379,8 @@ fn normalize_bash_safe_redirects_for_match() {
 /// TestGateReportsMatchedPermissionRule (permission_test.go): compound bash
 /// rule provenance uses raw-prefix matching over segments.
 #[test]
-#[ignore = "anchor: needs the AST engine (raw prefix over static fields with dynamic payloads); unignore with the shell-analysis slice"]
 fn gate_reports_matched_permission_rule() {
-    assert!(static_engine_only());
+    install();
     let p = Policy::new("allow", &[], &["Bash(git push:*)"], &[]);
     let args = cmd_raw("git status && git push origin main");
     assert_eq!(

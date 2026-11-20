@@ -11,6 +11,7 @@
 pub mod bash;
 #[cfg(test)]
 mod bash_anchors;
+pub mod bash_engine;
 pub mod browser;
 pub mod computer;
 pub mod decision;

@@ -8,3 +8,4 @@
 #![forbid(unsafe_code)]
 
 pub mod permission;
+pub mod shellsafe;
