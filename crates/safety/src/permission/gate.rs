@@ -295,14 +295,17 @@ impl Gate {
         if remember {
             // "Always allow" is tool-wide and deny rules still win on every
             // call. The rule also joins this Policy so a direct Decide sees
-            // it before the next controller build.
-            if let Some(on_remember) = &self.on_remember {
-                on_remember(tool_name);
-            }
+            // it before the next controller build. The rule parses before
+            // the callback fires: a spelling the policy would not adopt must
+            // not be persisted by the frontend either.
             let mut policy = lock_policy(&self.policy);
             let (rule, ok) = parse_permrule(tool_name);
             if ok {
                 policy.allow.push(rule);
+                drop(policy);
+                if let Some(on_remember) = &self.on_remember {
+                    on_remember(tool_name);
+                }
             }
         }
         Ok(Verdict {

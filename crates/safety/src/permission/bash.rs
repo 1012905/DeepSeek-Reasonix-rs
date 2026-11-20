@@ -136,17 +136,12 @@ impl BashAnalysis for StaticBashAnalysis {
     }
 }
 
-/// The process-wide engine. Defaults to [`StaticBashAnalysis`]; the AST
-/// engine installs itself through [`super::bash_engine::install`], which
-/// flips [`AST_INSTALLED`].
+/// The process-wide engine: whatever installed first through
+/// [`set_bash_analysis`] or [`super::bash_engine::install`], else the AST
+/// engine that production runs on.
 static ENGINE: std::sync::OnceLock<Box<dyn BashAnalysis>> = std::sync::OnceLock::new();
-pub(crate) static AST_INSTALLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 pub fn bash_analysis() -> &'static dyn BashAnalysis {
-    if AST_INSTALLED.load(std::sync::atomic::Ordering::Relaxed) {
-        return &super::bash_engine::AST_ENGINE;
-    }
     ENGINE
         .get()
         .map(|b| b.as_ref())

@@ -254,7 +254,9 @@ impl Registry {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, RegistryState> {
-        self.state.lock().expect("registry mutex")
+        // A panic while holding the lock leaves the registry intact; the
+        // gate must still answer (the safety gate recovers the same way).
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Restricts the provider-visible schema surface to the given names while

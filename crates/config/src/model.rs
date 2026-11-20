@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::desktop::DesktopSection;
+use crate::secrets::SecretsSection;
 use crate::serve::ServeSection;
 
 /// The host-startup subset of the frozen configuration surface
@@ -18,6 +19,9 @@ pub struct Config {
     pub language: String,
     pub serve: ServeSection,
     pub desktop: DesktopSection,
+    /// [secrets]: the read-tool denylist toggles. User-global — a workspace
+    /// file never gets to arm them.
+    pub secrets: SecretsSection,
     /// [storage]: relocation targets keyed by root id. User-global — a
     /// workspace file never gets to set it (load_project.go userGlobals).
     pub storage: BTreeMap<String, String>,
@@ -55,11 +59,31 @@ mod tests {
         assert!(!defaults.serve.behind_proxy);
         assert_eq!(defaults.serve.share_port, 0);
         assert!(!defaults.serve.remember_paired_devices);
+        assert!(!defaults.secrets.protect_sensitive_files);
         assert!(defaults.desktop.telemetry.is_none());
         assert!(defaults.desktop.metrics.is_none());
         assert_eq!(defaults.desktop.tray, "");
         assert!(defaults.storage.is_empty());
         assert!(defaults.load_warnings.is_empty());
+    }
+
+    #[test]
+    fn a_secrets_section_decodes_from_toml() {
+        let config: Config = toml::from_str(
+            "[secrets]
+protect_sensitive_files = true
+",
+        )
+        .unwrap();
+        assert!(config.secrets.protect_sensitive_files);
+        // Keys the slice does not carry decode through untouched.
+        let config: Config = toml::from_str(
+            "[secrets]
+filter_subprocess_env = true
+",
+        )
+        .unwrap();
+        assert!(!config.secrets.protect_sensitive_files);
     }
 
     #[test]

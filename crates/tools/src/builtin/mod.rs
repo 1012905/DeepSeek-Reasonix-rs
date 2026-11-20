@@ -36,7 +36,7 @@ pub use network::{
     CODE_NETWORK_PATH_OUTSIDE_SCOPE, ResolvedPath, is_network_path, refuse_network_path,
 };
 pub use readfile::{READ_FILE_DEFAULT_LIMIT, ReadFileTool};
-pub use secretpaths::set_protect_sensitive_files;
+pub use secretpaths::{protect_sensitive_files, set_protect_sensitive_files};
 
 use std::sync::Arc;
 
