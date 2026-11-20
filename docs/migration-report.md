@@ -295,3 +295,65 @@ hub 读侧可用**」的可验证增量：账本 done +34 行、全部质量门�
 独立审查闭环。Go 源按其自身收敛条件继续保留为 live 后端；删除条件（账本收敛 + parity
 签收 + 真实端到端过新栈）未达成，如实不执行。后续波次入口：`docs/optimization-backlog.md`
 B-005..B-017，账本 todo 437 行。
+
+---
+
+# 追加：波次 18（工具 ABI + 权限判定核）
+
+## 0. 摘要
+
+| 项 | 结果 |
+|---|---|
+| 账本 | done **110 → 117**、wip 27、todo 428 |
+| 新增 Rust | ~6.9k 行（tools 11 源 + 5 测试；safety/permission 12 文件） |
+| 测试 | tools 63 绿 + safety 57 绿 + 8 锚位 #[ignore]（Go oracle 表逐用例） |
+| 审查 | 追加审查放行：零 MAJOR/MINOR；伪优化/并发/错误身份三专项无发现 |
+
+## 1. 行为一致性对照（关键面）
+
+| 行为 | Go | Rust | 一致 |
+|---|---|---|---|
+| permrule 三形态 Parse（含 legacy "=literal"、malformed→ok:false） | permrule.go | permission/permrule.rs（17 用例） | ✓ |
+| Decision 三态 + ParseDecision unknown→Ask | permission.go | decision.rs | ✓ |
+| Policy 求值序 deny>ask>session-allow>ask>allow>reader-allow>subjectRequiresHuman>mode | policy.go | policy.rs（policy_decide_table） | ✓ |
+| write fence 四敏感工具 + bare-grant 收窄 | write_fence.go | write_fence.rs | ✓ |
+| Gate：headless Ask→Allow、interactive remember/decline、denial 命名 | gate.go/verdict.go | gate.rs | ✓ |
+| session grant 校验（host-recorded only） | session_grant_valid.go | session_grant_valid.rs | ✓ |
+| inline-code argv 表（9 解释器拼写）+ indirect-execution blocker | shellsafe/inline_code.go + bash_approval.go 纯 argv 半 | inline_code.rs + bash.rs | ✓ |
+| Tool trait + 能力面（ReadOnly 批量语义、Preview 同解析路径、contextual fail-closed） | tool.go | tools/abi.rs（CapabilitySet） | ✓ |
+| Registry（restriction/replace-prefix/withdrawn/disabled/held MCP 优先序） | tool.go + 4 文件 | tools/registry.rs + tests/registry_policy.rs（20 用例） | ✓ |
+| argument envelope（uniqueJSON 三态 + Draft-7 子集） | arguments.go | tools/arguments.rs（20 用例） | ✓ |
+| Refusal/Remedy 渲染逐字 + BlockedError 身份 | refusal.go/blocked.go | tools/refusal.rs | ✓ |
+| NestedCallID canonical 1-based | invoke.go | tools/invoke.rs | ✓ |
+| schema canonicalize（键序/required 数组化/dependentRequired 清洗） | provider.CanonicalizeSchema | tools/schema.rs（8 用例） | ✓ |
+| provenance 读类型不读名、永不零值 | provenance.go | tools/provenance.rs | ✓ |
+
+**诚实锚位**（不伪造）：bash AST 级判定（wrapper 剥离/复合叶/redirect 归一）→
+`BashAnalysis` trait + fail-closed StaticBashAnalysis + 8 锚位测试；annotations/runtime
+MCP bind、target access、peer/settings/elicit 等 trait 锚位随签名留注释。
+
+## 2. 修复与优化
+
+- L0：无新发现（迁移波次）。
+- L2：OPT-T001 错误分类单点化、OPT-T002 schema 快照一次化（once-per-tool 测试钉住）、
+  OPT-T003 duplicate-key 前置；permission 侧 deny 规则免二次解析、正则→手写校验免 regex。
+- 主 Agent 决策三项：BashAnalysis 引擎 seam 为冻结面；origin 显式参数化；
+  CapabilitySet TypeId-downcast（供应链内无 anymap）。
+
+## 3. 文件映射（波次 18）
+
+| Go | Rust |
+|---|---|
+| internal/contract/tool/{tool,registry*,replace_prefix,withdrawn,disabled_*,held_mcp}.go | crates/tools/src/{abi,registry,withdrawn}.rs + tests/registry_policy.rs |
+| internal/contract/tool/{arguments,shell_execution,refusal,blocked,invoke,provenance,roots,reach,contract}.go | crates/tools/src/{arguments,shell,refusal,invoke,provenance,roots}.rs + schema.rs |
+| internal/contract/permrule/permrule.go | crates/safety/src/permission/permrule.rs |
+| internal/safety/permission/{permission,verdict,gate,write_fence,rule_*,subject,session_grant_valid,origin_ctx,policy_options}.go | crates/safety/src/permission/{policy,gate,write_fence,decision,session_grant_valid}.rs |
+| internal/safety/permission/{inline_code(→shellsafe),bash_approval 纯 argv 半}.go | crates/safety/src/permission/{inline_code,bash}.rs |
+| internal/safety/permission/bash_{approval,decompose,readonly,redirect}.go AST 半 | 锚位：BashAnalysis seam + bash_anchors（8 #[ignore]） |
+
+## 4. 累计状态（波次 17+18）
+
+- 账本：done **117** / wip 27 / todo 428（起点 done 69）。
+- 分支 `rust-migration` 累计 18 提交；51 套件全绿；clippy/fmt/deps/parity 全 0。
+- 解锁下一片：bash AST 引擎（装入 `set_bash_analysis` 翻 SAFETY-008/009）→
+  builtin 工具目录（TOOL-024..035）→ agent 循环（B-008）→ serve 写路由。
