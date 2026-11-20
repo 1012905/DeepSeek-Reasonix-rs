@@ -26,8 +26,14 @@ pub fn separator() -> char {
     if cfg!(windows) { '\\' } else { '/' }
 }
 
-/// Go `filepath.VolumeNameLen`: drive letter or UNC prefix length.
+/// Go `filepath.VolumeNameLen`: drive letter or UNC prefix length. POSIX
+/// names carry no volume — the Windows forms below are compile-time dead
+/// there, which is what makes `clean("//a//b")` answer `/a/b` on unix like
+/// Go's unix Clean does.
 pub fn volume_name_len(path: &str) -> usize {
+    if cfg!(unix) {
+        return 0;
+    }
     let b = path.as_bytes();
     if b.len() >= 2 && is_path_separator(b[0]) && is_path_separator(b[1]) {
         // UNC: two leading separators, then host\share; the volume ends at
@@ -136,7 +142,13 @@ pub fn clean(path: &str) -> String {
 pub fn is_abs(path: &str) -> bool {
     let vol = volume_name_len(path);
     if vol == 0 {
-        return false;
+        // On POSIX a leading separator roots the path; on Windows a path
+        // without a volume is rootless (drive-relative).
+        return cfg!(unix)
+            && path
+                .as_bytes()
+                .first()
+                .is_some_and(|&b| is_path_separator(b));
     }
     if vol == 2 && path.as_bytes()[1] == b':' {
         let b = path.as_bytes();
