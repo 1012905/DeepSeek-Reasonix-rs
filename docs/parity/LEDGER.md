@@ -125,7 +125,7 @@ pipe-leading line must be a six-cell ledger row.
 | ROUTE-017 | HTTP | csrfGuard content types + binary upload exceptions (415) | reasonix-serve | done | auth.rs csrf tests (json-only POST, octet-stream exceptions) (2026-11-20) |
 | ROUTE-018 | HTTP | No CORS / same-origin policy | reasonix-serve | done | no CORS surface emitted; same-origin only (router contract tests + golden replay) (2026-11-20) |
 | ROUTE-019 | HTTP | OpenBindRefusal + PlainHTTPAuthWarning | reasonix-serve | todo | M1: docs/contracts/http.md §2.10 |
-| ROUTE-020 | HTTP | Binding: Run/RunGraceful timeouts, 10s drain | reasonix-serve | done | listen.rs tests (shutdown ok, in-flight completes within drain, header 10s, idle 120s watchdog) (2026-11-20) |
+| ROUTE-020 | HTTP | Binding: Run/RunGraceful timeouts, 10s drain | reasonix-serve | done | listen.rs tests (shutdown ok, in-flight completes within drain, idle keep-alive closes with the signal; idle watchdog: in-flight request survives polls, trickling body survives repeated polls, idle keep-alive closed by watchdog) (2026-11-21) |
 | ROUTE-021 | HTTP | FindPage resolution order | reasonix-serve | done | page.rs tests (explicit dir requires index.html; exe-side; ../desktop-tauri/dist — BREAK-002 records the contract-doc path correction) (2026-11-20) |
 | ROUTE-022 | HTTP | Reason envelope {code, error, params} | reasonix-serve | done | refuse.rs Go field order + params key ordering tests (2026-11-20) |
 | ROUTE-023 | HTTP | writeErr mapping: coded/memory/config/answers | reasonix-serve | wip | coded/config.unparsed/answers branches + http.Error fallback tested; memory read-error types arrive with the memory machine (2026-11-20) |
