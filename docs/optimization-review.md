@@ -377,3 +377,23 @@ swap，避免布尔反转可读性陷阱）；全部新代码无 unwrap/expect�
 - bash_anchors 8+2 锚位全部去 ignore 转绿（oracle 表逐用例）
 - core 69 + safety 66 全绿；workspace 51 套件全绿；clippy -D warnings 0；fmt 0
 - 账本 SAFETY-008/009 → done（done 119）
+
+---
+
+# 追加审查（波次 19 切片 2：只读 builtin 工具）
+
+> 审查人：主 Agent。门复核：150/150 测试绿、clippy -D warnings 0、fmt 0、xtask 双门 OK。
+
+## 裁决记录（Agent 提请的三项）
+
+1. **L3-1（无仓库根 ignore 机制）**：接受观察契约 `at_rootless`（走根自身 .gitignore 当规则根）
+   ——保守方向（排除更多而非更少），Go 侧真实机制标注待后续对拍；已在 crates/tools/
+   src/builtin/gitignore.rs 两处注释点名。
+2. Cargo.lock 随切片提交（依赖图为真）。
+3. TOOL-027 保持 wip 直至 rg 子进程引擎落地（描述变体不可达即不翻 done）。
+
+## 伪优化/并发专项
+
+无 unsafe、无超计划行为改动；glob 引擎为 Go filepath.Match + doublestar v4 的行为级
+移植（测试表钉住）；walk 剪枝表为封闭集合（vendor/VCS）。150 测试全绿且全部
+Go oracle 用例名对应。

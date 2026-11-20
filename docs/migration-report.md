@@ -388,3 +388,17 @@ MCP bind、target access、peer/settings/elicit 等 trait 锚位随签名留注�
 read-only builtin 工具（TOOL-028/050：confine/read_file/glob/ls/grep）进行中
 （Agent-ReadonlyTools）；其后 builtin 写类（TOOL-029）→ jobs（TOOL-046..048）→
 agent 循环（B-008）→ serve 写路由。
+
+## 追加：波次 19 切片 2（只读 builtin 工具）
+
+| 项 | 结果 |
+|---|---|
+| 账本 | TOOL-028/050/027/056 → wip（done 保持 119；todo 424） |
+| 新增 Rust | ~5.1k 行（confine/secretpaths/network/pathgo/globengine/gitignore/walk/readfile/glob/listdir/grep + 67 测试） |
+| 测试 | tools 150/150 绿；clippy 0；fmt 0 |
+
+关键对齐：Go filepath Clean/Rel 行为级移植（lazybuf 体）；doublestar `**`/brace/转义；
+read_file 编号窗口与 BOM/UTF-16/GB18030 级联（复用 core::fileencoding）；grep 两相
+（tracked → ignored-pass）与 CJK peek 解码；confine 拒绝原文逐字（含 verbatim 路径纪律）。
+裁剪面：code_index、rg 子进程引擎、confine 写侧（SessionDataGuard/managed/sessiontemp）、
+PathResolver/FileViews——各自锚位。
