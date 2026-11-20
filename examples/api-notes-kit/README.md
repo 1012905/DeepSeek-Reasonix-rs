@@ -9,7 +9,7 @@ reviewed: 2026-10-01
 
 A native declarative package showing how to ship a source-linked documentation
 skill with references, original inputs, and a local checker. The fictional
-Notes API fixture and all other content inherit this repository's MIT license.
+Notes API fixture and all other content inherit this repository's GPL-3.0-only license.
 This is an author template, not a reviewed community-market listing.
 
 The skill writes a Markdown guide from local OpenAPI JSON. It leaves review
