@@ -278,7 +278,12 @@ pub(crate) async fn runtime_sessions(State(hub): State<Arc<Hub>>) -> Response {
         .first()
         .map(|rt| rt.root.clone())
         .unwrap_or_default();
-    let rows: Vec<SessionRow> = hub.sessions(std::path::Path::new(&workspace));
+    // The transcript walk is blocking file I/O (docs/kernel-rs/AGENTS.md
+    // 10.3) — it does not belong on the async workers.
+    let rows: Vec<SessionRow> =
+        tokio::task::spawn_blocking(move || hub.sessions(std::path::Path::new(&workspace)))
+            .await
+            .unwrap_or_default();
     write_json(&rows)
 }
 
@@ -313,7 +318,11 @@ async fn route_default(State(state): State<RouterState>, request: Request) -> Re
     .then_some(())
     .and(state.page.clone());
     if let Some(page) = page {
-        return match std::fs::read(page.join("index.html")) {
+        // Blocking read off the async workers (docs/kernel-rs/AGENTS.md 10.3).
+        let bytes = tokio::task::spawn_blocking(move || std::fs::read(page.join("index.html")))
+            .await
+            .unwrap_or_else(|_| Err(std::io::Error::other("page read task ended")));
+        return match bytes {
             Ok(bytes) => {
                 let mut response = Response::new(Body::from(bytes::Bytes::from(bytes)));
                 *response.status_mut() = StatusCode::OK;

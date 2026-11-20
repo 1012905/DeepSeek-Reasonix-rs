@@ -219,13 +219,19 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Reads one cookie out of a `Cookie` header (Go `r.Cookie`): the first
-/// match wins, values lose surrounding quotes.
+/// match wins, values lose surrounding quotes, and a pair without `=` or a
+/// non-UTF-8 header is skipped, not fatal — cookies are host-scoped, so any
+/// loopback neighbor can land one in this header and must not blind the scan.
 pub(crate) fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     for value in headers.get_all(axum::http::header::COOKIE) {
-        let value = value.to_str().ok()?;
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
         for pair in value.split(';') {
             let pair = pair.trim_start();
-            let (key, val) = pair.split_once('=')?;
+            let Some((key, val)) = pair.split_once('=') else {
+                continue;
+            };
             if key.trim() == name {
                 let val = val.trim();
                 let unquoted = val
@@ -404,6 +410,23 @@ mod tests {
         );
         assert_eq!(cookie_value(&headers, TOKEN_COOKIE), Some("plain"));
         assert_eq!(cookie_value(&headers, "absent"), None);
+    }
+
+    // A malformed pair from a loopback neighbor must not blind the scan
+    // (Go readCookies skips it), or one stray cookie 401s the credential.
+    #[test]
+    fn cookie_reader_skips_malformed_pairs() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            HeaderValue::from_static("broken; reasonix_token=tkn"),
+        );
+        assert_eq!(cookie_value(&headers, TOKEN_COOKIE), Some("tkn"));
+        headers.insert(
+            axum::http::header::COOKIE,
+            HeaderValue::from_static("broken"),
+        );
+        assert_eq!(cookie_value(&headers, TOKEN_COOKIE), None);
     }
 
     #[test]

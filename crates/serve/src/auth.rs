@@ -69,23 +69,35 @@ pub struct AuthGate {
 impl AuthGate {
     /// Auth off: mutations still need the launch token (Go `newAuthGate`,
     /// authNone arm). An empty configured token is replaced by a generated
-    /// one; minting can fail only if the OS CSPRNG does, and the caller
-    /// decides the fallback (`build_router` degrades to deny-everything).
+    /// one; one the cookie machinery cannot carry denies everything. Minting
+    /// can fail only if the OS CSPRNG does, and the caller decides the
+    /// fallback (`build_router` degrades to deny-everything).
     pub fn none(configured: &str) -> Result<Self, getrandom::Error> {
-        Ok(Self {
-            mode: AuthMode::None,
-            token: configured_token(configured)?,
-            hosts: HostAllowlist::default(),
-        })
+        let token = configured_token(configured)?;
+        Ok(Self::carriable(AuthMode::None, token))
     }
 
     /// Token mode: cookie, bearer, or legacy query parameter.
     pub fn token_mode(configured: &str) -> Result<Self, getrandom::Error> {
-        Ok(Self {
-            mode: AuthMode::Token,
-            token: configured_token(configured)?,
+        let token = configured_token(configured)?;
+        Ok(Self::carriable(AuthMode::Token, token))
+    }
+
+    /// A configured token the cookie/header machinery cannot carry would
+    /// silently disable cookie auth on every response; the gate refuses the
+    /// configuration instead of issuing cookies nothing will ever match.
+    fn carriable(mode: AuthMode, token: String) -> Self {
+        if !is_usable_cookie_token(&token) {
+            tracing::warn!(
+                "serve auth: the configured token cannot travel in a cookie or header; refusing every request"
+            );
+            return Self::invalid();
+        }
+        Self {
+            mode,
+            token,
             hosts: HostAllowlist::default(),
-        })
+        }
     }
 
     /// An unrecognized mode denies everything (auth.go `authInvalid`).
@@ -160,6 +172,15 @@ fn configured_token(configured: &str) -> Result<String, getrandom::Error> {
     } else {
         Ok(token)
     }
+}
+
+/// RFC 6265 cookie-octets: the byte set a token must hold for the cookie and
+/// `Authorization` machinery to carry it verbatim. Generated tokens
+/// (base64url) always pass; only configured ones can fail.
+fn is_usable_cookie_token(token: &str) -> bool {
+    token
+        .bytes()
+        .all(|b| (0x21..=0x7e).contains(&b) && !matches!(b, b'"' | b',' | b';' | b'\\'))
 }
 
 /// Go `launchTokenEqual`: trimmed, non-empty, constant-time.
@@ -639,6 +660,27 @@ pub fn is_loopback_host(hostport: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A configured token the cookie machinery cannot carry must deny
+    // everything loudly, not issue cookies nothing will ever match.
+    #[test]
+    fn an_unusable_configured_token_denies_everything() {
+        for token in ["to;ken", "tok en", "tok\\en", "tok\"en", "tok,én"] {
+            let gate = AuthGate::token_mode(token).expect("construction is infallible");
+            assert_eq!(gate.mode(), AuthMode::Invalid, "{token:?}");
+        }
+        let gate = AuthGate::none("to;ken").expect("construction is infallible");
+        assert_eq!(gate.mode(), AuthMode::Invalid);
+    }
+
+    #[test]
+    fn generated_and_plain_tokens_are_carriable() {
+        let gate = AuthGate::token_mode("tkn_123-abc").expect("construction is infallible");
+        assert_eq!(gate.mode(), AuthMode::Token);
+        let gate = AuthGate::token_mode("").expect("construction is infallible");
+        assert_eq!(gate.mode(), AuthMode::Token);
+        assert!(is_usable_cookie_token(gate.token()));
+    }
 
     #[test]
     fn token_bootstrap_public_paths_are_exactly_the_shell_entries() {
