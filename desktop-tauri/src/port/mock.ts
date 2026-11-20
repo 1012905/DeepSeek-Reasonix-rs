@@ -717,9 +717,11 @@ export class MockPort extends MockWorkspace implements AgentPort {
     this.at = 0;
   }
 
-  // 三条出路是三个不同的内核状态转移，不是「批准/拒绝」。只有开始执行把计划
-  // 带进执行、因而离开计划模式；改计划留在里面。真机上这个标志由 /status 说，
-  // 台架不建模它，靠它判断的守卫就只能永远红 —— 那正是它红了的原因。
+  // The three outcomes are three different kernel state transitions, not
+  // "approve/deny": only starting execution carries the plan into execution
+  // and leaves plan mode; revising stays inside. On a real device /status
+  // reports the flag; the bench does not model it, so any guard deciding on
+  // it stays red for good — which is exactly why it is red here.
   async planDecision(_id: string, action: PlanAction) {
     if (action !== "revise") this.state.plan = false;
     this.ungate();

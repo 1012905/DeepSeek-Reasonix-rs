@@ -9,8 +9,9 @@ export interface TrajRow {
   kind: string;
   payload: Span[];
   subs: Span[][];
-  // 时间轴画的是事实，不是格式化过的字：一条记录代表的活动跑了多久（秒），
-  // 以及是哪个工具跑的 —— 颜色由界面那层按类别决定。
+  // The timeline draws facts, not formatted words: how long (in seconds)
+  // the activity behind a record ran, and which tool ran it — the UI layer
+  // picks the color from the category.
   dur?: number;
   tool?: string;
   // Provider-reported completion tokens for a model round. Kept numeric so a

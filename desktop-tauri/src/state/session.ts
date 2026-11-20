@@ -288,8 +288,9 @@ function apply(s: SessionState, ev: SessionEvent): SessionState {
     // minute. Leaving the label on 等你批准 says the opposite of what is
     // happening, and it is the one line the user watches to know anything is.
     const decided = s.items.find((i) => i.id === ev.id);
-    // 计划卡的三个结局里只有一个是「放行」：改计划和暂不执行都在门口否决，
-    // 区别只在离不离开计划模式 —— 两个都不该把标签写成某个工具正在跑。
+    // Of the three plan-card outcomes only one lets the turn through:
+    // revise and exit both refuse at the door, differing only in whether
+    // plan mode is left — neither should label some tool as running.
     const halted = ev.verdict === "deny" || ev.verdict === "revise" || ev.verdict === "exit";
     const resumed = decided?.t === "approval" && !halted ? decided.a.tool || RUNNING : s.doing;
     return {

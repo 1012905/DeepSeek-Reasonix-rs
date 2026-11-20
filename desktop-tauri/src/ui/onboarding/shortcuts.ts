@@ -4,9 +4,9 @@ import { HttpError } from "../../port/port";
 // What the first screen offers before anyone has typed anything.
 //
 // A shortcut fills the address and nothing more: a service missing from this
-// row is not unsupported — what decides that is what the endpoint answers. 自建
-// is a first-class entry rather than a fallback, because a relay is what many
-// people actually have. `console` is where a person goes to get the key this
+// row is not unsupported — what decides that is what the endpoint answers.
+// A self-hosted endpoint is a first-class entry rather than a fallback,
+// because a relay is what many people actually have. `console` is where a person goes to get the key this
 // screen is asking for, the step nothing in the app can do for them; a vendor
 // whose key page we cannot name links to its platform root instead, because
 // sending someone to a 404 is worse than sending them to a front door.

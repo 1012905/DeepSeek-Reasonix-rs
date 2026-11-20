@@ -83,8 +83,9 @@ export class MockShell extends MockExtensions {
   }
 }
 
-// 够把分段条和悬停面板画出来的一份构成：工具定义比对话本身还大，正是这个面板
-// 要让人看见的那种情况。
+// A composition big enough to draw the segmented bar and the hover panel:
+// tool definitions larger than the conversation itself is exactly the case
+// this panel exists to make visible.
 const RATIO = 0.9;
 
 function bounds(window: number) {
