@@ -906,6 +906,7 @@ fn keep_superseded_transcript(path: &str, superseding: bool) {
     let header = format!("// superseded at {stamp} by the runtime holding this session's lease\n");
     #[cfg(unix)]
     let mut options = {
+        use std::os::unix::fs::OpenOptionsExt as _;
         let mut options = OpenOptions::new();
         options.mode(0o600);
         options

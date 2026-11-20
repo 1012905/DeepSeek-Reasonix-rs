@@ -410,10 +410,12 @@ mod tests {
     // makes the fallback unreachable there — same as the reference.
     #[cfg(unix)]
     fn a_missing_primary_falls_back_to_the_legacy_os_support_copy() {
-        let home = home_dir("legacy");
         let support = home_dir("legacy-support");
+        // No pinned home: the pin turns the legacy chain off (the sibling
+        // test holds that; Go render_test.go's NoLegacyFallbackWhenIsolated
+        // says the same). On unix the default home is $HOME/.reasonix, so
+        // the OS-support copy under $HOME/.config is a distinct tree.
         let env = env_with(&[
-            ("REASONIX_HOME", &home.to_string_lossy()),
             ("USERPROFILE", &support.to_string_lossy()),
             ("HOME", &support.to_string_lossy()),
             ("APPDATA", &support.to_string_lossy()),

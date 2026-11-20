@@ -14,7 +14,14 @@
 /// so the answer is no — the host flag is fixed at compile time here, while
 /// the Go test toggles it at runtime.
 pub fn operands_name_network_path(command: &str) -> bool {
-    if !cfg!(windows) {
+    operands_name_network_path_on(command, cfg!(windows))
+}
+
+/// The same answer with the host named, so the oracle test can pin the
+/// Windows table on every platform the way the reference's test toggles it
+/// at runtime.
+fn operands_name_network_path_on(command: &str, windows: bool) -> bool {
+    if !windows {
         return false;
     }
     // The reference walks every word of the parse (nested included); a parse
@@ -318,14 +325,26 @@ mod tests {
 
     #[test]
     fn network_spellings() {
-        assert!(operands_name_network_path(r"cat \\evil\x"));
-        assert!(operands_name_network_path("cat //evil/x"));
-        assert!(operands_name_network_path("grep -r x //evil/x"));
-        assert!(operands_name_network_path(r"Get-Content \\evil\x"));
-        assert!(operands_name_network_path(r"\\evil\share\a.exe -v"));
-        assert!(!operands_name_network_path("cat C:\\x\\y"));
-        assert!(!operands_name_network_path("echo a,b"));
-        assert!(!operands_name_network_path("cat a.txt"));
+        // The Windows table pinned through the named-host seam, the way the
+        // reference's test toggles the host at runtime.
+        let on = |command: &str| operands_name_network_path_on(command, true);
+        assert!(on(r"cat \\evil\x"));
+        assert!(on("cat //evil/x"));
+        assert!(on("grep -r x //evil/x"));
+        assert!(on(r"Get-Content \\evil\x"));
+        assert!(on(r"\\evil\share\a.exe -v"));
+        assert!(!on("cat C:\\x\\y"));
+        assert!(!on("echo a,b"));
+        assert!(!on("cat a.txt"));
+    }
+
+    // The public answer is compile-time fixed: on a non-Windows host `//x`
+    // is a local path and nothing reads as network.
+    #[test]
+    #[cfg(not(windows))]
+    fn a_non_windows_host_answers_no() {
+        assert!(!operands_name_network_path(r"cat \\evil\x"));
+        assert!(!operands_name_network_path("cat //evil/x"));
     }
 
     #[test]
