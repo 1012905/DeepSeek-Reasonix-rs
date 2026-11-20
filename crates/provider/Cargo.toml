@@ -8,3 +8,16 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+reasonix-contract = { workspace = true }
+bytes = { workspace = true }
+http-body = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tower = { workspace = true }
+webpki-roots = { workspace = true }
