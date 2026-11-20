@@ -24,8 +24,6 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Go `http.Server.IdleTimeout`: how long a keep-alive connection may sit
 /// with nothing moving before the server closes it.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-/// How often the idle watchdog looks at the connection's last activity.
-const IDLE_POLL: Duration = Duration::from_secs(10);
 
 /// Go `RunGracefulHandler`: serves the router on a caller-supplied listener —
 /// one that already recorded its real bound address — until `shutdown`
@@ -85,14 +83,15 @@ async fn accept_loop(
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _addr) = accepted?;
-                // The watcher subscribes before it is sent to the task, so a
-                // shutdown signal that lands before the task starts is still
-                // seen (a fresh Receiver only misses sends made before the
-                // subscription existed).
-                let watcher = graceful.watcher();
+                // The stop receiver subscribes before it is sent to the task,
+                // so a shutdown signal that lands before the task starts is
+                // still seen (a fresh Receiver only misses sends made before
+                // the subscription existed).
+                let stopped = stopped.clone();
                 let router = router.clone();
+                let keeper = graceful.watcher();
                 tokio::spawn(async move {
-                    serve_connection(watcher, stream, router).await;
+                    serve_connection(keeper, stopped, stream, router).await;
                 });
             }
             _ = stopped.changed() => {
@@ -105,9 +104,22 @@ async fn accept_loop(
 }
 
 async fn serve_connection(
-    watcher: hyper_util::server::graceful::Watcher,
+    keeper: hyper_util::server::graceful::Watcher,
+    stopped: watch::Receiver<bool>,
     stream: tokio::net::TcpStream,
     router: Router,
+) {
+    serve_connection_with(keeper, stopped, stream, router, IDLE_TIMEOUT).await;
+}
+
+/// The idle budget of the connection task's watchdog, parametrized so the
+/// tests can shrink `IDLE_TIMEOUT` without waiting minutes.
+async fn serve_connection_with(
+    _keeper: hyper_util::server::graceful::Watcher,
+    mut stopped: watch::Receiver<bool>,
+    stream: tokio::net::TcpStream,
+    router: Router,
+    idle_timeout: Duration,
 ) {
     let activity = Arc::new(Mutex::new(Instant::now()));
     let stream = ActivityStream::new(stream, activity.clone());
@@ -120,20 +132,64 @@ async fn serve_connection(
         .header_read_timeout(Some(HEADER_READ_TIMEOUT));
     let connection =
         builder.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(stream), service);
-    // Shutdown closes this connection when idle and waits for an in-flight
-    // request; the idle watchdog closes it during normal operation.
+    tokio::pin!(connection);
+    // The connection is driven raw so both closers can reach it: shutdown
+    // rides the `stopped` channel and idle rides the watchdog, each calling
+    // `graceful_shutdown` (an idle keep-alive closes at once, an in-flight
+    // request finishes) rather than dropping the future mid-request. Drain
+    // accounting rides `keeper`: its receiver lives until this task ends,
+    // which is what `GracefulShutdown::shutdown` waits on. The watchdog wakes
+    // exactly when the idle budget would be spent and re-reads the activity
+    // stamp first, so it completes only once nothing has moved for the whole
+    // budget. A task accepted in the same select round that stopped the
+    // accept loop starts already draining.
+    let draining = *stopped.borrow_and_update();
+    if draining {
+        drain(connection, idle_timeout).await;
+        return;
+    }
+    let watchdog = async {
+        loop {
+            let last = *activity.lock().unwrap_or_else(|e| e.into_inner());
+            if last.elapsed() > idle_timeout {
+                tracing::debug!("serve: idle timeout closing a keep-alive connection");
+                return;
+            }
+            let wait = idle_timeout.saturating_sub(last.elapsed());
+            tokio::time::sleep(wait).await;
+        }
+    };
     tokio::select! {
-        result = watcher.watch(connection) => {
+        result = connection.as_mut() => {
             if let Err(err) = result {
                 tracing::warn!("serve: connection error: {err}");
             }
         }
-        _ = tokio::time::sleep(IDLE_POLL) => {
-            let last = *activity.lock().unwrap_or_else(|e| e.into_inner());
-            if last.elapsed() > IDLE_TIMEOUT {
-                tracing::debug!("serve: idle timeout closing a keep-alive connection");
-            }
+        _ = watchdog => {
+            drain(connection, idle_timeout).await;
         }
+        _ = stopped.changed() => {
+            drain(connection, idle_timeout).await;
+        }
+    }
+}
+
+/// Starts the connection's graceful shutdown and waits for it to end —
+/// immediately for an idle keep-alive, after the in-flight request for busy
+/// one — never past a second idle budget.
+async fn drain<C>(mut connection: std::pin::Pin<&mut C>, idle_timeout: Duration)
+where
+    C: hyper_util::server::graceful::GracefulConnection,
+    C::Error: std::fmt::Display,
+{
+    connection.as_mut().graceful_shutdown();
+    if tokio::time::timeout(idle_timeout, connection.as_mut())
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            "serve: a connection kept an in-flight request past the second budget; closing"
+        );
     }
 }
 
@@ -200,6 +256,8 @@ impl AsyncWrite for ActivityStream {
 mod tests {
     use super::*;
     use crate::broadcaster::Broadcaster;
+    use axum::body::Body;
+    use bytes::Bytes;
     use reasonix_session::hub::Hub;
     use reasonix_session::hub::HubPaths;
 
@@ -388,5 +446,151 @@ Host: 127.0.0.1
             "an idle keep-alive must close with the signal, not after the drain: {elapsed:?}"
         );
         idle.abort();
+    }
+
+    // ROUTE-020: a request still in flight must survive the watchdog's poll
+    // ticks — only a connection whose idle budget is spent may be ended.
+    #[tokio::test]
+    async fn a_request_in_flight_survives_the_idle_polls() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = Router::new().route(
+            "/slow",
+            axum::routing::get(|| async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                "done"
+            }),
+        );
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let _stop_tx = stop_tx;
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_connection_with(
+                hyper_util::server::graceful::GracefulShutdown::new().watcher(),
+                stop_rx,
+                stream,
+                router,
+                Duration::from_millis(300),
+            )
+            .await;
+        });
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"GET /slow HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut buf = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut buf),
+        )
+        .await
+        .expect("the request never answered")
+        .expect("the answering connection stayed readable");
+        let response = String::from_utf8_lossy(&buf).into_owned();
+        assert!(
+            response.contains("200") && response.contains("done"),
+            "an in-flight request must complete across idle polls: {response:?}"
+        );
+    }
+
+    // ROUTE-020: activity counts writes too — a response still trickling out
+    // (the shape of an SSE stream) must survive poll after poll.
+    #[tokio::test]
+    async fn a_slow_response_body_survives_repeated_idle_polls() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = Router::new().route(
+            "/trickle",
+            axum::routing::get(|| async {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Bytes, io::Error>>();
+                tokio::spawn(async move {
+                    for i in 0..10 {
+                        tokio::time::sleep(Duration::from_millis(60)).await;
+                        let _ = tx.send(Ok(Bytes::from(format!("chunk{i}\n"))));
+                    }
+                });
+                Body::from_stream(tokio_stream::wrappers::UnboundedReceiverStream::new(rx))
+            }),
+        );
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let _stop_tx = stop_tx;
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_connection_with(
+                hyper_util::server::graceful::GracefulShutdown::new().watcher(),
+                stop_rx,
+                stream,
+                router,
+                Duration::from_millis(300),
+            )
+            .await;
+        });
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"GET /trickle HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut buf = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut buf),
+        )
+        .await
+        .expect("the trickle never ended")
+        .expect("the trickling connection stayed readable");
+        let response = String::from_utf8_lossy(&buf).into_owned();
+        for i in 0..10 {
+            assert!(
+                response.contains(&format!("chunk{i}")),
+                "a poll tick must not cut a still-writing stream short: {response:?}"
+            );
+        }
+    }
+
+    // ROUTE-020: the watchdog's own verdict — a keep-alive connection that
+    // sits with nothing moving is closed by the server, not left forever.
+    #[tokio::test]
+    async fn an_idle_keep_alive_connection_is_closed_by_the_watchdog() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = Router::new().route("/tree", axum::routing::get(|| async { "leaf" }));
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let _stop_tx = stop_tx;
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_connection_with(
+                hyper_util::server::graceful::GracefulShutdown::new().watcher(),
+                stop_rx,
+                stream,
+                router,
+                Duration::from_millis(200),
+            )
+            .await;
+        });
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"GET /tree HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+        // No further request: the server closes the socket within the budget.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await
+        .expect("the watchdog never closed the idle connection");
     }
 }

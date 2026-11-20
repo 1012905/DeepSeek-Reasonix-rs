@@ -122,34 +122,72 @@ pub(crate) async fn with_page_middleware(
     let Some(page_dir) = state.page.clone() else {
         return next.run(request).await;
     };
-    // Go trims both slashes, then lets fs.Stat decide: an empty name is the
-    // kernel's root, and a name fs.ValidPath would reject (a `.` or `..`
-    // element, an internal empty element) is the kernel's business too.
-    let name = request.uri().path().trim_matches('/');
-    if name.is_empty() || !is_valid_page_name(name) {
-        return next.run(request).await;
-    }
-    let target = page_dir.join(name);
-    let Ok(meta) = std::fs::metadata(&target) else {
+    // Go matches the decoded `r.URL.Path` — the raw request target still
+    // carries `%20`/`%2F`, so a dist asset with a space or a slash in its
+    // name never resolves undecoded. The decode cannot introduce traversal:
+    // `..` elements are rejected after it, on the decoded name.
+    let raw = request.uri().path().trim_matches('/');
+    let Some(name) = percent_decode(raw) else {
         return next.run(request).await;
     };
-    if meta.is_dir() {
+    if name.is_empty() || !is_valid_page_name(&name) {
         return next.run(request).await;
     }
-    match read_page_file(&target) {
-        Some(bytes) => file_response(request.method(), name, bytes),
-        None => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n").into_response(),
+    // File resolution runs on a blocking thread (docs/kernel-rs/AGENTS.md
+    // 10.3): the middleware is a hot path on the async workers.
+    let method = request.method().clone();
+    let dir = page_dir.clone();
+    let probe = name.clone();
+    match tokio::task::spawn_blocking(move || read_page_file(&dir, &probe)).await {
+        Ok(Some(bytes)) => file_response(&method, &name, bytes),
+        Ok(None) => next.run(request).await,
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n").into_response(),
     }
 }
 
-/// Go `fs.ValidPath`: slash-separated, no empty, `.` or `..` elements.
-fn is_valid_page_name(name: &str) -> bool {
-    name.split('/')
-        .all(|el| !el.is_empty() && el != "." && el != "..")
+/// Percent-decodes a raw request-target path (Go arrives here decoded
+/// through `r.URL.Path`). `None` is anything that is not a decodable,
+/// UTF-8 name — a truncated escape, a bad hex digit — and falls to the
+/// kernel rather than guessing.
+fn percent_decode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3)?;
+            let hi = (hex[0] as char).to_digit(16)?;
+            let lo = (hex[1] as char).to_digit(16)?;
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
-fn read_page_file(target: &Path) -> Option<Bytes> {
-    std::fs::read(target).ok().map(Bytes::from)
+/// Go `fs.ValidPath`: slash-separated, no empty, `.` or `..` elements. A `\`
+/// is rejected too: on Windows `join` treats it as a separator, so it names
+/// something outside the directory this guard validated (Go carries the same
+/// hole through `os.DirFS`; the rewrite is not weaker).
+fn is_valid_page_name(name: &str) -> bool {
+    !name.contains('\\')
+        && name
+            .split('/')
+            .all(|el| !el.is_empty() && el != "." && el != "..")
+}
+
+/// Reads a page file (Go `withPage`'s `fs.Stat` + read): `None` is every
+/// path that is not a real file in the page — the kernel's business.
+fn read_page_file(page_dir: &Path, name: &str) -> Option<Bytes> {
+    let target = page_dir.join(name);
+    let meta = std::fs::metadata(&target).ok()?;
+    if meta.is_dir() {
+        return None;
+    }
+    std::fs::read(&target).ok().map(Bytes::from)
 }
 
 fn file_response(method: &Method, name: &str, bytes: Bytes) -> Response {
@@ -252,6 +290,117 @@ mod tests {
         assert!(!is_valid_page_name("a/./b"));
         assert!(!is_valid_page_name("a//b"));
         assert!(!is_valid_page_name("a/"));
+    }
+
+    // Windows reads `\` as a separator inside `join`, so a backslash names a
+    // file the slash-based guard never validated.
+    #[test]
+    fn page_names_reject_backslashes() {
+        assert!(!is_valid_page_name("\\..\\..\\Cargo.toml"));
+        assert!(!is_valid_page_name("assets\\logo.svg"));
+        assert!(is_valid_page_name("assets/logo.svg"));
+    }
+
+    #[test]
+    fn percent_decode_matches_go_url_path() {
+        assert_eq!(
+            percent_decode("assets/my%20file.svg"),
+            Some("assets/my file.svg".to_owned())
+        );
+        assert_eq!(
+            percent_decode("assets%2Flogo.svg"),
+            Some("assets/logo.svg".to_owned())
+        );
+        assert_eq!(percent_decode("plain.svg"), Some("plain.svg".to_owned()));
+        // A truncated escape or a non-UTF-8 body is not a page name.
+        assert_eq!(percent_decode("a%2"), None);
+        assert_eq!(percent_decode("a%zz"), None);
+        assert_eq!(percent_decode("%ff%fe"), None);
+    }
+
+    // Go matches the decoded path (r.URL.Path), so an escaped space in a
+    // dist asset's name still names the file.
+    #[tokio::test]
+    async fn with_page_serves_a_percent_encoded_name() {
+        use crate::router::{RouterConfig, build_router};
+        use reasonix_session::hub::{Hub, HubPaths};
+        use std::sync::Arc;
+
+        let page = tempdir();
+        std::fs::write(page.path().join("my file.svg"), b"<svg/>").unwrap();
+
+        let tmp = tempdir();
+        let state = build_router(
+            Arc::new(Hub::new(HubPaths {
+                state_root: tmp.path().to_path_buf(),
+            })),
+            RouterConfig {
+                token: "tkn".to_owned(),
+                origin: String::new(),
+                page_dir: Some(page.path().to_path_buf()),
+                ..RouterConfig::default()
+            },
+        );
+        use tower::ServiceExt as _ServiceExt;
+        let response = state
+            .oneshot(
+                axum::extract::Request::builder()
+                    .uri("/my%20file.svg")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE),
+            Some(&HeaderValue::from_static("image/svg+xml"))
+        );
+    }
+
+    // A decoded traversal element is judged on the decoded name — the decode
+    // must not open a hole the raw check would have caught.
+    #[tokio::test]
+    async fn with_page_rejects_a_encoded_traversal() {
+        use crate::router::{RouterConfig, build_router};
+        use reasonix_session::hub::{Hub, HubPaths};
+        use std::sync::Arc;
+
+        let page = tempdir();
+        std::fs::write(page.path().join("index.html"), b"<html>shell</html>").unwrap();
+
+        let tmp = tempdir();
+        let state = build_router(
+            Arc::new(Hub::new(HubPaths {
+                state_root: tmp.path().to_path_buf(),
+            })),
+            RouterConfig {
+                token: "tkn".to_owned(),
+                origin: String::new(),
+                page_dir: Some(page.path().to_path_buf()),
+                ..RouterConfig::default()
+            },
+        );
+        use tower::ServiceExt as _ServiceExt;
+        for target in ["/%2e%2e/Cargo.toml", "/\\..\\..\\Cargo.toml"] {
+            let response = state
+                .clone()
+                .oneshot(
+                    axum::extract::Request::builder()
+                        .uri(target)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            // The kernel's answer for a page path naming no file: with no
+            // runtime, the no-runtime refusal.
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{target}"
+            );
+        }
     }
 
     #[tokio::test]
