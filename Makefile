@@ -106,6 +106,17 @@ studio-tauri-test:
 studio-tauri-check:
 	CARGO_TARGET_DIR="$(TAURI_TARGET_DIR)" cargo check --manifest-path desktop-tauri/src-tauri/Cargo.toml
 
+# The Rust kernel workspace (crates/ + apps/ + xtask) shares the Tauri
+# target-dir-off-Desktop default; its gates are the parity ledger's evidence.
+KERNEL_TARGET_DIR ?= $(HOME)/.cache/reasonix-rust-target-kernel
+
+kernel-check:
+	CARGO_TARGET_DIR="$(KERNEL_TARGET_DIR)" cargo fmt --all --check
+	CARGO_TARGET_DIR="$(KERNEL_TARGET_DIR)" cargo clippy --workspace --all-targets -- -D warnings
+	CARGO_TARGET_DIR="$(KERNEL_TARGET_DIR)" cargo test --workspace
+	CARGO_TARGET_DIR="$(KERNEL_TARGET_DIR)" cargo xtask parity --check
+	CARGO_TARGET_DIR="$(KERNEL_TARGET_DIR)" cargo xtask deps --check
+
 sdk-test:
 	cd sdk/go && go test ./...
 

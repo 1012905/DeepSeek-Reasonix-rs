@@ -45,4 +45,4 @@ automation crate in release mode.
 - The workspace currently has zero external dependencies by design
   (ADR-0001): no supply-chain surface until the M1 contract freeze.
 
-License: MIT, matching the reference project.
+License: GPL-3.0-only; see the repository LICENSE and NOTICE.

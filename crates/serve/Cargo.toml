@@ -8,3 +8,41 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+reasonix-config = { workspace = true }
+reasonix-contract = { workspace = true }
+reasonix-session = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }
+getrandom = { workspace = true }
+# Listen shape (hyper-util is already in the graph through axum): the frozen
+# binding contract needs ReadHeaderTimeout, which axum::serve does not expose.
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "server-graceful", "service", "http1", "http2"] }
+serde = { workspace = true }
+serde_ignored = { workspace = true }
+serde_json = { workspace = true }
+# OPT-003: the catch-panic layer is a tower Layer, which axum's Router takes.
+# Traits only; the util features join through the dev-dependency below.
+tower = "0.5"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = { workspace = true }
+# Test-only: drives routers to responses (tower::ServiceExt::oneshot).
+tower = { version = "0.5", features = ["util"] }
+
+[[bench]]
+name = "gate"
+harness = false
+
+[[bench]]
+name = "emit"
+harness = false
+
+[[bench]]
+name = "frames"
+harness = false

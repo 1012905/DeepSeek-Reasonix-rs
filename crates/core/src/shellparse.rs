@@ -102,12 +102,18 @@ pub enum WordPart {
     DblQuoted(Vec<WordPart>),
     /// Any expansion or process substitution — never static.
     Expansion,
+    /// A `$(...)` command substitution; the inner text is kept for the
+    /// resolved-substitution analysis (double-quoted, one static statement).
+    CmdSubst(String),
 }
 
-struct RawRedir {
-    fd: Option<String>,
-    op: &'static str,
-    target: Vec<WordPart>,
+pub(crate) struct RawRedir {
+    pub(crate) fd: Option<String>,
+    pub(crate) op: &'static str,
+    pub(crate) target: Vec<WordPart>,
+    /// Byte span of the whole redirect spelling (io number included),
+    /// the shape the redirect matcher strips.
+    pub(crate) span: (usize, usize),
 }
 
 impl RawRedir {
@@ -118,27 +124,56 @@ impl RawRedir {
     }
 }
 
+/// The operator that joined this statement to the next one, recorded by
+/// the parser as it pushes (the reference reads it off `BinaryCmd.Op` from
+/// the left operand). `Join::None` on the last statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Join {
+    #[default]
+    None,
+    Sequence,
+    And,
+    Or,
+    Pipe,
+    PipeAll,
+}
+
 #[derive(Default)]
-struct RawStmt {
-    words: Vec<Vec<WordPart>>,
-    redirs: Vec<RawRedir>,
-    ctrl: bool,
-    background: bool,
+pub(crate) struct RawStmt {
+    pub(crate) words: Vec<Vec<WordPart>>,
+    pub(crate) redirs: Vec<RawRedir>,
+    pub(crate) ctrl: bool,
+    pub(crate) background: bool,
+    pub(crate) negated: bool,
+    /// Byte span of the statement's own text; the trailing separator is
+    /// excluded the way `sourceForStmt` trims a `;` terminator.
+    pub(crate) span: (usize, usize),
+    pub(crate) join: Join,
+    /// The statement reads its program from a stdin here-doc (fd unset or 0).
+    pub(crate) stdin_heredoc: bool,
 }
 
 impl RawStmt {
     fn is_empty(&self) -> bool {
         self.words.is_empty() && self.redirs.is_empty() && !self.ctrl
     }
+
+    fn starts_at(&mut self, pos: usize) {
+        self.span = (pos, pos);
+    }
+
+    fn ends_at(&mut self, end: usize) {
+        self.span.1 = self.span.1.max(end);
+    }
 }
 
 #[derive(Default)]
-struct Parsed {
-    stmts: Vec<RawStmt>,
-    heredoc: bool,
+pub(crate) struct Parsed {
+    pub(crate) stmts: Vec<RawStmt>,
+    pub(crate) heredoc: bool,
 }
 
-fn parse(input: &str) -> Result<Parsed, String> {
+pub(crate) fn parse(input: &str) -> Result<Parsed, String> {
     P::new(input).parse_file()
 }
 
@@ -147,6 +182,7 @@ struct P<'a> {
     src: &'a [u8],
     pos: usize,
     heredoc_seen: bool,
+    stdin_heredoc_pending: bool,
 }
 
 impl<'a> P<'a> {
@@ -156,6 +192,7 @@ impl<'a> P<'a> {
             src: text.as_bytes(),
             pos: 0,
             heredoc_seen: false,
+            stdin_heredoc_pending: false,
         }
     }
 
@@ -192,6 +229,7 @@ impl<'a> P<'a> {
                     return Err(format!("unclosed here-doc '{delim}'"));
                 }
                 if !cur.is_empty() {
+                    cur.ends_at(self.pos);
                     parsed.stmts.push(std::mem::take(&mut cur));
                 }
                 parsed.heredoc = self.heredoc_seen;
@@ -200,8 +238,13 @@ impl<'a> P<'a> {
             match c {
                 b'\n' => {
                     self.pos += 1;
+                    let stdin_heredoc = self.stdin_heredoc_pending;
+                    self.stdin_heredoc_pending = false;
                     self.consume_heredoc_bodies(&mut pending)?;
                     if !cur.is_empty() {
+                        cur.stdin_heredoc = stdin_heredoc;
+                        cur.ends_at(self.pos - 1);
+                        cur.join = Join::Sequence;
                         parsed.stmts.push(std::mem::take(&mut cur));
                     }
                 }
@@ -209,18 +252,23 @@ impl<'a> P<'a> {
                     if cur.is_empty() {
                         return Err("unexpected ';'".to_string());
                     }
+                    cur.ends_at(self.pos);
+                    cur.join = Join::Sequence;
+                    parsed.stmts.push(std::mem::take(&mut cur));
                     self.pos += 1;
                     if self.peek() == Some(b';') {
                         return Err("unexpected ';;'".to_string());
                     }
-                    parsed.stmts.push(std::mem::take(&mut cur));
                 }
                 b'&' => match self.peek_at(1) {
                     Some(b'&') => {
                         self.pos += 2;
-                        cur.ctrl = true;
+                        cur.ends_at(self.pos - 2);
+                        cur.join = Join::And;
+                        parsed.stmts.push(std::mem::take(&mut cur));
                     }
                     Some(b'>') => {
+                        let op_start = self.pos;
                         self.pos += 1;
                         let op = if self.peek_at(1) == Some(b'>') {
                             self.pos += 2;
@@ -234,24 +282,34 @@ impl<'a> P<'a> {
                             fd: None,
                             op,
                             target,
+                            span: (op_start, self.pos),
                         });
                     }
                     _ => {
                         if cur.is_empty() {
                             return Err("unexpected '&'".to_string());
                         }
-                        self.pos += 1;
+                        cur.ends_at(self.pos);
                         cur.background = true;
+                        cur.join = Join::Sequence;
                         parsed.stmts.push(std::mem::take(&mut cur));
                     }
                 },
                 b'|' => {
-                    if matches!(self.peek_at(1), Some(b'|') | Some(b'&')) {
-                        self.pos += 2;
+                    let (join, width) = if self.peek_at(1) == Some(b'|') {
+                        (Join::Or, 2)
+                    } else if self.peek_at(1) == Some(b'&') {
+                        (Join::PipeAll, 2)
                     } else {
-                        self.pos += 1;
+                        (Join::Pipe, 1)
+                    };
+                    if cur.is_empty() {
+                        return Err("unexpected '|'".to_string());
                     }
-                    cur.ctrl = true;
+                    self.pos += width;
+                    cur.ends_at(self.pos - width);
+                    cur.join = join;
+                    parsed.stmts.push(std::mem::take(&mut cur));
                 }
                 b'(' => {
                     if !cur.is_empty() {
@@ -270,6 +328,9 @@ impl<'a> P<'a> {
                     }
                 }
                 b'<' | b'>' => {
+                    if cur.is_empty() {
+                        cur.starts_at(self.pos);
+                    }
                     if self.peek_at(1) == Some(b'(') {
                         self.pos += 1;
                         self.consume_balanced_paren()?;
@@ -278,15 +339,21 @@ impl<'a> P<'a> {
                         let redir = self.lex_redirect_and_heredoc(None, &mut pending)?;
                         cur.redirs.push(redir);
                     }
+                    cur.ends_at(self.pos);
                 }
                 _ => {
                     if c.is_ascii_digit()
                         && let Some(fd) = self.try_io_number()
                     {
+                        if cur.is_empty() {
+                            cur.starts_at(self.pos);
+                        }
                         let redir = self.lex_redirect_and_heredoc(Some(fd), &mut pending)?;
                         cur.redirs.push(redir);
+                        cur.ends_at(self.pos);
                         continue;
                     }
+                    let word_start = self.pos;
                     let word = self.lex_word()?;
                     if cur.words.is_empty()
                         && cur.redirs.is_empty()
@@ -294,9 +361,16 @@ impl<'a> P<'a> {
                         && is_reserved(&word)
                     {
                         cur.ctrl = true;
+                        if matches!(&word[..], [WordPart::Lit(w)] if w == "!") {
+                            cur.negated = true;
+                        }
                         continue;
                     }
+                    if cur.is_empty() {
+                        cur.starts_at(word_start);
+                    }
                     cur.words.push(word);
+                    cur.ends_at(self.pos);
                 }
             }
         }
@@ -321,6 +395,10 @@ impl<'a> P<'a> {
         fd: Option<String>,
         pending: &mut Vec<(String, bool)>,
     ) -> Result<RawRedir, String> {
+        let op_start = match &fd {
+            Some(fd) => self.pos - fd.len(),
+            None => self.pos,
+        };
         let c = self.peek().unwrap();
         let op: &'static str = match c {
             b'<' => match self.peek_at(1) {
@@ -373,8 +451,14 @@ impl<'a> P<'a> {
                 .ok_or_else(|| "here-document delimiter".to_string())?;
             pending.push((delim, op == "<<-"));
             self.heredoc_seen = true;
+            self.stdin_heredoc_pending = fd.is_none() || fd.as_deref() == Some("0");
         }
-        Ok(RawRedir { fd, op, target })
+        Ok(RawRedir {
+            fd,
+            op,
+            target,
+            span: (op_start, self.pos),
+        })
     }
 
     fn lex_redirect_target(&mut self) -> Result<Vec<WordPart>, String> {
@@ -473,8 +557,8 @@ impl<'a> P<'a> {
                     Some(b'(') => {
                         flush_lit(&mut parts, &mut lit);
                         self.pos += 1;
-                        self.consume_balanced_paren()?;
-                        parts.push(WordPart::Expansion);
+                        let inner = self.consume_balanced_paren_inner(true)?;
+                        parts.push(WordPart::CmdSubst(inner));
                     }
                     Some(b'[') => {
                         flush_lit(&mut parts, &mut lit);
@@ -564,8 +648,8 @@ impl<'a> P<'a> {
                     Some(b'(') => {
                         flush_lit(&mut parts, &mut lit);
                         self.pos += 1;
-                        self.consume_balanced_paren()?;
-                        parts.push(WordPart::Expansion);
+                        let inner = self.consume_balanced_paren_inner(true)?;
+                        parts.push(WordPart::CmdSubst(inner));
                     }
                     Some(c2) if is_param_char(c2) => {
                         flush_lit(&mut parts, &mut lit);
@@ -762,12 +846,18 @@ impl<'a> P<'a> {
     }
 
     fn consume_balanced_paren(&mut self) -> Result<(), String> {
+        self.consume_balanced_paren_inner(false).map(|_| ())
+    }
+
+    /// Consumes to the matching `)`, optionally returning the inner text.
+    fn consume_balanced_paren_inner(&mut self, capture: bool) -> Result<String, String> {
         // Position is at the opening paren.
         let mut depth: usize = 1;
         let mut in_squote = false;
         let mut in_dq = false;
         let mut dq_floor: Vec<usize> = Vec::new();
         self.pos += 1;
+        let inner_start = self.pos;
         loop {
             let Some(c) = self.peek() else {
                 return Err("unbalanced parenthesis".to_string());
@@ -815,8 +905,13 @@ impl<'a> P<'a> {
                     if closes {
                         depth -= 1;
                         if depth == 0 {
+                            let inner_end = self.pos;
                             self.pos += 1;
-                            return Ok(());
+                            return Ok(if capture {
+                                self.text[inner_start..inner_end].to_string()
+                            } else {
+                                String::new()
+                            });
                         }
                     }
                     self.pos += 1;
@@ -910,6 +1005,12 @@ enum AssignShape {
     Word,
 }
 
+/// Whether a word's parts spell a `NAME=value` assignment (the analysis
+/// module reads this where Go inspects `Assign` nodes).
+pub(crate) fn word_is_assignment(parts: &[WordPart]) -> bool {
+    matches!(assignment_shape(parts), AssignShape::Simple { .. })
+}
+
 fn assignment_shape(parts: &[WordPart]) -> AssignShape {
     let [WordPart::Lit(head), rest @ ..] = parts else {
         return AssignShape::Word;
@@ -985,7 +1086,7 @@ fn static_word_part(part: &WordPart, in_double_quotes: bool) -> Option<String> {
             }
             Some(out)
         }
-        WordPart::Expansion => None,
+        WordPart::Expansion | WordPart::CmdSubst(_) => None,
     }
 }
 
