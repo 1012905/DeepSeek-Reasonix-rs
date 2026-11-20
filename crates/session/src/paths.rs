@@ -365,15 +365,21 @@ mod tests {
 
     #[test]
     fn slug_replaces_separators_and_colons() {
-        // The drive colon and the separator each become a dash, as in Go.
-        assert_eq!(workspace_slug(r"C:\Projects\Demo"), "c--projects-demo");
+        // The drive colon and the separator each become a dash, as in Go;
+        // the case fold rides the same compile-time flag as the canonical
+        // key form.
         assert_eq!(workspace_slug("/home/u/demo"), "-home-u-demo");
+        if cfg!(windows) {
+            assert_eq!(workspace_slug(r"C:\Projects\Demo"), "c--projects-demo");
+        } else {
+            assert_eq!(workspace_slug(r"C:\Projects\Demo"), "C--Projects-Demo");
+        }
     }
 
     #[test]
     fn slug_hashes_only_overlong_components() {
         let short = workspace_slug("C:\\a");
-        assert_eq!(short, "c--a");
+        assert_eq!(short, if cfg!(windows) { "c--a" } else { "C--a" });
         let long = "x".repeat(300);
         let hashed = bound_filename_component(&long, 255);
         assert_eq!(hashed.len(), 255);
@@ -387,8 +393,13 @@ mod tests {
         let tmp = crate::test_support::tempdir();
         let dir = project_session_dir(tmp.path(), r"C:\Projects\Demo").unwrap();
         let text = dir.to_string_lossy().into_owned();
+        let slug = if cfg!(windows) {
+            "c--projects-demo"
+        } else {
+            "C--Projects-Demo"
+        };
         assert!(text.contains("projects"), "{text}");
-        assert!(text.contains("c--projects-demo"), "{text}");
+        assert!(text.contains(slug), "{text}");
         assert!(text.ends_with("sessions"), "{text}");
     }
 

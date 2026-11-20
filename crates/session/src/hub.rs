@@ -277,9 +277,17 @@ mod tests {
         assert_eq!(summaries[0].base, "/rt/r1");
         assert_eq!(summaries[0].name, "w");
         assert_eq!(summaries[0].session_path, r"C:\w\s.JSONL");
-        // findSession keys on the canonical path: any spelling finds it.
+        // findSession keys on the canonical path: any spelling finds it,
+        // with the case fold riding the platform like the filesystem it
+        // names.
+        #[cfg(windows)]
         assert_eq!(
             hub.find_session("c:\\W\\s.jsonl"),
+            Some(RuntimeId("r1".into()))
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            hub.find_session("C:\\w\\s.JSONL"),
             Some(RuntimeId("r1".into()))
         );
         assert!(hub.broadcaster(RuntimeId("r1".into())).is_some());
