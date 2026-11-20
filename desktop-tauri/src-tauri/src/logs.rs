@@ -60,21 +60,55 @@ impl Logs {
     }
 
     /// What the host said last, for a launch that failed before its window.
+    /// The launch credential joins the redaction list before anything here
+    /// reaches a dialog (host.md promises the shell redacts it).
     pub fn host_tail(&self) -> String {
         self.tail
             .lock()
             .map(|tail| {
-                String::from_utf8_lossy(&tail.iter().copied().collect::<Vec<_>>())
-                    .trim()
-                    .to_string()
+                redact_token(&String::from_utf8_lossy(
+                    &tail.iter().copied().collect::<Vec<_>>(),
+                ))
+                .trim()
+                .to_string()
             })
             .unwrap_or_default()
     }
 }
 
+/// Drops the value of every `reasonix_token` cookie spelling in the text —
+/// the value runs to the next `;` or whitespace.
+fn redact_token(text: &str) -> String {
+    const MARK: &str = "reasonix_token=";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(MARK) {
+        out.push_str(&rest[..at]);
+        out.push_str(MARK);
+        out.push_str("[redacted]");
+        rest = &rest[at + MARK.len()..];
+        let end = rest
+            .find(|c: char| c == ';' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tail_redacts_the_launch_credential() {
+        let text = "started token reasonix_token=abc123; ok\nreasonix_token=xyz456 end";
+        assert_eq!(
+            redact_token(text),
+            "started token reasonix_token=[redacted]; ok\nreasonix_token=[redacted] end"
+        );
+        assert_eq!(redact_token("nothing here"), "nothing here");
+    }
 
     #[test]
     fn the_tail_keeps_only_the_last_words() {

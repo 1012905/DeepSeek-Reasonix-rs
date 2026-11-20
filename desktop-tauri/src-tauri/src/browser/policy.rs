@@ -258,16 +258,19 @@ pub fn typed(raw: &str, kernel_origin: &str) -> Typed {
                 };
             }
             LocalKind::Local => {
+                // The guest gate admits http/https only, so a file form is
+                // refused here up front instead of dying as a bare load
+                // failure at the webview boundary.
                 return Typed {
-                    url: local.url,
+                    url: String::new(),
                     fallback: String::new(),
-                    refusal: "",
+                    refusal: "scheme",
                 };
             }
         }
     }
     let (url, fallback) = typed_address(raw);
-    let refusal = if url.starts_with("file:") || guest_navigation_allowed(&url, kernel_origin) {
+    let refusal = if guest_navigation_allowed(&url, kernel_origin) {
         ""
     } else {
         "scheme"
@@ -526,7 +529,9 @@ mod tests {
         assert_eq!(typed("http://127.0.0.1:5281/x", KERNEL).refusal, "scheme");
         assert_eq!(typed("ftp://example.com", KERNEL).refusal, "scheme");
         assert_eq!(typed("example.com", KERNEL).refusal, "");
-        assert_eq!(typed("C:\\w\\a.txt", KERNEL).refusal, "");
-        assert_eq!(typed("C:\\w\\a.txt", KERNEL).url, "file:///C:/w/a.txt");
+        // The guest gate admits http/https only; a local form is refused up
+        // front rather than dying as a bare load failure at the gate.
+        assert_eq!(typed("C:\\w\\a.txt", KERNEL).refusal, "scheme");
+        assert_eq!(typed("file:///C:/w/a.txt", KERNEL).refusal, "scheme");
     }
 }
