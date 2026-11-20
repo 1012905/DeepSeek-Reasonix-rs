@@ -321,17 +321,17 @@ pipe-leading line must be a six-cell ledger row.
 | STATE-028 | State | authoritative state formats survey | reasonix-state | todo | M1: docs/contracts/state.md §5 |
 | STATE-029 | State | session-format contract follow-up gate (M2) | reasonix-state | done | M2: docs/contracts/session-format.md §0-§22 frozen (2026-11-15) |
 | STATE-030 | State | divergences: catalog inventory, version drift, engine ADR | reasonix-state | todo | M1: docs/contracts/state.md §6 |
-| TOOL-001 | Tools | contract/tool Tool interface + optional capabilities | reasonix-tools | todo | M1: docs/contracts/tools.md §1.1 |
-| TOOL-002 | Tools | per-run Registry, restriction, replace-prefix, withdrawn | reasonix-tools | todo | M1: docs/contracts/tools.md §1.2, §1.9-§1.11 |
-| TOOL-003 | Tools | ContractEntry snapshot + provenance | reasonix-tools | todo | M1: docs/contracts/tools.md §1.3-§1.4 |
-| TOOL-004 | Tools | argument envelope unwrapping | reasonix-tools | todo | M1: docs/contracts/tools.md §1.5 |
-| TOOL-005 | Tools | ShellExecution metadata | reasonix-tools | todo | M1: docs/contracts/tools.md §1.6 |
-| TOOL-006 | Tools | MCP binding, aliases, disabled/held, annotations, scope refusals | reasonix-tools | todo | M1: docs/contracts/tools.md §1.7-§1.8, §1.24, §1.32 |
-| TOOL-007 | Tools | Roots, reach, target access, declared write paths | reasonix-tools | todo | M1: docs/contracts/tools.md §1.12, §1.25, §1.33-§1.34 |
-| TOOL-008 | Tools | Invoker + nested calls | reasonix-tools | todo | M1: docs/contracts/tools.md §1.13 |
+| TOOL-001 | Tools | contract/tool Tool interface + optional capabilities | reasonix-tools | done | crates/tools tests: preview_change_cases, provider_schemas_puts_every_contextual_tool_after_every_stable_one, contextual_tools_explain_themselves; CapabilitySet TypeId-downcast expresses Go's optional interfaces (2026-11-20) |
+| TOOL-002 | Tools | per-run Registry, restriction, replace-prefix, withdrawn | reasonix-tools | done | crates/tools tests/registry*.rs: registry_resolves_portable_mcp_references_only_when_unique, replace_prefix_never_shows_an_empty_namespace, restrict_drops_what_is_held_and_refuses_what_comes_later, withdraw_keeps_the_schema_and_fails_the_call, disable_tools_removes_from_every_surface_and_blocks_later_adds (2026-11-20) |
+| TOOL-003 | Tools | ContractEntry snapshot + provenance | reasonix-tools | done | crates/tools tests: contract_entries_does_not_hold_registry_lock_across_tool_callbacks, provenance_of_reads_the_tools_type, sink_keeps_the_first_external_origin_and_ignores_the_workspace (2026-11-20) |
+| TOOL-004 | Tools | argument envelope unwrapping | reasonix-tools | done | crates/tools tests: unwrap_arguments_cases (Go arguments_test 20 cases), unwrap_arguments_requires_unambiguous_schema; Draft-7 subset validator, unknown combinators refuse (2026-11-20) |
+| TOOL-005 | Tools | ShellExecution metadata | reasonix-tools | done | crates/tools/src/shell.rs serde shapes (camelCase, typed enums, OUTPUT_TAIL_MAX_BYTES); no direct Go test exists, behavior pinned by types+doc (2026-11-20) |
+| TOOL-006 | Tools | MCP binding, aliases, disabled/held, annotations, scope refusals | reasonix-tools | wip | binding/aliases/portable/disabled/held done (mcp_binding_for_reads_declared_identity, replace_disabled_mcp_drops_stale_aliases etc.); annotations + runtime bind anchored (2026-11-20) |
+| TOOL-007 | Tools | Roots, reach, target access, declared write paths | reasonix-tools | wip | roots.rs done (missing_root_names_the_first_gone_directory_by_its_display_path etc.); reach constants + declarer in registry; target access anchored (2026-11-20) |
+| TOOL-008 | Tools | Invoker + nested calls | reasonix-tools | done | crates/tools tests: nested_call_id_names_its_caller (Go invoke_test cases); depth ceiling is the agent's policy, not contract/tool's (2026-11-20) |
 | TOOL-009 | Tools | Goal reporting | reasonix-tools | todo | M1: docs/contracts/tools.md §1.14 |
 | TOOL-010 | Tools | Recall | reasonix-tools | todo | M1: docs/contracts/tools.md §1.15 |
-| TOOL-011 | Tools | Refusal identity/remedy + blocked errors | reasonix-tools | todo | M1: docs/contracts/tools.md §1.16, §1.29 |
+| TOOL-011 | Tools | Refusal identity/remedy + blocked errors | reasonix-tools | done | crates/tools tests: refusal_renders_the_setting_that_would_lift_it, a_remedy_that_only_opens_carries_no_value, blocked_error_carries_identity_not_words, held_mcp_refusal_is_typed_and_server_qualified (2026-11-20) |
 | TOOL-012 | Tools | Peer and project interfaces | reasonix-tools | todo | M1: docs/contracts/tools.md §1.17 |
 | TOOL-013 | Tools | Settings | reasonix-tools | todo | M1: docs/contracts/tools.md §1.18 |
 | TOOL-014 | Tools | Elicitation | reasonix-tools | todo | M1: docs/contracts/tools.md §1.19 |
