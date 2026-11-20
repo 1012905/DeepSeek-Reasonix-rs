@@ -14,7 +14,7 @@ fully reproducible). The visual *direction* was inspired by the MIT-licensed
 - Backgrounds contain no windows, sidebars, cards, buttons, inputs or readable text, and are
   stripped of EXIF/author metadata.
 
-Assets are released under the MIT License as part of the Reasonix repository,
+Assets are released under GPL-3.0-only as part of the Reasonix repository,
 © Reasonix Contributors. Human review: Reasonix Contributors (release PR review).
 
 Generation date: 2026-07-17

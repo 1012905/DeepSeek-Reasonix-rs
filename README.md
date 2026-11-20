@@ -19,7 +19,7 @@
   <a href="./docs/SPEC.md">Spec</a>
 </p>
 
-<p align="center"><strong>Open source · MIT · runs on your computer, model of your choice</strong></p>
+<p align="center"><strong>Open source · GPLv3 · runs on your computer, model of your choice</strong></p>
 <h3 align="center">An open-source coding agent for your terminal, desktop, browser and editor.</h3>
 <p align="center">It reads your project, edits files and runs commands and tests. Have it ask before each step, or work on its own within limits you set. Files its edit tools changed can be rewound. New here? Start with the Studio desktop app.</p>
 <p align="center">Maintained by <strong>@1012905</strong>. Adapted from Reasonix by <strong>Huahui Yu</strong>.</p>
@@ -291,7 +291,7 @@ Special thanks to [**Bernardxu123**](https://github.com/Bernardxu123) for design
 ---
 
 <p align="center">
-  <sub>MIT — see <a href="./LICENSE">LICENSE</a></sub>
+  <sub>GPL-3.0-only — see <a href="./LICENSE">LICENSE</a> and <a href="./NOTICE">NOTICE</a></sub>
   <br/>
   <sub>Built by the community at <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a></sub>
 </p>

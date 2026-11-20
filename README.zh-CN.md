@@ -19,7 +19,7 @@
   <a href="./docs/SPEC.md">规格</a>
 </p>
 
-<p align="center"><strong>开源 · MIT · 程序跑在你电脑上，模型自选</strong></p>
+<p align="center"><strong>开源 · GPLv3 · 程序跑在你电脑上，模型自选</strong></p>
 <h3 align="center">终端、桌面、浏览器、编辑器里都能用的 AI 编程助手。</h3>
 <p align="center">它会读你的项目、改文件、跑命令和测试。每一步先问你，或在你划定的范围内自己做，由你选；它用编辑工具改过的文件可以退回去。第一次用，从桌面应用 Studio 开始。</p>
 <p align="center">维护者：<strong>@1012905</strong>，改自 Huahui Yu 的 Reasonix。</p>
@@ -269,7 +269,7 @@ CLI 进阶用法和详细配置见 **[CLI 命令参考](./docs/CLI.zh-CN.md)**�
 ---
 
 <p align="center">
-  <sub>MIT —— 见 <a href="./LICENSE">LICENSE</a></sub>
+  <sub>GPL-3.0-only —— 见 <a href="./LICENSE">LICENSE</a> 与 <a href="./NOTICE">NOTICE</a></sub>
   <br/>
   <sub>由 <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a> 社区共建</sub>
 </p>
