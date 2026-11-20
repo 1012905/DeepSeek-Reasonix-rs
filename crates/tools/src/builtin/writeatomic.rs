@@ -84,11 +84,11 @@ fn apply_perm(file: &mut fs::File, perm: u32) -> io::Result<()> {
     }
 }
 
-fn unix_perm(info: &fs::Metadata, default_perm: u32) -> u32 {
+fn unix_perm(info: &fs::Metadata, _default_perm: u32) -> u32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        (info.permissions().mode() & 0o777) as u32
+        info.permissions().mode() & 0o777
     }
     #[cfg(not(unix))]
     {

@@ -175,7 +175,7 @@ pub fn is_cross_device(err: &io::Error) -> bool {
 /// Go `os.SameFile`. Unix compares device and inode. Windows std exposes
 /// no stable file index, so equal canonical paths stand in — that covers
 /// the case-only rename this check guards.
-fn same_file(src: &str, dst: &str, a: &fs::Metadata, b: &fs::Metadata) -> bool {
+fn same_file(_src: &str, _dst: &str, a: &fs::Metadata, b: &fs::Metadata) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
