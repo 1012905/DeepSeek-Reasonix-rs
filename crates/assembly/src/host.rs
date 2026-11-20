@@ -422,7 +422,15 @@ mod tests {
         } else {
             "/apps/studio/bin/host"
         });
-        let got = pick_launch_workspace(cwd, exe, &[], Path::new("/nowhere/auto/deep"));
+        // The auto branch must be unreachable, and deterministically so: an
+        // uncreatable path under a FILE, not one that guesses at what the
+        // machine refuses. A root-level spelling like /nowhere depends on
+        // host policy and leaves the created tree behind on machines where
+        // creation succeeds — pollution this suite then reads back.
+        let blocker = tmp_dir("auto-blocker");
+        std::fs::write(blocker.join("not-a-dir"), b"").unwrap();
+        let auto = blocker.join("not-a-dir").join("deep");
+        let got = pick_launch_workspace(cwd, exe, &[], &auto);
         assert_eq!(got, cwd);
     }
 }
