@@ -9,4 +9,5 @@
 #![forbid(unsafe_code)]
 
 pub mod boot;
+pub mod emit;
 pub mod host;
