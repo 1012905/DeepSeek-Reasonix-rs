@@ -1,26 +1,33 @@
 //! The auth gate (Go `auth.go`, `launch_token.go`, `host_guard.go`): the
-//! none/token/invalid modes, the mutation launch-token requirement, the CSRF
-//! content-type guard, and the DNS-rebound Host allowlist. Password mode is a
-//! later-wave machine and is refused at construction (deny-everything), never
-//! faked.
+//! none/token/password/invalid modes, the mutation launch-token requirement,
+//! the CSRF content-type guard, and the DNS-rebound Host allowlist. The
+//! password machine itself (login, session cookie, rate limit) lives in
+//! `password.rs` and is dispatched from here.
 
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::sync::Mutex;
 
 use axum::body::Body;
-use axum::extract::Request;
-use axum::extract::State;
-use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST, LOCATION, SET_COOKIE};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::extract::{ConnectInfo, Request, State};
+use axum::http::header::{
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST, LOCATION, SET_COOKIE,
+};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::gate::{self, TOKEN_COOKIE, constant_time_eq};
+use crate::password::{RateLimiter, SESSION_COOKIE, verify_session};
 use crate::refuse::{
     AUTH_LAUNCH_TOKEN_REQUIRED, BAD_CONTENT_TYPE, HOST_REJECTED, Reason, refuse_response,
 };
 use crate::router::RouterState;
+
+/// Headers the http crate does not ship (auth.go clientIP/isTLS).
+pub(crate) const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
+pub(crate) const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
 
 /// Auth modes for the serve frontend (Go `authMode`). `Invalid` is an
 /// unrecognized configuration: every request is denied rather than guessed.
@@ -30,6 +37,8 @@ pub enum AuthMode {
     None,
     /// Pre-shared token in cookie, bearer header, or the legacy query string.
     Token,
+    /// Login page with bcrypt password verification (§2.3).
+    Password,
     /// Unrecognized mode: deny everything (auth.go `authInvalid`).
     Invalid,
 }
@@ -40,6 +49,7 @@ impl AuthMode {
         match self {
             AuthMode::None => "none",
             AuthMode::Token => "token",
+            AuthMode::Password => "password",
             AuthMode::Invalid => "invalid",
         }
     }
@@ -59,11 +69,34 @@ const TOKEN_BOOTSTRAP_BODY_LIMIT: usize = 8 << 10;
 pub(crate) struct HostGated;
 
 /// The authentication middleware and its runtime state (Go `authGate`).
-#[derive(Debug)]
 pub struct AuthGate {
     mode: AuthMode,
     token: String,
     hosts: HostAllowlist,
+    /// bcrypt hash password mode verifies against (auth.go `passwordHash`).
+    password_hash: String,
+    /// HMAC key for session signing (auth.go `sessKey`); none/token modes
+    /// carry none.
+    sess_key: Option<[u8; 32]>,
+    /// Trust X-Forwarded-For/Proto headers (auth.go `behindProxy`).
+    behind_proxy: bool,
+    /// Per-IP rate limiter for /login (password mode).
+    rate_limit: RateLimiter,
+}
+
+impl std::fmt::Debug for AuthGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Credentials and the signing key never print.
+        f.debug_struct("AuthGate")
+            .field("mode", &self.mode)
+            .field("token", &"***")
+            .field("hosts", &self.hosts)
+            .field("password_hash", &"***")
+            .field("sess_key", &"***")
+            .field("behind_proxy", &self.behind_proxy)
+            .field("rate_limit", &self.rate_limit)
+            .finish()
+    }
 }
 
 impl AuthGate {
@@ -97,6 +130,10 @@ impl AuthGate {
             mode,
             token,
             hosts: HostAllowlist::default(),
+            password_hash: String::new(),
+            sess_key: None,
+            behind_proxy: false,
+            rate_limit: RateLimiter::default(),
         }
     }
 
@@ -106,15 +143,31 @@ impl AuthGate {
             mode: AuthMode::Invalid,
             token: String::new(),
             hosts: HostAllowlist::default(),
+            password_hash: String::new(),
+            sess_key: None,
+            behind_proxy: false,
+            rate_limit: RateLimiter::default(),
         }
     }
 
-    /// Password mode is not a machine of this build (docs/contract.md §3);
-    /// the gate refuses everything rather than answering for a login page
-    /// that does not exist.
-    pub fn password_unavailable() -> Self {
-        tracing::warn!("serve auth: password mode is not migrated; refusing every request");
-        Self::invalid()
+    /// Password mode (docs/contracts/http.md §2.3): the login page, bcrypt
+    /// verification, and the HMAC-signed session cookie. The session key is
+    /// PBKDF2 over the password hash — deterministic, so sessions survive a
+    /// restart while the hash stands — or random when no hash is configured
+    /// (every login then answers the not-configured error, as Go does).
+    pub fn password(configured_hash: &str, behind_proxy: bool) -> Result<Self, getrandom::Error> {
+        let password_hash = configured_hash.trim().to_owned();
+        Ok(Self {
+            mode: AuthMode::Password,
+            token: String::new(),
+            hosts: HostAllowlist::default(),
+            sess_key: Some(crate::password::session_key_for_password_hash(
+                &password_hash,
+            )?),
+            password_hash,
+            behind_proxy,
+            rate_limit: RateLimiter::default(),
+        })
     }
 
     pub fn mode(&self) -> AuthMode {
@@ -129,6 +182,64 @@ impl AuthGate {
 
     pub fn hosts(&self) -> &HostAllowlist {
         &self.hosts
+    }
+
+    /// The bcrypt hash password mode verifies against.
+    pub(crate) fn password_hash(&self) -> &str {
+        &self.password_hash
+    }
+
+    /// The per-IP login rate limiter (password mode).
+    pub(crate) fn rate_limiter(&self) -> &RateLimiter {
+        &self.rate_limit
+    }
+
+    /// Go `signSession`: a fresh signed session token from the gate's key.
+    /// Only the password machine calls this, and a password gate always
+    /// carries a key.
+    pub(crate) fn sign_session(&self) -> Result<String, getrandom::Error> {
+        let Some(key) = self.sess_key else {
+            return Ok(String::new());
+        };
+        crate::password::sign_session(&key)
+    }
+
+    /// Go `authGate.clientIP`: the login rate-limit key. X-Forwarded-For's
+    /// leftmost entry is trusted only with behind_proxy; otherwise the socket
+    /// peer. A transport that does not report the peer (in-process, tests)
+    /// shares one bucket — Go always has RemoteAddr.
+    pub(crate) fn client_ip(&self, request: &Request) -> String {
+        if self.behind_proxy
+            && let Some(fwd) = request
+                .headers()
+                .get(&X_FORWARDED_FOR)
+                .and_then(|v| v.to_str().ok())
+                .filter(|v| !v.is_empty())
+        {
+            return fwd.split(',').next().unwrap_or("").trim().to_owned();
+        }
+        request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| strip_port(&info.0.to_string()))
+            .unwrap_or_default()
+    }
+
+    /// Go `authGate.isTLS`: no TLS listener exists in this build, so only the
+    /// trusted proxy header can mark a request https (Go checks r.TLS first).
+    pub(crate) fn is_tls(&self, request: &Request) -> bool {
+        self.behind_proxy
+            && request
+                .headers()
+                .get(&X_FORWARDED_PROTO)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
+    }
+
+    /// The signing key for session-mechanics tests (Go's tests read the field).
+    #[cfg(test)]
+    pub(crate) fn session_key_for_tests(&self) -> [u8; 32] {
+        self.sess_key.unwrap_or([0u8; 32])
     }
 
     /// Go `presentsLaunchToken`: the cookie `/auth/token` issues, or an
@@ -161,7 +272,22 @@ impl AuthGate {
             AuthMode::Invalid => false,
             AuthMode::Token => gate::cookie_value(headers, TOKEN_COOKIE)
                 .is_some_and(|c| constant_time_eq(c.as_bytes(), self.token.as_bytes())),
+            AuthMode::Password => {
+                let Some(key) = self.sess_key else {
+                    return false;
+                };
+                gate::cookie_value(headers, SESSION_COOKIE).is_some_and(|c| verify_session(&key, c))
+            }
         }
+    }
+}
+
+/// Go's RemoteAddr port strip (auth.go clientIP): after the last colon, so a
+/// bracketed IPv6 peer keeps its brackets, as Go's does.
+fn strip_port(addr: &str) -> String {
+    match addr.rfind(':') {
+        Some(i) => addr[..i].to_owned(),
+        None => addr.to_owned(),
     }
 }
 
@@ -197,7 +323,7 @@ pub fn generate_token() -> Result<String, getrandom::Error> {
     Ok(base64url_raw(&bytes))
 }
 
-fn base64url_raw(data: &[u8]) -> String {
+pub(crate) fn base64url_raw(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
@@ -225,7 +351,9 @@ fn base64url_raw(data: &[u8]) -> String {
 
 /// Go `authGate.middleware`: the mode gate. `/auth/token` is answered here —
 /// before the CSRF guard sees it — because the shell trades its token for a
-/// cookie without any other route existing yet.
+/// cookie without any other route existing yet. `/login` is answered here in
+/// every authenticated mode: the form posts urlencoded, which the CSRF guard
+/// would 415 (auth.go middleware:231-236).
 pub(crate) async fn auth_middleware(
     State(state): State<RouterState>,
     request: Request,
@@ -241,6 +369,12 @@ pub(crate) async fn auth_middleware(
         }
         return next.run(request).await;
     }
+    if matches!(request.uri().path(), "/login" | "/login/") {
+        return crate::password::handle_login(request, gate).await;
+    }
+    if gate.mode == AuthMode::Password {
+        return check_session(request, gate, next).await;
+    }
     // Token mode.
     if request.uri().path() == "/auth/token" {
         return handle_token_bootstrap(request, gate).await;
@@ -254,6 +388,49 @@ pub(crate) async fn auth_middleware(
         return next.run(request).await;
     }
     check_token(request, gate, next).await
+}
+
+/// Go `checkSession`: the session cookie decides; a browser (Accept
+/// preferring text/html) is parked on /login with the original path in the
+/// 5-minute `reasonix_redirect` cookie, anything else gets the generic deny.
+async fn check_session(request: Request, gate: &AuthGate, next: Next) -> Response {
+    if let Some(key) = gate.sess_key
+        && let Some(value) = gate::cookie_value(request.headers(), SESSION_COOKIE)
+        && verify_session(&key, value)
+    {
+        return next.run(request).await;
+    }
+    if accepts_html(request.headers()) {
+        let dest = safe_redirect_target(
+            &request
+                .uri()
+                .path_and_query()
+                .map(|pq| pq.as_str().to_owned())
+                .unwrap_or_else(|| "/".to_owned()),
+        );
+        let mut response = redirect_response(StatusCode::FOUND, "/login".to_owned());
+        crate::password::set_auth_cookie(
+            &mut response,
+            crate::password::REDIRECT_COOKIE,
+            &dest,
+            crate::password::REDIRECT_COOKIE_MAX_AGE,
+            gate.is_tls(&request),
+        );
+        return response;
+    }
+    deny()
+}
+
+/// Go `acceptsHTML`: an Accept field starting with text/html.
+fn accepts_html(headers: &HeaderMap) -> bool {
+    headers
+        .get(ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|accept| {
+            accept
+                .split_whitespace()
+                .any(|field| field.starts_with("text/html"))
+        })
 }
 
 /// Go `checkToken`: cookie/bearer first, then the legacy query parameter,
@@ -347,7 +524,7 @@ fn content_type_is_json(headers: &HeaderMap) -> bool {
 }
 
 /// The content type up to the first `;`, trimmed (Go `strings.IndexByte(';')`).
-fn content_type_base(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn content_type_base(headers: &HeaderMap) -> Option<&str> {
     let ct = headers.get(CONTENT_TYPE)?.to_str().ok()?;
     let base = ct.split(';').next().unwrap_or("");
     Some(base.trim())
@@ -362,7 +539,7 @@ fn set_cookie(response: &mut Response, token: &str) {
     }
 }
 
-fn redirect_response(status: StatusCode, target: String) -> Response {
+pub(crate) fn redirect_response(status: StatusCode, target: String) -> Response {
     (status, [(LOCATION, target)], Body::empty()).into_response()
 }
 
@@ -439,7 +616,8 @@ fn query_unescape(s: &str) -> Option<String> {
 }
 
 /// Go `safeRedirectTarget`: same-origin paths only — no `//`, no absolute
-/// URLs, no backslashes — so a redirect never becomes an open redirect.
+/// URLs, no backslashes (raw or percent-encoded) — so a redirect never
+/// becomes an open redirect.
 pub fn safe_redirect_target(raw: &str) -> String {
     let mut raw = raw.trim().replace('\\', "/");
     if let Some(i) = raw.find('#') {
@@ -464,7 +642,47 @@ pub fn safe_redirect_target(raw: &str) -> String {
             return "/".to_owned();
         }
     }
+    // url.Parse decodes the path before its final checks: a path that decodes
+    // into `//` or a backslash is the same open redirect, encoded.
+    let path = match raw.split_once('?') {
+        Some((path, _)) => path,
+        None => raw.as_str(),
+    };
+    let decoded: Vec<u8> = percent_decode_path(path)
+        .into_iter()
+        .map(|b| if b == b'\\' { b'/' } else { b })
+        .collect();
+    if decoded.is_empty() {
+        return "/".to_owned();
+    }
+    if decoded != b"/"
+        && (decoded.len() <= 1 || decoded[0] != b'/' || decoded[1] == b'/' || decoded[1] == b'\\')
+    {
+        return "/".to_owned();
+    }
     raw
+}
+
+/// Go `url.Parse`'s lenient path decode: a valid `%XX` becomes its byte, an
+/// invalid one stays literal.
+fn percent_decode_path(path: &str) -> Vec<u8> {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(hex) = bytes.get(i + 1..i + 3)
+            && let (Some(hi), Some(lo)) =
+                ((hex[0] as char).to_digit(16), (hex[1] as char).to_digit(16))
+        {
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -758,6 +976,10 @@ mod tests {
     #[test]
     fn safe_redirect_target_sanitizes() {
         assert_eq!(safe_redirect_target("/x?y=1"), "/x?y=1");
+        assert_eq!(
+            safe_redirect_target("/sessions?id=abc#frag"),
+            "/sessions?id=abc"
+        );
         assert_eq!(safe_redirect_target("//evil.com/x"), "/");
         // Backslashes normalize to slashes, so this is a plain path.
         assert_eq!(safe_redirect_target(r"\evil"), "/evil");
@@ -766,6 +988,13 @@ mod tests {
         assert_eq!(safe_redirect_target("/a#frag"), "/a");
         // A full URL inside a query value stays put.
         assert_eq!(safe_redirect_target("/x?url=http://y"), "/x?url=http://y");
+        // auth_test.go TestSafeRedirectTarget: percent-encoded separators are
+        // the same open redirect once the path is decoded.
+        assert_eq!(safe_redirect_target("/%2f%2fevil.example/path"), "/");
+        assert_eq!(safe_redirect_target("/%5cevil.example/path"), "/");
+        assert_eq!(safe_redirect_target("https://evil.example/path"), "/");
+        assert_eq!(safe_redirect_target(r"/\evil.example/path"), "/");
+        assert_eq!(safe_redirect_target("relative/path"), "/");
     }
 
     #[test]
