@@ -95,5 +95,18 @@ bytes = "1"
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.8"
 
+# Outbound HTTPS (provider slice, B-007): hyper client + rustls TLS with the
+# ring provider (AGENTS.md 3.3: rustls only, pure-Rust crypto) and the
+# Mozilla root bundle. No reqwest: the hand-wired connector keeps one HTTP
+# stack in the graph (serve already pins hyper/hyper-util). Versions track
+# what serve already locked for hyper/hyper-util; the rustls line is new.
+http-body = "1.1.0"
+hyper = { version = "1.12.0", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "tokio", "service", "http1", "http2"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tower = { version = "0.5.3", default-features = false }
+webpki-roots = "1.0.12"
+
 # Dev-only: microbenchmarks for the serve/host hot paths (docs/tech-choice.md).
 criterion = "0.5"
