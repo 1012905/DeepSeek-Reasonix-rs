@@ -2,13 +2,13 @@
 //! session listings both frontends render, plus the controller write side
 //! that starts and steers turns.
 //!
-//! Parity target: `reference/.../internal/state/workspacelist` plus the read
-//! half of `internal/frontend/serve` (`hub_tree.go`, `sessions_list.go`,
-//! `hub.go` Hub), and `internal/session/control`'s turn group. The runtime
-//! open/publish machine is not part of this build; every such request is
-//! answered with a typed refusal instead of a fake success
-//! (docs/contract.md §3, §4.1). Wire shapes are frozen in
-//! docs/contracts/http.md §1.2/§7.
+//! Parity target: `reference/.../internal/state/workspacelist` plus
+//! `internal/frontend/serve` (`hub_tree.go`, `sessions_list.go`, `hub.go`
+//! Hub — its Open/publish subset included), and `internal/session/control`'s
+//! turn group. The open machine builds runtimes from a typed [`hub::RuntimeSpec`]
+//! and an installed kit factory; hubs without one answer open requests with a
+//! typed refusal instead of a fake success (docs/contract.md §3, §4.1). Wire
+//! shapes are frozen in docs/contracts/http.md §1.2/§7.
 
 #![forbid(unsafe_code)]
 
