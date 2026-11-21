@@ -1,23 +1,28 @@
-//! The hub read side (Go serve `hub.go` Hub, docs/contract.md §4.1): the
-//! frozen read API every frontend and host consumes. What runtimes share —
+//! The hub (Go serve `hub.go` Hub, docs/contract.md §4.1): the frozen read
+//! API every frontend and host consumes, plus the write side that opens and
+//! publishes runtimes (`open`, this module's child). What runtimes share —
 //! the workspace tree, the remembered list, the one-session-one-runtime
-//! rule — answers here; what they drive (open, publish, close) is the
-//! write side and refuses with a typed error until it migrates.
+//! rule — answers here; what they drive lands with its machine, refusing
+//! with a typed error until then (close is still such a machine).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use reasonix_state::sessionstore::session::canonical_session_path;
 
 use crate::controller::{BroadcasterHandle, Controller};
 use crate::listing::session_rows;
-use crate::model::{
-    HubRefusal, OpenRuntimeRequest, RuntimeId, RuntimeSummary, SessionRow, WorkspaceTreeSnapshot,
-};
+use crate::model::{RuntimeId, RuntimeSummary, SessionRow, WorkspaceTreeSnapshot};
 use crate::paths::{root_name, session_dir_for};
 use crate::title::TitleCache;
 use crate::tree::{self, TreeInputs};
+use crate::turns::TurnController;
 use crate::workspacelist;
+
+pub mod open;
+
+pub use self::open::{HubOptions, RuntimeKit, RuntimeKitFactory, RuntimeSpec};
 
 /// Paths the hub reads. Go resolves them through `config.Roots()`; explicit
 /// inputs keep the read side constructible without the config crate.
@@ -50,28 +55,51 @@ impl HubPaths {
     }
 }
 
-/// One published runtime, exactly what the hub must remember about it
-/// before the open/publish machine migrates.
+/// One published runtime: what the hub must remember to read it, and the
+/// write side the runtime's own routes drive (Go `Runtime`).
 struct RuntimeSlot {
     id: RuntimeId,
     controller: Arc<dyn Controller>,
     broadcaster: Option<Arc<dyn BroadcasterHandle>>,
+    /// The machine-built controller's turn group. A runtime the host
+    /// adopted carries its write side itself; `None` there.
+    turn: Option<Arc<TurnController>>,
 }
 
 /// The workspace-tree hub (Go serve `Hub`, the read half).
 pub struct Hub {
     paths: HubPaths,
+    /// The installed open machine (Go `HubOptions`' construction
+    /// collaborators); `None` leaves open_runtime refusing.
+    machine: Option<HubOptions>,
     // Write-side anchor: open/publish appends here; reads iterate in
     // insertion order, which is Go's `h.order`.
     runtimes: RwLock<Vec<RuntimeSlot>>,
+    seq: AtomicU64,
 }
 
 impl Hub {
-    /// A hub over explicit paths.
+    /// A hub over explicit paths, with no open machine: every open request
+    /// is refused with a typed error. Go's `NewHub(HubOptions{})` would
+    /// build from config; the config→client edge lives above this crate,
+    /// so a machine-less hub has nothing honest to construct from.
     pub fn new(paths: HubPaths) -> Self {
         Self {
             paths,
+            machine: None,
             runtimes: RwLock::new(Vec::new()),
+            seq: AtomicU64::new(0),
+        }
+    }
+
+    /// A hub over explicit paths with the open machine installed (Go
+    /// `NewHub(HubOptions{...})` carrying the construction collaborators).
+    pub fn with_options(paths: HubPaths, options: HubOptions) -> Self {
+        Self {
+            paths,
+            machine: Some(options),
+            runtimes: RwLock::new(Vec::new()),
+            seq: AtomicU64::new(0),
         }
     }
 
@@ -91,8 +119,7 @@ impl Hub {
     }
 
     /// Frozen: the open runtimes in the order they were opened. The empty
-    /// hub answers an empty list — no runtime can exist before the open/
-    /// publish machine migrates.
+    /// hub answers an empty list.
     pub fn runtimes(&self) -> Vec<RuntimeSummary> {
         self.runtimes
             .read()
@@ -114,15 +141,9 @@ impl Hub {
         session_rows(&dir, "", &titles)
     }
 
-    /// Frozen: typed refusal. The write side (workspace resolution, boot,
-    /// publish) is not in this build, and contract.md §3 forbids faking
-    /// success for a machine that does not exist.
-    pub fn open_runtime(&self, _req: OpenRuntimeRequest) -> Result<RuntimeSummary, HubRefusal> {
-        Err(HubRefusal::UnsupportedInThisBuild)
-    }
-
     /// Frozen: the runtime's event fan-out, when one is published. The
-    /// broadcaster entity lives in serve; an empty hub answers `None`.
+    /// broadcaster entity lives in serve; a hub with no such runtime
+    /// answers `None`.
     pub fn broadcaster(&self, runtime: RuntimeId) -> Option<Arc<dyn BroadcasterHandle>> {
         self.runtimes
             .read()
@@ -150,8 +171,8 @@ impl Hub {
     }
 
     /// Registers a runtime the host already built (Go `hub.Adopt`, the
-    /// host half of adoption). The hub never builds one: open_runtime
-    /// refuses until that machine migrates.
+    /// host half of adoption). The hub never builds one here: open_runtime
+    /// is the construction machine.
     pub fn adopt(
         &self,
         id: RuntimeId,
@@ -165,7 +186,14 @@ impl Hub {
                 id,
                 controller,
                 broadcaster,
+                turn: None,
             });
+    }
+
+    /// Go `nextID`: mints `"r"+seq` in publish order.
+    fn next_id(&self) -> RuntimeId {
+        let n = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        RuntimeId(format!("r{n}"))
     }
 }
 
@@ -186,6 +214,7 @@ fn runtime_summary(id: &RuntimeId, controller: &dyn Controller) -> RuntimeSummar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{HubRefusal, OpenRuntimeRequest};
 
     /// A controller pinned to fixed answers (Go test doubles of
     /// `control.SessionAPI`).
@@ -292,6 +321,8 @@ mod tests {
         );
         assert!(hub.broadcaster(RuntimeId("r1".into())).is_some());
         assert!(hub.broadcaster(RuntimeId("r2".into())).is_none());
+        // An adopted runtime's write side is the host's, not the hub's.
+        assert!(hub.turn_controller(RuntimeId("r1".into())).is_none());
     }
 
     #[test]

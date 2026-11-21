@@ -140,6 +140,12 @@ impl CreatedAt {
         Self(default_time())
     }
 
+    /// The current instant in UTC (Go: `time.Now().UTC()`), for the
+    /// writers that stamp a receipt at its transaction.
+    pub fn now() -> Self {
+        Self(chrono::Utc::now().fixed_offset())
+    }
+
     /// The underlying instant (Go: the time.Time value).
     pub fn get(self) -> DateTime<FixedOffset> {
         self.0

@@ -30,20 +30,25 @@ use crate::seams::{RequestComposer, fold_executor};
 use crate::sink::Sink;
 
 pub mod budget;
+pub mod candidate;
 pub mod estimate;
+pub mod fold;
+pub mod fold_archive;
 pub mod maintenance;
 pub mod recovery;
+pub mod sidecar;
 pub mod status;
 pub mod trigger;
 pub mod usage;
 
 pub use budget::{ContextBudget, add_budget_tokens, budget_usage_tokens};
 pub use estimate::{RequestCalibrationShape, msg_chars};
+pub use fold::ArchiveFold;
 pub use maintenance::{
     CompactVerdict, CompactionNoopReason, ContextPreparePolicy, PrepareError, PreparedContext,
 };
 pub use status::ContextMaintenanceSnapshot;
-pub use trigger::ContextWindowProbe;
+pub use trigger::{ContextWindowProbe, MIN_COMPACT_MESSAGES};
 
 /// The tag a fold digest opens with (Go: `SummaryTagOpen`).
 pub const SUMMARY_TAG_OPEN: &str = "<compaction-summary>";
@@ -109,6 +114,10 @@ pub struct WindowConfig {
     pub workspace_id: String,
     pub model_ref: String,
     pub shared_window: SharedWindowPolicy,
+    /// Fallback root for content moved out of context when no transcript is
+    /// bound (Go: `Options.ArchiveDir`); the outputs dir beside the bound
+    /// transcript is the primary.
+    pub archive_dir: String,
 }
 
 impl Default for WindowConfig {
@@ -122,6 +131,7 @@ impl Default for WindowConfig {
             workspace_id: String::new(),
             model_ref: String::new(),
             shared_window: SharedWindowPolicy::default(),
+            archive_dir: String::new(),
         }
     }
 }
@@ -185,6 +195,8 @@ pub struct Window {
     /// The creation stamp of the message that began the running turn (Go:
     /// `activeTurnCreatedAt`).
     active_turn_created_at: AtomicI64,
+    /// One fold at a time (Go: `compactionRunMu`).
+    fold_run: Mutex<()>,
     probe: ContextWindowProbe,
     state: WindowState,
     output: Mutex<estimate::OutputEstimateState>,
@@ -207,6 +219,7 @@ impl Window {
             fold: Mutex::new(None),
             session_path: Mutex::new(String::new()),
             active_turn_created_at: AtomicI64::new(0),
+            fold_run: Mutex::new(()),
             probe: ContextWindowProbe::default(),
             state: WindowState::default(),
             output: Mutex::new(estimate::OutputEstimateState {
@@ -342,6 +355,7 @@ impl Window {
                 return visible;
             }
         }
+        self.announce_widened_view(&st, &key);
         msgs
     }
 
@@ -437,15 +451,27 @@ impl Window {
         let key = self.prompt_cache_key();
         let (_, transcript_version) = self.session.snapshot_messages_version();
         self.with_core(|core| {
-            core.compaction_state.schema_version =
-                reasonix_state::sessionstore::compaction_state::COMPACTION_STATE_SCHEMA_CURRENT;
-            core.compaction_state.transcript_version = transcript_version;
-            core.compaction_state.prompt_cache_key = key;
-            core.compaction_state.projection = projection;
-            core.compaction_state.generation += 1;
-            core.checkpoint_state = "applied".to_owned();
-            core.compaction_stuck = false;
+            self.install_projection_core(core, &key, transcript_version, projection);
         });
+    }
+
+    /// The state half of an install, run inside the caller's compaction
+    /// guard (Go: the assignment block of `commitSummaryProjection`).
+    pub(crate) fn install_projection_core(
+        &self,
+        core: &mut WindowCore,
+        key: &str,
+        transcript_version: u64,
+        projection: reasonix_state::sessionstore::compaction_state::ContextProjection,
+    ) {
+        core.compaction_state.schema_version =
+            reasonix_state::sessionstore::compaction_state::COMPACTION_STATE_SCHEMA_CURRENT;
+        core.compaction_state.transcript_version = transcript_version;
+        core.compaction_state.prompt_cache_key = key.to_owned();
+        core.compaction_state.projection = projection;
+        core.compaction_state.generation += 1;
+        core.checkpoint_state = "applied".to_owned();
+        core.compaction_stuck = false;
     }
 
     /// Builds, freezes, and clips one model-round request (Go:
@@ -538,7 +564,7 @@ pub fn projection_valid(
 /// Whether the sidecar was written for the lineage asking for it (Go:
 /// `projectionLineageOK`). A blank current key means the lineage is not
 /// known yet.
-fn projection_lineage_ok(st: &CompactionState, cache_key: &str) -> bool {
+pub(crate) fn projection_lineage_ok(st: &CompactionState, cache_key: &str) -> bool {
     if cache_key.is_empty() {
         return true;
     }
