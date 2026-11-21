@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod boundary;
 pub mod cancel;
 pub mod compose;
 pub mod config;
