@@ -1006,6 +1006,11 @@ dependencies = [
 [[package]]
 name = "reasonix-ext"
 version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "reasonix-platform"
