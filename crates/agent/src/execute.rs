@@ -137,7 +137,11 @@ pub fn execute_batch(calls: &mut [ToolCall], inputs: &BatchInputs<'_>) -> BatchE
                     outcomes.lock().expect("batch lock")[index] = Some(barrier_skip());
                     continue;
                 }
-                let outcome = execute_one(&calls[index], inputs);
+                // `prepare` already ran the gate for this call; gating it
+                // again would open a second prompt for the same call and a
+                // first answer consumed by no waiter would be lost (Go:
+                // one admission per call).
+                let outcome = execute_one(&calls[index], inputs, true);
                 if outcome.failed() && !read_only_of(inputs.registry, &calls[index]) {
                     *barrier.lock().expect("barrier lock") = true;
                 }
@@ -167,7 +171,9 @@ pub fn execute_batch(calls: &mut [ToolCall], inputs: &BatchInputs<'_>) -> BatchE
                     // A read-only call the barrier does not cover still runs:
                     // diagnosis from a known state (Go: the residual
                     // read-only arm). Unknown names keep the barrier answer.
-                    execute_one(&calls[i], inputs)
+                    // A call the loop passed over reaches the gate here for
+                    // the first time (Go: the residual read-only arm).
+                    execute_one(&calls[i], inputs, false)
                 });
             }
             finished.push(slot.take().expect("filled above"));
@@ -334,8 +340,10 @@ fn barrier_skip() -> ToolOutcome {
 }
 
 /// Executes one call end to end (Go: `executeOne` — the spine's stages:
-/// resolve, refuse the unknown, gate, parse, run, bound).
-fn execute_one(call: &ToolCall, inputs: &BatchInputs<'_>) -> ToolOutcome {
+/// resolve, refuse the unknown, gate, parse, run, bound). `already_gated`
+/// is true when [`prepare`] admitted this call, so the answer is not
+/// requested twice for one call.
+fn execute_one(call: &ToolCall, inputs: &BatchInputs<'_>, already_gated: bool) -> ToolOutcome {
     if inputs.cancel.is_some_and(|c| c.is_cancelled()) || inputs.stops.is_stopped(&call.id) {
         return ToolOutcome {
             output: STOPPED_CALL_OUTPUT.to_owned(),
@@ -357,13 +365,15 @@ fn execute_one(call: &ToolCall, inputs: &BatchInputs<'_>) -> ToolOutcome {
         Ok(args) => args,
         Err(detail) => return malformed_arguments_outcome(detail),
     };
-    if let Some(gate) = inputs.gate {
-        let verdict = gate.check_verdict(tool.name(), &args, tool.read_only());
-        if !verdict.allow {
-            return refused_outcome(
-                &format!("blocked: {}", verdict.reason),
-                &verdict.refusal_code,
-            );
+    if !already_gated {
+        if let Some(gate) = inputs.gate {
+            let verdict = gate.check_verdict(tool.name(), &args, tool.read_only());
+            if !verdict.allow {
+                return refused_outcome(
+                    &format!("blocked: {}", verdict.reason),
+                    &verdict.refusal_code,
+                );
+            }
         }
     }
     let ctx = CallContext::new();

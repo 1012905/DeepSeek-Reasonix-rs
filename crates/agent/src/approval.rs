@@ -309,7 +309,8 @@ impl ApprovalBroker {
         let approved = if self.config.timeout.is_zero() {
             rx.recv().ok()
         } else {
-            rx.recv_timeout(self.config.timeout).ok()
+            let r = rx.recv_timeout(self.config.timeout);
+            r.ok()
         };
         match approved {
             Some(a) => Ok(a),
@@ -388,14 +389,21 @@ impl ApprovalBroker {
     }
 
     fn run_approval(&self, tool: &str, subject: &str, reason: &str) -> Result<Approved, GateError> {
+        let allowed = Approved {
+            allow: true,
+            session: false,
+            persist: false,
+        };
+        // YOLO stands in for nobody on an ordinary tool prompt (Go:
+        // `preApproved`). Fresh-human decisions and the ask tool are never
+        // answered by a posture.
+        if self.config.mode == mode::YOLO && !requires_fresh_human(tool) {
+            return Ok(allowed);
+        }
         {
             let m = self.manager.lock().expect("approval manager lock");
             if m.grant_allows(tool, subject) {
-                return Ok(Approved {
-                    allow: true,
-                    session: false,
-                    persist: false,
-                });
+                return Ok(allowed);
             }
         }
         let serial = self.prompt_serial.lock().unwrap_or_else(|e| e.into_inner());
@@ -403,11 +411,7 @@ impl ApprovalBroker {
         let id = {
             let mut m = self.manager.lock().expect("approval manager lock");
             if m.grant_allows(tool, subject) {
-                return Ok(Approved {
-                    allow: true,
-                    session: false,
-                    persist: false,
-                });
+                return Ok(allowed);
             }
             let id = m.issue();
             m.pending.insert(
@@ -435,18 +439,18 @@ impl ApprovalBroker {
         });
         let approved = self.wait_approval(&id, rx);
         drop(serial);
-        if let Ok(a) = approved {
-            let outcome = if a.allow {
-                match (a.persist, a.session) {
-                    (true, _) => outcome::ALLOW_PERSIST,
-                    (false, true) => outcome::ALLOW_SESSION,
-                    (false, false) => outcome::ALLOW_ONCE,
-                }
-            } else {
-                outcome::DENY
-            };
-            self.record(&id, "tool", tool, subject, outcome);
-        }
+        // A timeout is the host's own denial; the record names it so a
+        // frontend can settle the card it showed (Go: `endUnansweredAsk`
+        // records a receipt even when its answer never arrived).
+        let outcome = match &approved {
+            Ok(a) if a.allow => match (a.persist, a.session) {
+                (true, _) => outcome::ALLOW_PERSIST,
+                (false, true) => outcome::ALLOW_SESSION,
+                (false, false) => outcome::ALLOW_ONCE,
+            },
+            _ => outcome::DENY,
+        };
+        self.record(&id, "tool", tool, subject, outcome);
         approved
     }
 }
