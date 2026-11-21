@@ -285,12 +285,7 @@ pub(crate) async fn runtime_sessions(State((hub, root)): State<(Arc<Hub>, String
 async fn route_runtime(State(state): State<RouterState>, request: Request) -> Response {
     let path = request.uri().path().trim_start_matches("/rt/");
     let id = path.split('/').next().unwrap_or("");
-    let Some(runtime) = state
-        .hub
-        .runtimes()
-        .into_iter()
-        .find(|rt| rt.id == id)
-    else {
+    let Some(runtime) = state.hub.runtimes().into_iter().find(|rt| rt.id == id) else {
         return not_found("runtime", id);
     };
     let router = runtime_routes(state.hub.clone(), &runtime);
@@ -299,12 +294,7 @@ async fn route_runtime(State(state): State<RouterState>, request: Request) -> Re
     // hub-level routes only match the trailing-slash shapes.
     let (mut parts, body) = request.into_parts();
     let consumed = "/rt/".len() + runtime.id.len();
-    let mut rest = parts
-        .uri
-        .path()
-        .get(consumed..)
-        .unwrap_or("/")
-        .to_owned();
+    let mut rest = parts.uri.path().get(consumed..).unwrap_or("/").to_owned();
     if rest.is_empty() {
         rest.push('/');
     }
@@ -324,7 +314,10 @@ async fn route_runtime(State(state): State<RouterState>, request: Request) -> Re
 /// the runtime's session list, and the turn-command verbs. Built per
 /// dispatch from the hub's runtime table — the table is the state publish
 /// froze; the router is its view.
-pub(crate) fn runtime_routes(hub: Arc<Hub>, runtime: &reasonix_session::model::RuntimeSummary) -> Router {
+pub(crate) fn runtime_routes(
+    hub: Arc<Hub>,
+    runtime: &reasonix_session::model::RuntimeSummary,
+) -> Router {
     let runtime_id = reasonix_session::model::RuntimeId(runtime.id.clone());
     let ctrl = hub.turn_controller(runtime_id.clone());
     let bc = hub.broadcaster(runtime_id);
@@ -337,7 +330,10 @@ pub(crate) fn runtime_routes(hub: Arc<Hub>, runtime: &reasonix_session::model::R
 /// the transcript directory, unlike the hub-level tree route.
 fn sessions_routes(hub: Arc<Hub>, root: String) -> Router {
     Router::new()
-        .route("/sessions", get(runtime_sessions).fallback(method_not_allowed_response))
+        .route(
+            "/sessions",
+            get(runtime_sessions).fallback(method_not_allowed_response),
+        )
         .with_state((hub, root))
 }
 

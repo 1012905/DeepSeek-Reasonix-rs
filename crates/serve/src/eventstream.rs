@@ -144,10 +144,7 @@ pub fn events_routes(bc: Option<Arc<dyn BroadcasterHandle>>) -> Router {
 async fn no_stream() -> Response {
     crate::refuse::refuse_response(
         axum::http::StatusCode::SERVICE_UNAVAILABLE,
-        &crate::refuse::Reason::new(
-            crate::refuse::NO_RUNTIME_OPEN,
-            "no runtime is open",
-        ),
+        &crate::refuse::Reason::new(crate::refuse::NO_RUNTIME_OPEN, "no runtime is open"),
     )
 }
 

@@ -22,10 +22,22 @@ use crate::refuse::{Reason, refuse_response};
 /// for a host-adopted runtime whose write side is the host's own.
 pub(crate) fn command_routes(ctrl: Option<Arc<TurnController>>) -> axum::Router {
     axum::Router::new()
-        .route("/submit", axum::routing::post(runtime_submit).fallback(wrong_method))
-        .route("/cancel", axum::routing::post(runtime_cancel).fallback(wrong_method))
-        .route("/new", axum::routing::post(runtime_new).fallback(wrong_method))
-        .route("/approve", axum::routing::post(runtime_approve).fallback(wrong_method))
+        .route(
+            "/submit",
+            axum::routing::post(runtime_submit).fallback(wrong_method),
+        )
+        .route(
+            "/cancel",
+            axum::routing::post(runtime_cancel).fallback(wrong_method),
+        )
+        .route(
+            "/new",
+            axum::routing::post(runtime_new).fallback(wrong_method),
+        )
+        .route(
+            "/approve",
+            axum::routing::post(runtime_approve).fallback(wrong_method),
+        )
         .with_state(ctrl)
 }
 
@@ -272,23 +284,33 @@ mod tests {
     async fn submit_answers_202_and_carries_no_body() {
         let response = drive(Some(dead_controller()), "/submit", br#"{"input":"hello"}"#).await;
         assert_eq!(response.status(), StatusCode::ACCEPTED);
-        assert!(text_of(response).await.trim().is_empty(), "202 carries no body");
+        assert!(
+            text_of(response).await.trim().is_empty(),
+            "202 carries no body"
+        );
     }
 
     #[tokio::test]
     async fn submit_refusals_match_the_go_shapes() {
         let ctrl = dead_controller();
         // Empty input and no chips: 400 missing input.
-        let (status, json) = envelope_of(drive(Some(ctrl.clone()), "/submit", br#"{}"#).await).await;
+        let (status, json) =
+            envelope_of(drive(Some(ctrl.clone()), "/submit", br#"{}"#).await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["code"], crate::refuse::MISSING_FIELD);
         assert_eq!(json["params"]["field"], "input");
         // A decode failure folds into the same shape (Go: one check).
-        let (status, _) = envelope_of(drive(Some(ctrl.clone()), "/submit", b"not json").await).await;
+        let (status, _) =
+            envelope_of(drive(Some(ctrl.clone()), "/submit", b"not json").await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         // Unknown format value: 400 request.bad_value naming the allowed one.
         let (status, json) = envelope_of(
-            drive(Some(ctrl.clone()), "/submit", br#"{"input":"x","format":"yaml"}"#).await,
+            drive(
+                Some(ctrl.clone()),
+                "/submit",
+                br#"{"input":"x","format":"yaml"}"#,
+            )
+            .await,
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -302,7 +324,10 @@ mod tests {
             br#"{"input":"x","format":"json_object"}"#,
         )
         .await;
-        assert_eq!(text_of(response).await, "structured output is not part of this build\n");
+        assert_eq!(
+            text_of(response).await,
+            "structured output is not part of this build\n"
+        );
         // Chips: the inbox machine is unported — typed refusal, not a 202.
         let response = drive(
             Some(ctrl.clone()),
@@ -310,7 +335,10 @@ mod tests {
             br#"{"input":"x","invocations":[{"name":"s"}]}"#,
         )
         .await;
-        assert_eq!(text_of(response).await, "chip submission is not part of this build\n");
+        assert_eq!(
+            text_of(response).await,
+            "chip submission is not part of this build\n"
+        );
         // A `!` line off a socket: 403, the frozen Go code.
         let (status, json) =
             envelope_of(drive(Some(ctrl.clone()), "/submit", br#"{"input":"!ls"}"#).await).await;
@@ -318,7 +346,10 @@ mod tests {
         assert_eq!(json["code"], crate::refuse::SHELL_UNAVAILABLE);
         // A slash line: the dispatch machine is unported — typed refusal.
         let response = drive(Some(ctrl.clone()), "/submit", br#"{"input":"/new"}"#).await;
-        assert_eq!(text_of(response).await, "slash commands are not part of this build\n");
+        assert_eq!(
+            text_of(response).await,
+            "slash commands are not part of this build\n"
+        );
         // Unknown fields ride through, as Go's plain Decode does here.
         let response = drive(
             Some(ctrl.clone()),
@@ -336,8 +367,7 @@ mod tests {
         // flight looks like to the next submit.
         assert!(ctrl.try_admit(), "first admission holds");
         let (status, json) =
-            envelope_of(drive(Some(ctrl.clone()), "/submit", br#"{"input":"second"}"#).await)
-                .await;
+            envelope_of(drive(Some(ctrl.clone()), "/submit", br#"{"input":"second"}"#).await).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(json["code"], crate::refuse::SESSION_BUSY);
         // Release through the turn body itself: the provider fails fast on
@@ -351,15 +381,25 @@ mod tests {
         let response = drive(Some(ctrl.clone()), "/cancel", b"").await;
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         let response = drive(Some(ctrl.clone()), "/new", b"").await;
-        assert_eq!(text_of(response).await, "session reset is not part of this build\n");
+        assert_eq!(
+            text_of(response).await,
+            "session reset is not part of this build\n"
+        );
         // An approve without an id is a 400 before the machine refusal.
         let (status, json) =
             envelope_of(drive(Some(ctrl.clone()), "/approve", br#"{"allow":true}"#).await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["params"]["field"], "id");
-        let response =
-            drive(Some(ctrl.clone()), "/approve", br#"{"id":"a1","allow":true}"#).await;
-        assert_eq!(text_of(response).await, "approval orchestration is not part of this build\n");
+        let response = drive(
+            Some(ctrl.clone()),
+            "/approve",
+            br#"{"id":"a1","allow":true}"#,
+        )
+        .await;
+        assert_eq!(
+            text_of(response).await,
+            "approval orchestration is not part of this build\n"
+        );
     }
 
     #[tokio::test]
@@ -367,7 +407,10 @@ mod tests {
         // A host-adopted runtime carries no write side here; the refusal is
         // typed, and cancel keeps its 204 (a no-op there).
         let response = drive(None, "/submit", br#"{"input":"x"}"#).await;
-        assert_eq!(text_of(response).await, "turn control is not part of this build\n");
+        assert_eq!(
+            text_of(response).await,
+            "turn control is not part of this build\n"
+        );
         let response = drive(None, "/cancel", b"").await;
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
