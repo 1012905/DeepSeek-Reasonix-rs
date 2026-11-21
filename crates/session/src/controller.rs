@@ -21,6 +21,7 @@ pub trait Controller: Send + Sync {
 }
 
 /// Event fan-out handle for one runtime. The broadcaster entity lives in
-/// serve; session only names the handle so `Hub::broadcaster` is stable
-/// across the write-side migration (docs/contract.md §4.1).
-pub trait BroadcasterHandle: Send + Sync {}
+/// serve; session names the subscriber surface in [`crate::fanout`] so
+/// `Hub::broadcaster` is stable across the write-side migration
+/// (docs/contract.md §4.1).
+pub use crate::fanout::BroadcasterHandle;

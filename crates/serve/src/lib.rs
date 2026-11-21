@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod boot;
 pub mod broadcaster;
+pub mod commands;
 pub mod eventstream;
 pub mod gate;
 pub mod listen;

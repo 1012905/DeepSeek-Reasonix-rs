@@ -214,6 +214,7 @@ fn runtime_summary(id: &RuntimeId, controller: &dyn Controller) -> RuntimeSummar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fanout::SubscriptionMode;
     use crate::model::{HubRefusal, OpenRuntimeRequest};
 
     /// A controller pinned to fixed answers (Go test doubles of
@@ -238,7 +239,18 @@ mod tests {
 
     struct Broadcaster;
 
-    impl BroadcasterHandle for Broadcaster {}
+    impl BroadcasterHandle for Broadcaster {
+        fn subscribe(&self, _mode: SubscriptionMode) -> crate::fanout::Subscription {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            crate::fanout::Subscription::new(Box::new(rx), Box::new(|| {}))
+        }
+        fn watermark(&self) -> i64 {
+            0
+        }
+        fn replay(&self, _after: i64) -> (Vec<bytes::Bytes>, bool) {
+            (Vec::new(), true)
+        }
+    }
 
     fn hub_with_root(root: &Path) -> Hub {
         Hub::new(HubPaths {

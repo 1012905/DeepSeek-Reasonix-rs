@@ -10,6 +10,7 @@
 pub mod egress;
 pub mod permission;
 pub mod redirectguard;
+pub mod sandbox;
 pub mod shellsafe;
 
 pub(crate) mod urlfield;

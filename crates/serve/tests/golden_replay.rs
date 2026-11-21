@@ -202,18 +202,12 @@ async fn sse_stream_opens_with_the_recorded_connect_frame() {
         .iter()
         .find(|c| c.slug == "get-events-sse")
         .expect("get-events-sse fixture");
-    // /events is a per-runtime route: the hub router answers it with the
-    // routeDefault fallback, so the replay drives session_routes directly —
-    // exactly what the host mounts under /rt/{id}/.
-    let hub = Arc::new(reasonix_session::hub::Hub::new(
-        reasonix_session::hub::HubPaths {
-            state_root: std::env::temp_dir().join("golden-replay-absent"),
-        },
-    ));
-    let response = reasonix_serve::eventstream::session_routes(
-        hub,
-        Arc::new(reasonix_serve::broadcaster::Broadcaster::new()),
-    )
+    // /events is a per-runtime route: the hub router answers it through the
+    // runtime mux, so the replay drives events_routes directly — exactly
+    // what the runtime mux mounts under /rt/{id}/.
+    let response = reasonix_serve::eventstream::events_routes(Some(Arc::new(
+        reasonix_serve::broadcaster::Broadcaster::new(),
+    )))
     .oneshot(fixture_request(case))
     .await
     .expect("router call cannot fail");

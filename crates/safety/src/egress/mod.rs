@@ -20,6 +20,6 @@ pub use loopback::{
 pub use policy::{Policy, Reason};
 pub use proxy::{
     Admission, AdmissionError, ApprovalFailure, Denial, ENV_KEYS, EgressApprover, EgressGate,
-    LocalAddresses, LookupError, Resolver, UpstreamFailure, UpstreamProxy, UpstreamSelector, env,
-    new_token, proxy_token,
+    EgressRouteHandle, LocalAddresses, LookupError, Resolver, UpstreamFailure, UpstreamProxy,
+    UpstreamSelector, env, new_token, proxy_token,
 };
