@@ -4,10 +4,18 @@
 //! the JSON-RPC wire, era negotiation, tool naming, and lifecycle state;
 //! subprocess and network transports arrive as a later slice.
 
+pub mod lifecycle;
 pub mod naming;
 pub mod types;
 pub mod wire;
 
+pub use lifecycle::{
+    DEFAULT_CALL_TIMEOUT_MS, DEFAULT_START_CONCURRENCY, DEFAULT_START_TIMEOUT_MS, Host,
+    LifecycleError, McpProcessMode, Removal, START_PHASES, Spec, StartPhase, StartPlan,
+    StartPlanEntry, StartPolicy, StartupFailure, TransportKind, build_start_plan,
+    canonical_mcp_runtime_transport, check_deferred_generation, effective_concurrency,
+    new_startup_failure, parse_transport_type, spawn_key,
+};
 pub use naming::{
     MAX_MODEL_TOOL_NAME, NamingError, bounded_tool_name, mcp_connect_permission_name, mcp_roots,
     mcp_roots_from_absolute, model_tool_name, normalize_name, short_name_hash, tool_name,
