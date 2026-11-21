@@ -365,15 +365,13 @@ fn execute_one(call: &ToolCall, inputs: &BatchInputs<'_>, already_gated: bool) -
         Ok(args) => args,
         Err(detail) => return malformed_arguments_outcome(detail),
     };
-    if !already_gated {
-        if let Some(gate) = inputs.gate {
-            let verdict = gate.check_verdict(tool.name(), &args, tool.read_only());
-            if !verdict.allow {
-                return refused_outcome(
-                    &format!("blocked: {}", verdict.reason),
-                    &verdict.refusal_code,
-                );
-            }
+    if !already_gated && let Some(gate) = inputs.gate {
+        let verdict = gate.check_verdict(tool.name(), &args, tool.read_only());
+        if !verdict.allow {
+            return refused_outcome(
+                &format!("blocked: {}", verdict.reason),
+                &verdict.refusal_code,
+            );
         }
     }
     let ctx = CallContext::new();
