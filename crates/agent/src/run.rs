@@ -92,8 +92,9 @@ pub struct Agent {
     seams: std::sync::Mutex<Seams>,
     /// The context-window machine (Go: `a.window()` — built per entry there;
     /// owned here and reached through it). `None` runs the spine exactly as
-    /// before: compaction off, no clip, no recovery.
-    window: Option<Arc<crate::window::Window>>,
+    /// before: compaction off, no clip, no recovery. Guarded like the seams
+    /// because Go installs machines on a live agent.
+    window: std::sync::Mutex<Option<Arc<crate::window::Window>>>,
 
     cache: SessionCache,
     stops: CallStops,
@@ -118,7 +119,7 @@ impl Agent {
             session,
             sink,
             seams: std::sync::Mutex::new(Seams::default()),
-            window: None,
+            window: std::sync::Mutex::new(None),
             cache: SessionCache::default(),
             stops: CallStops::default(),
             cancel: CancelToken::default(),
@@ -129,13 +130,13 @@ impl Agent {
     /// Installs the context-window machine (Go: the `window()` entry the
     /// loop reaches). Its Prepare pass, output clip and overflow recovery
     /// join the request lifecycle from here.
-    pub fn set_window(&mut self, window: Arc<crate::window::Window>) {
-        self.window = Some(window);
+    pub fn set_window(&self, window: Arc<crate::window::Window>) {
+        *self.window.lock().expect("window lock") = Some(window);
     }
 
     /// The context window, when one is installed (Go: `a.window()`).
-    pub fn window(&self) -> Option<&Arc<crate::window::Window>> {
-        self.window.as_ref()
+    pub fn window(&self) -> Option<Arc<crate::window::Window>> {
+        self.window.lock().expect("window lock").clone()
     }
 
     /// Installs the request-composition seam.
@@ -379,7 +380,7 @@ impl Agent {
         });
         self.emit_turn_phase(phase::WORKING);
         let created_at = now_ms();
-        if let Some(window) = &self.window {
+        if let Some(window) = self.window() {
             // The window reads this stamp to find the running turn's request
             // and to scope per-turn no-fold reports (Go: the
             // activeTurnCreatedAt write in beginRunTurn).
@@ -446,7 +447,7 @@ impl Agent {
             .composer
             .clone()
             .unwrap_or_else(|| Arc::new(crate::compose::DefaultComposer::default()));
-        if let Some(window) = &self.window {
+        if let Some(window) = self.window() {
             window.set_composer(composer.clone());
             return window.prepare_request(composer);
         }
@@ -477,9 +478,22 @@ impl Agent {
             self.emit_stream_attempt(&attempt_id, "begin", attempt, "");
             let stream = match self.client.stream(frozen).await {
                 Ok(stream) => stream,
-                // A pre-stream failure is terminal: nothing streamed, so a
-                // replay would send the same bytes to the same wall.
+                // A pre-stream failure is terminal — unless the provider is
+                // refusing the input as too long, which the window machine
+                // answers with its one-shot fold-and-replay (Go:
+                // handleSamplingError runs the same recovery on a Stream()
+                // call failure).
                 Err(err) => {
+                    if attempt < MAX_SAMPLING_ATTEMPTS
+                        && let Some(window) = self.window()
+                        && matches!(
+                            window.recover_context_overflow(frozen, &mut overflow_folded, &err),
+                            crate::window::recovery::OverflowRecovery::Recovered
+                        )
+                    {
+                        self.emit_stream_attempt(&attempt_id, "discard", attempt, "context overflow");
+                        continue;
+                    }
                     let reason = err.stream_interrupt_reason().to_owned();
                     self.emit_stream_attempt(&attempt_id, "discard", attempt, &reason);
                     return crate::stream::StreamedTurn {
@@ -502,7 +516,7 @@ impl Agent {
             // lastUsage is the latest single-request shape, never the
             // multi-attempt billable aggregate — that would inflate
             // compaction decisions (Go: storeLatestRequestUsage).
-            if let Some(window) = &self.window
+            if let Some(window) = self.window()
                 && let Some(u) = &result.usage
             {
                 window.store_latest_request_usage(u);
@@ -521,7 +535,7 @@ impl Agent {
                     }
                     if attempt < MAX_SAMPLING_ATTEMPTS
                         && !err.is_stream_interrupted()
-                        && let Some(window) = &self.window
+                        && let Some(window) = self.window()
                     {
                         match window.recover_context_overflow(frozen, &mut overflow_folded, err) {
                             crate::window::recovery::OverflowRecovery::Recovered => {

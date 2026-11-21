@@ -198,3 +198,7 @@ fn prompt_pressure_with(
     let _ = window;
     estimate_value
 }
+
+#[cfg(test)]
+#[path = "usage_tests.rs"]
+mod tests;

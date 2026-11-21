@@ -841,3 +841,8 @@ fn hex(bytes: &[u8]) -> String {
 fn now_created_at() -> reasonix_state::sessionstore::eventlog::CreatedAt {
     reasonix_state::sessionstore::eventlog::CreatedAt::default()
 }
+
+
+#[cfg(test)]
+#[path = "maintenance_tests.rs"]
+mod tests;

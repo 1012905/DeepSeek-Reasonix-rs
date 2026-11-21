@@ -197,6 +197,7 @@ impl Window {
         registry: Arc<Registry>,
         sink: Arc<dyn Sink>,
     ) -> Self {
+        let output_budget = config.shared_window.output_budget;
         Window {
             config,
             session,
@@ -208,7 +209,10 @@ impl Window {
             active_turn_created_at: AtomicI64::new(0),
             probe: ContextWindowProbe::default(),
             state: WindowState::default(),
-            output: Mutex::new(estimate::OutputEstimateState::default()),
+            output: Mutex::new(estimate::OutputEstimateState {
+                output_budget,
+                ..estimate::OutputEstimateState::default()
+            }),
         }
     }
 
@@ -422,6 +426,25 @@ impl Window {
         -1
     }
 
+    /// Installs one fold's projection as the current one (Go: the
+    /// `compact_commit.go` install — the state half this machine owns). The
+    /// compaction wave's executor calls this from the fold seam; its CAS and
+    /// persistence halves are the wave's.
+    pub fn install_projection(&self, projection: reasonix_state::sessionstore::compaction_state::ContextProjection) {
+        let key = self.prompt_cache_key();
+        let (_, transcript_version) = self.session.snapshot_messages_version();
+        self.with_core(|core| {
+            core.compaction_state.schema_version =
+                reasonix_state::sessionstore::compaction_state::COMPACTION_STATE_SCHEMA_CURRENT;
+            core.compaction_state.transcript_version = transcript_version;
+            core.compaction_state.prompt_cache_key = key;
+            core.compaction_state.projection = projection;
+            core.compaction_state.generation += 1;
+            core.checkpoint_state = "applied".to_owned();
+            core.compaction_stuck = false;
+        });
+    }
+
     /// Builds, freezes, and clips one model-round request (Go:
     /// `prepareSamplingRequest`): Prepare at the pressure trigger, compose
     /// through the seam, resolve the output budget, and record the shape the
@@ -623,4 +646,216 @@ pub fn visible_request_shape(window: &Window, visible: &[Message]) -> RequestCal
 /// `estimatedVisibleRequestTokens`).
 pub fn estimated_visible_request_tokens(window: &Window, visible: &[Message]) -> i64 {
     estimate::estimated_shape_tokens(window, &visible_request_shape(window, visible))
+}
+
+/// Fixtures the window module's test oracles share (Go: the inline
+/// `&Agent{agentConfig: ...}` constructions of the agent package's tests).
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+    use crate::sink::Discard;
+    use reasonix_contract::eventwire::event::Event;
+
+    pub(crate) fn config(context_window: i64, compact_ratio: f64) -> WindowConfig {
+        WindowConfig {
+            context_window,
+            compact_ratio,
+            model_ref: "model".to_owned(),
+            ..WindowConfig::default()
+        }
+    }
+
+    pub(crate) fn window(context_window: i64, compact_ratio: f64) -> Window {
+        Window::new(
+            config(context_window, compact_ratio),
+            Arc::new(reasonix_state::sessionstore::Session::new("system")),
+            Arc::new(Registry::new()),
+            Arc::new(Discard),
+        )
+    }
+
+    pub(crate) fn window_over(
+        config: WindowConfig,
+        msgs: Vec<Message>,
+    ) -> Window {
+        let session = Arc::new(reasonix_state::sessionstore::Session::new(""));
+        session.replace(msgs);
+        Window::new(config, session, Arc::new(Registry::new()), Arc::new(Discard))
+    }
+
+    pub(crate) fn system(content: &str) -> Message {
+        Message {
+            role: Role::SYSTEM,
+            content: content.to_owned(),
+            ..Message::default()
+        }
+    }
+
+    pub(crate) fn user(content: &str) -> Message {
+        Message {
+            role: Role::USER,
+            content: content.to_owned(),
+            ..Message::default()
+        }
+    }
+
+    pub(crate) fn assistant(content: &str) -> Message {
+        Message {
+            role: Role::ASSISTANT,
+            content: content.to_owned(),
+            ..Message::default()
+        }
+    }
+
+    /// A sink that records every event it sees (Go: `noticeRecorder`).
+    #[derive(Default)]
+    pub(crate) struct RecordingSink {
+        pub events: std::sync::Mutex<Vec<Event>>,
+    }
+
+    impl RecordingSink {
+        pub fn notices_with_code(&self, code: &str) -> Vec<Event> {
+            self.events
+                .lock()
+                .expect("recorder lock")
+                .iter()
+                .filter(|e| e.kind == crate::sink::kind::NOTICE && e.code == code)
+                .cloned()
+                .collect()
+        }
+    }
+
+    impl Sink for RecordingSink {
+        fn emit(&self, e: Event) {
+            self.events.lock().expect("recorder lock").push(e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::window::testing::*;
+
+    fn state_with_projection(
+        messages: Vec<Message>,
+        covered_count: i64,
+        covered_prefix_hash: &str,
+        prompt_cache_key: &str,
+    ) -> CompactionState {
+        CompactionState {
+            prompt_cache_key: prompt_cache_key.to_owned(),
+            projection: ContextProjection {
+                messages,
+                covered_count,
+                covered_prefix_hash: covered_prefix_hash.to_owned(),
+                ..ContextProjection::default()
+            },
+            ..CompactionState::default()
+        }
+    }
+
+    fn covered(canonical: &[Message], n: i64) -> String {
+        reasonix_state::sessionstore::compaction_state::covered_prefix_hash(canonical, n)
+    }
+
+    #[test]
+    fn a_saved_projection_answers_while_the_covered_prefix_is_intact() {
+        let canonical = vec![system("system"), user("one"), assistant("two")];
+        let st = state_with_projection(
+            vec![system("system"), user("digest")],
+            2,
+            &covered(&canonical, 2),
+            "|model",
+        );
+        assert!(projection_valid(&st, &canonical, "|model", None));
+    }
+
+    #[test]
+    fn a_rewritten_prefix_fails_the_projection_closed() {
+        let canonical = vec![system("system"), user("edited"), assistant("two")];
+        let st = state_with_projection(
+            vec![system("system"), user("digest")],
+            2,
+            &covered(&[system("system"), user("one")], 2),
+            "|model",
+        );
+        assert!(!projection_valid(&st, &canonical, "|model", None));
+        // Fail closed: a legacy sidecar without a covered hash is rebuilt.
+        let mut legacy = state_with_projection(
+            vec![system("system"), user("digest")],
+            2,
+            &covered(&canonical, 2),
+            "|model",
+        );
+        legacy.projection.covered_prefix_hash = String::new();
+        assert!(!projection_valid(&legacy, &canonical, "|model", None));
+    }
+
+    #[test]
+    fn a_projection_from_another_lineage_is_not_reused() {
+        let canonical = vec![system("system"), user("one"), assistant("two")];
+        let st = state_with_projection(
+            vec![system("system"), user("digest")],
+            2,
+            &covered(&canonical, 2),
+            "other|model",
+        );
+        assert!(!projection_valid(&st, &canonical, "|model", None));
+        // A blank current key means the lineage is not known yet.
+        assert!(projection_valid(&st, &canonical, "", None));
+    }
+
+    #[test]
+    fn the_projection_splices_the_canonical_tail_behind_it() {
+        let canonical = vec![system("system"), user("one"), assistant("two")];
+        let proj = ContextProjection {
+            messages: vec![system("system"), user("digest")],
+            covered_count: 2,
+            ..ContextProjection::default()
+        };
+        let visible = model_visible_from_projection(&proj, &canonical);
+        assert_eq!(visible.len(), 3);
+        assert_eq!(visible[2].role, Role::ASSISTANT);
+        assert_eq!(visible[2].content, "two");
+    }
+
+    #[test]
+    fn lineage_keys_match_across_the_legacy_native_suffix() {
+        assert_eq!(
+            lineage_key_compatible("ws|b|m", "ws|b|m").as_deref(),
+            Some("ws|b|m")
+        );
+        assert_eq!(
+            lineage_key_compatible("ws|b|m|context-editing-native", "ws|b|m").as_deref(),
+            Some("ws|b|m")
+        );
+        assert!(lineage_key_compatible("", "ws|b|m").is_none());
+        assert_eq!(
+            lineage_key_compatible("legacy", "").as_deref(),
+            Some("legacy")
+        );
+        assert!(lineage_key_compatible("other", "ws|b|m").is_none());
+    }
+
+    #[test]
+    fn the_covered_hash_memo_rebinds_with_the_rewrite_counter() {
+        let window = window(20_000, 0.5);
+        let msgs = vec![user("hello"), assistant("hi")];
+        let first = reasonix_state::sessionstore::compaction_state::covered_prefix_hash(&msgs, 1);
+        *window.state.covered_hash.lock().expect("window lock") = Some(CoveredHashMemo {
+            rewrite_version: 0,
+            n: 1,
+            hash: first.clone(),
+        });
+        let memo = window
+            .state
+            .covered_hash
+            .lock()
+            .expect("window lock")
+            .clone()
+            .expect("memo");
+        assert_eq!(memo.n, 1);
+        assert_eq!(memo.hash, first);
+    }
 }

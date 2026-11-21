@@ -125,3 +125,7 @@ fn state_checkpoint_state(
     }
     "restored".to_owned()
 }
+
+#[cfg(test)]
+#[path = "status_tests.rs"]
+mod tests;

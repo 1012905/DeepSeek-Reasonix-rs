@@ -169,3 +169,7 @@ impl Window {
                 > window
     }
 }
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod tests;

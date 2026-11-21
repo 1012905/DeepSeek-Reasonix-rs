@@ -242,3 +242,7 @@ impl Window {
         estimate::estimated_prompt_tokens(self, region) >= MIN_FOLD_TOKENS
     }
 }
+
+#[cfg(test)]
+#[path = "trigger_tests.rs"]
+mod tests;

@@ -160,21 +160,6 @@ pub fn message_calibration_shape(
     shape
 }
 
-/// The shape of the message the provider projection would hand over (Go:
-/// `projectedMessageCalibrationShape`). Only the ProviderContent swap
-/// reaches the shape here; the LocalOnly drop already ran in
-/// `message_calibration_shape`.
-pub fn projected_message_calibration_shape(
-    msg: &Message,
-    policy: &SharedWindowPolicy,
-) -> RequestCalibrationShape {
-    let mut msg = msg.clone();
-    if !msg.provider_content.is_empty() {
-        msg.content = std::mem::take(&mut msg.provider_content);
-    }
-    message_calibration_shape(&msg, policy)
-}
-
 /// The shared-window shape of one request (Go:
 /// `requestCalibrationShapeWithPolicy` over the request copy).
 pub fn request_calibration_shape(
@@ -183,7 +168,7 @@ pub fn request_calibration_shape(
 ) -> RequestCalibrationShape {
     let mut shape = RequestCalibrationShape::default();
     for msg in &req.messages {
-        shape = shape.plus(&projected_message_calibration_shape(msg, &policy));
+        shape = shape.plus(&message_calibration_shape(msg, &policy));
     }
     shape.image_tokens = request_image_tokens(&req.messages);
     for schema in &req.tools {
@@ -365,4 +350,209 @@ pub fn text_tokens(window: &super::Window, s: &str) -> i64 {
         }
     }
     (s.len() as f64 * FALLBACK_TOK_PER_CHAR) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::window::testing::*;
+    use crate::window::Window;
+
+    fn shape_of(window: &Window, msgs: &[Message]) -> RequestCalibrationShape {
+        let req = ChatCompletionRequest {
+            messages: msgs.to_vec(),
+            ..ChatCompletionRequest::default()
+        };
+        request_calibration_shape(&req, window.shared_window())
+    }
+
+    fn call_1() -> reasonix_contract::provider::ToolCall {
+        reasonix_contract::provider::ToolCall {
+            id: "call_1".to_owned(),
+            name: "bash".to_owned(),
+            arguments: "{}".to_owned(),
+            ..reasonix_contract::provider::ToolCall::default()
+        }
+    }
+
+    // Before any usage calibrates the session, the estimate compared against
+    // the context window must still be tokens. It used to be characters,
+    // which reads 3-4x high and compacted long before the configured ratio
+    // (Go: TestEstimatedPromptTokensStayInTokenUnitBeforeCalibration).
+    #[test]
+    fn cold_estimates_stay_in_token_unit() {
+        let window = window(1_000_000, 0.0);
+        let cases = [
+            ("chinese", "上下文压缩策略".repeat(8_000), 33_600, 50_000),
+            (
+                "english",
+                "compact the context window ".repeat(8_000),
+                54_000,
+                70_000,
+            ),
+        ];
+        for (name, text, realish, upper) in cases {
+            let got = estimated_prompt_tokens(&window, &[user(&text)]);
+            assert!(
+                got >= realish / 2 && got <= upper,
+                "{name}: cold estimate = {got} tokens, want between {} and {upper} (real ~{realish})",
+                realish / 2
+            );
+        }
+    }
+
+    // Desktop rebinds sessions constantly — tab switches, forks, and the
+    // snapshot conflict path that adopts the newer disk transcript. Each
+    // rebind used to drop the calibration and put the next turn back on the
+    // cold estimate (Go: TestSessionSwapKeepsPromptCalibration).
+    #[test]
+    fn a_conversation_rebind_keeps_the_prompt_calibration() {
+        let window = window(200_000, 0.0);
+        let msgs = vec![user(&"字".repeat(60_000))];
+        let shape = shape_of(&window, &msgs);
+        set_prompt_token_calibration(&window, 36_000, &shape);
+
+        let before = estimated_prompt_tokens(&window, &msgs);
+        window.reset();
+        let after = estimated_prompt_tokens(&window, &msgs);
+
+        assert_eq!(before, after, "estimate moved across a session swap");
+        assert!(
+            after <= 40_000,
+            "estimate = {after}, want the calibrated ~36000 rather than a cold fallback"
+        );
+    }
+
+    // Ordinary reasoning is not replayed by every provider, so a ratio
+    // learned over it must not price a replayed tool-call turn's reasoning
+    // as if the denominator had carried it (Go:
+    // TestCalibrationIgnoresNonReplayableOrdinaryReasoning).
+    #[test]
+    fn calibration_ignores_non_replayable_ordinary_reasoning() {
+        let window = window(0, 0.0);
+        let previous = vec![
+            user(&"x".repeat(300_000)),
+            assistant(""),
+        ];
+        let mut hidden = previous[1].clone();
+        hidden.reasoning_content = "hidden".repeat(150_000);
+        let previous = vec![previous[0].clone(), hidden];
+        set_prompt_token_calibration(&window, 75_000, &shape_of(&window, &previous));
+        let current = vec![
+            previous[0].clone(),
+            previous[1].clone(),
+            Message {
+                role: Role::ASSISTANT,
+                reasoning_content: "r".repeat(400_000),
+                tool_calls: vec![call_1()],
+                ..Message::default()
+            },
+        ];
+        let got = estimated_prompt_tokens(&window, &current);
+        assert!(
+            got >= 160_000,
+            "replayable reasoning estimate = {got}, want ordinary local reasoning excluded from \
+             the calibration denominator"
+        );
+    }
+
+    #[test]
+    fn calibrated_responses_budget_includes_new_ordinary_reasoning() {
+        let mut config = config(200_000, 0.0);
+        config.shared_window = crate::window::SharedWindowPolicy {
+            shares_context_window: true,
+            output_budget: 128 * 1024,
+            replays_ordinary_reasoning: true,
+            replays_responses_items: false,
+        };
+        let window = window_over(config, vec![user(&"x".repeat(300_000))]);
+        let shape = shape_of(&window, &[user(&"x".repeat(300_000))]);
+        set_prompt_token_calibration(&window, 75_000, &shape);
+        let current = ChatCompletionRequest {
+            messages: vec![
+                user(&"x".repeat(300_000)),
+                Message {
+                    role: Role::ASSISTANT,
+                    reasoning_content: "r".repeat(400_000),
+                    ..Message::default()
+                },
+            ],
+            ..ChatCompletionRequest::default()
+        };
+        let got = estimated_request_tokens(&window, &current);
+        assert!(
+            got >= 174_000,
+            "Responses ordinary reasoning estimate = {got}, want newly replayed reasoning included"
+        );
+        let budget = window
+            .effective_output_budget(&current)
+            .expect("budget resolves");
+        assert!(
+            matches!(budget, Some(b) if b <= 20_000),
+            "replayed reasoning budget = {budget:?}, want a clipped budget <= 20000"
+        );
+    }
+
+    #[test]
+    fn calibrated_responses_budget_includes_new_replay_items() {
+        let mut config = config(200_000, 0.0);
+        config.shared_window = crate::window::SharedWindowPolicy {
+            shares_context_window: true,
+            output_budget: 128 * 1024,
+            replays_ordinary_reasoning: false,
+            replays_responses_items: true,
+        };
+        let window = window_over(config, vec![user(&"x".repeat(300_000))]);
+        let shape = shape_of(&window, &[user(&"x".repeat(300_000))]);
+        set_prompt_token_calibration(&window, 75_000, &shape);
+        let item = format!(
+            r#"{{"id":"ws_1","type":"web_search_call","status":"completed","action":{{"query":"{}"}}}}"#,
+            "q".repeat(400_000)
+        );
+        let raw = serde_json::value::RawValue::from_string(item).expect("raw item");
+        let current = ChatCompletionRequest {
+            messages: vec![
+                user(&"x".repeat(300_000)),
+                Message {
+                    role: Role::ASSISTANT,
+                    responses_items: vec![raw],
+                    ..Message::default()
+                },
+            ],
+            ..ChatCompletionRequest::default()
+        };
+        let got = estimated_request_tokens(&window, &current);
+        assert!(
+            got >= 174_000,
+            "Responses replay-item estimate = {got}, want newly replayed item included"
+        );
+        let budget = window
+            .effective_output_budget(&current)
+            .expect("budget resolves");
+        assert!(
+            matches!(budget, Some(b) if b < 128 * 1024),
+            "Responses replay-item budget = {budget:?}, want a clipped budget"
+        );
+    }
+
+    #[test]
+    fn calibrated_output_budget_counts_tool_schemas_once() {
+        let window = window(0, 0.0);
+        let req = ChatCompletionRequest {
+            messages: vec![user(&"x".repeat(100_000))],
+            tools: vec![reasonix_provider::ToolSchema {
+                name: "lookup".to_owned(),
+                description: "y".repeat(100_000),
+                parameters: r#"{"type":"object"}"#.to_owned(),
+            }],
+            ..ChatCompletionRequest::default()
+        };
+        let shape = request_calibration_shape(&req, window.shared_window());
+        set_prompt_token_calibration(&window, 60_000, &shape);
+        let got = estimated_request_tokens(&window, &req);
+        assert_eq!(
+            got, 60_000,
+            "calibrated request tokens must count the tool schema once"
+        );
+    }
 }
