@@ -297,12 +297,6 @@ pub fn schema_value() -> Value {
     serde_json::from_str(GO_SCHEMA).expect("the ask schema is valid JSON")
 }
 
-/// Whether `questions` is what the tool itself would have built from the
-/// same text, for hosts that re-render a pending ask.
-pub fn is_host_question(q: &AskQuestion) -> bool {
-    !q.id.is_empty() && !q.prompt.is_empty() && q.options.len() >= 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
