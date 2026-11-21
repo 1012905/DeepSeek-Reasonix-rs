@@ -81,6 +81,108 @@ pub async fn serve_responses(responses: Vec<Vec<u8>>) -> String {
     format!("http://{addr}")
 }
 
+/// [serve_responses] that also records each request's body. The transport
+/// streams chunked uploads, so the body is decoded from the chunked
+/// transfer coding before it is recorded.
+pub async fn serve_capturing(responses: Vec<Vec<u8>>) -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().unwrap();
+    let bodies: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = bodies.clone();
+    tokio::spawn(async move {
+        for response in responses {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = Vec::new();
+            // Read to the end of the upload: the client writes the whole
+            // request before it waits, and the chunked terminator marks
+            // that end (a Content-Length body ends when the head names).
+            let mut chunk = vec![0u8; 65536];
+            loop {
+                let n = sock.read(&mut chunk).await.unwrap_or(0);
+                if n > 0 {
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                if n == 0 || upload_complete(&buf) {
+                    break;
+                }
+            }
+            let head_end = find_head_end(&buf);
+            let (head, rest) = buf.split_at(head_end);
+            let head_text = String::from_utf8_lossy(head).into_owned();
+            let chunked = head_text
+                .lines()
+                .any(|l| l.eq_ignore_ascii_case("transfer-encoding: chunked"));
+            let raw = if chunked {
+                decode_chunked(rest)
+            } else {
+                rest.to_vec()
+            };
+            sink.lock()
+                .expect("capture lock")
+                .push(String::from_utf8_lossy(&raw).into_owned());
+            sock.write_all(&response).await.ok();
+            sock.shutdown().await.ok();
+        }
+    });
+    (format!("http://{addr}"), bodies)
+}
+
+fn find_head_end(buf: &[u8]) -> usize {
+    buf.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|at| at + 4)
+        .unwrap_or(buf.len())
+}
+
+/// Whether the bytes accumulated so far complete an HTTP upload: a chunked
+/// body ends at its zero terminator, a sized body at its declared length.
+fn upload_complete(all: &[u8]) -> bool {
+    let head_end = find_head_end(all);
+    let head = String::from_utf8_lossy(&all[..head_end]).into_owned();
+    if head
+        .lines()
+        .any(|l| l.eq_ignore_ascii_case("transfer-encoding: chunked"))
+    {
+        return all.ends_with(b"0\r\n\r\n");
+    }
+    match head
+        .lines()
+        .find_map(|l| {
+            let (name, value) = l.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())?
+        })
+        .unwrap_or(0)
+    {
+        0 => true,
+        len => all.len() >= head_end + len,
+    }
+}
+
+/// Decodes the chunked transfer coding (RFC 9112 §7.1) the provider
+/// transport uploads with.
+fn decode_chunked(mut rest: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(line_end) = rest.windows(2).position(|w| w == b"\r\n") {
+        let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..line_end]).trim(), 16)
+            .unwrap_or(0);
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            break;
+        }
+        let take = size.min(rest.len());
+        out.extend_from_slice(&rest[..take]);
+        rest = &rest[take..];
+        // Skip the chunk terminator when it is present.
+        if rest.starts_with(b"\r\n") {
+            rest = &rest[2..];
+        }
+    }
+    out
+}
+
 /// Collects every event the spine emits, in emit order.
 #[derive(Default)]
 pub struct Recorder {

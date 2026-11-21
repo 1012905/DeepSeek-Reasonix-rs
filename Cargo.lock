@@ -948,9 +948,11 @@ name = "reasonix-assembly"
 version = "0.3.0"
 dependencies = [
  "axum",
+ "reasonix-agent",
  "reasonix-cli",
  "reasonix-serve",
  "reasonix-session",
+ "serde_json",
  "sha2",
  "thiserror",
  "tokio",
@@ -1048,10 +1050,13 @@ dependencies = [
  "hmac",
  "hyper",
  "hyper-util",
+ "reasonix-agent",
  "reasonix-config",
  "reasonix-contract",
  "reasonix-core",
+ "reasonix-provider",
  "reasonix-session",
+ "reasonix-state",
  "reasonix-tools",
  "serde",
  "serde_ignored",
@@ -1071,12 +1076,16 @@ version = "0.3.0"
 dependencies = [
  "chrono",
  "criterion",
+ "reasonix-agent",
  "reasonix-contract",
+ "reasonix-provider",
  "reasonix-state",
+ "reasonix-tools",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 

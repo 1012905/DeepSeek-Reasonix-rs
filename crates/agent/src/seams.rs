@@ -11,13 +11,14 @@ use reasonix_tools::Registry;
 
 use crate::error::TurnError;
 
+pub use crate::compose::DefaultComposer;
+
 /// Composes the provider request from session state (Go:
 /// `prepareSamplingRequest`). The default composition is the cache-stable
-/// spine shape: the configured system prompt, the registry's provider
-/// schemas, and the transcript's provider projection.
-///
-/// The prompt-composition wave replaces the default — skills, memory
-/// projections, turn-tail notes — without re-shaping the loop: retries
+/// spine shape ([`DefaultComposer`], in [`crate::compose`]): the configured
+/// system prompt, the registry's provider schemas, and the transcript's
+/// provider projection. A host replaces the seam to add skills, memory
+/// projections and turn-tail notes without re-shaping the loop: retries
 /// replay the exact request this seam returned, so it must be deterministic
 /// in one turn.
 pub trait RequestComposer: Send + Sync {
@@ -36,47 +37,6 @@ pub trait RequestComposer: Send + Sync {
 pub struct RequestBase {
     pub temperature: Option<f64>,
     pub max_tokens: i64,
-}
-
-/// The default composition (Go: the inline body of
-/// `prepareSamplingRequest` minus the machines not yet ported).
-pub struct DefaultComposer;
-
-impl RequestComposer for DefaultComposer {
-    fn compose(
-        &self,
-        system: &str,
-        session_messages: &[Message],
-        registry: &Registry,
-        base: &RequestBase,
-    ) -> Result<ChatCompletionRequest, TurnError> {
-        let tools = registry
-            .schemas()
-            .into_iter()
-            .map(|schema| reasonix_provider::ToolSchema {
-                name: schema.name,
-                description: schema.description,
-                parameters: serde_json::to_string(&schema.parameters)
-                    .unwrap_or_else(|_| String::new()),
-            })
-            .collect();
-        let mut messages = Vec::with_capacity(session_messages.len() + 1);
-        if !system.is_empty() {
-            messages.push(Message {
-                role: reasonix_contract::provider::Role::SYSTEM,
-                content: system.to_owned(),
-                ..Message::default()
-            });
-        }
-        messages.extend(reasonix_contract::provider::model_messages(session_messages).into_owned());
-        Ok(ChatCompletionRequest {
-            messages,
-            tools,
-            temperature: base.temperature,
-            max_tokens: base.max_tokens,
-            effort_override: String::new(),
-        })
-    }
 }
 
 /// Decides, per tool call, whether it may run (Go: `Gate`). `Ok(true)` runs

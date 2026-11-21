@@ -72,7 +72,8 @@ pub async fn prepare(opts: HostBootOptions) -> Result<HostBoot, BootError> {
         serve::boot::load_config(&opts.cwd).map_err(|e| BootError::Config(e.to_string()))?;
     on_phase("config");
 
-    // Per-runtime sink wrappers land with the agent slice.
+    // Per-runtime sink wrappers land with the agent slice: emit::turn_emit_pipeline
+    // composes the chain once per runtime and hands the turn machine its side.
     on_phase("sinks");
 
     let hub_paths = HubPaths::from_process_roots().unwrap_or_else(|| HubPaths {

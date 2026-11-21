@@ -607,6 +607,13 @@ pipe-leading line must be a six-cell ledger row.
 | AGENT-010 | Agent | Permission gate blocks one call; turn recovers | reasonix-agent | done | crates/agent/tests/turn_boundaries.rs::the_permission_gate_blocks_one_call_and_the_turn_recovers (2026-11-21) |
 | AGENT-011 | Agent | Usage accounting: billable merge, cache split, no-shape record never bills | reasonix-agent | done | crates/agent/tests/turn_usage.rs (6 tests) (2026-11-21) |
 | AGENT-012 | Agent | Admission durability + transcript bytes through the real sessionstore save | reasonix-agent | done | crates/agent/tests/turn_transcript.rs (2 tests) (2026-11-21) |
+| AGENT-013 | Agent | Request composition at the provider boundary: prefix stability across turns, created_at strip, strict-alternation coalescing, one system head, stable tool contract | reasonix-agent | done | crates/agent/tests/turn_compose.rs (4 tests) + crates/agent/src/compose.rs unit tests (6) (2026-11-21) |
+| CTRL-001 | Control | Submit runs a turn end-to-end, lands output + single turn_done, transcript on disk | reasonix-session | done | crates/session/tests/turns.rs::submit_runs_a_turn_and_lands_the_answer_on_the_sink (2026-11-21) |
+| CTRL-002 | Control | Admission save: prompt durable before the answer; failure reaches the wire | reasonix-session | done | crates/session/tests/turns.rs::the_admitted_prompt_is_durable_before_the_answer (2026-11-21) |
+| CTRL-003 | Control | Running guard + cancel: typed Busy refusal, cancelled turn_done, no forked transcript | reasonix-session | done | crates/session/tests/turns.rs::a_running_turn_refuses_a_second_submit_and_cancel_ends_the_first (2026-11-21) |
+| CTRL-004 | Control | Steer lands mid-turn guidance at the next round boundary | reasonix-session | done | crates/session/tests/turns.rs::steer_lands_mid_turn_guidance_at_the_next_round_boundary (2026-11-21) |
+| CTRL-005 | Control | Frozen read surface (mint-once path, explicit pin, dirs) through the Controller trait | reasonix-session | done | crates/session/tests/turns.rs::the_frozen_read_surface_tracks_the_pinned_paths (2026-11-21) |
+| SSE-023 | SSE | Emit-pipeline bridge onto the agent sink: turn events through coalesce->sync in order; burst merges ahead of the boundary | reasonix-serve | done | crates/serve/src/sink/adapter.rs tests (3, incl. a real turn) + crates/assembly/src/emit.rs tests (2) (2026-11-21) |
 
 ## Status summary
 
