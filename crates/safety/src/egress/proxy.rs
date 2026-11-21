@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::egress::address::{forbidden_address, go_ip_string};
 use crate::egress::policy::{Policy, Reason, normalize_host};
+use crate::sandbox::EgressRoute;
 use crate::urlfield::{UrlFields, join_host_port};
 
 /// One refused connection, recorded against the command whose token the
@@ -337,6 +338,37 @@ impl EgressGate {
             .iter()
             .map(|d| format!("{} ({})", d.host, d.reason))
             .collect()
+    }
+}
+
+/// The running proxy as the sandbox seam's [`EgressRoute`]: the addr
+/// clients are pointed at plus the gate that admits their traffic (Go
+/// `*Proxy` satisfying `sandbox.EgressRoute`).
+#[derive(Clone)]
+pub struct EgressRouteHandle {
+    pub gate: Arc<EgressGate>,
+    /// The loopback port the OS sandbox leaves open.
+    pub port: u16,
+    /// Where a Unix-socket transport serves, for a sandbox whose own
+    /// network namespace cannot reach this host's loopback. Empty leaves
+    /// egress shut rather than open.
+    pub socket_path: String,
+}
+
+impl EgressRouteHandle {
+    /// The host:port clients are pointed at.
+    pub fn addr(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+}
+
+impl EgressRoute for EgressRouteHandle {
+    fn env(&self, token: &str) -> Vec<String> {
+        env(token, &self.addr())
+    }
+
+    fn refusals(&self, token: &str) -> Vec<String> {
+        self.gate.refusals(token)
     }
 }
 

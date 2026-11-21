@@ -6,6 +6,12 @@
 #![forbid(unsafe_code)]
 
 pub mod anchors;
+pub mod bash;
+pub mod bash_cmdline;
+pub mod bash_env;
+pub mod bash_nul;
+pub mod bash_pipestatus;
+pub mod bashrun;
 pub mod confine;
 pub mod editengine;
 pub mod editfile;
@@ -30,6 +36,24 @@ pub mod writefile;
 pub mod writepaths;
 
 pub use anchors::{CODE_WRITE_OUTSIDE_SCOPE, ConfineError, confine_write_side_resolved};
+pub use bash::{
+    BASH_TOOL_STEER, BashError, BashTool, ExternalRefTokens, bash_error, confine_bash,
+    descriptor_from_shell, unconfined_bash,
+};
+pub use bash_cmdline::{CODE_COMMAND_LINE_TOO_LONG, check_command_line, command_line_units};
+pub use bash_env::{
+    AGENT_CHILD_ENV, apply_env_overrides, command_env, env_key_equal, filter_env, process_env,
+    set_env_value, shell_env_map, shell_env_overrides,
+};
+pub use bash_nul::{NulWatch, arm_nul_watch, nul_file_in};
+pub use bash_pipestatus::{
+    PipeStatusProbe, pipe_status_can_decide_verification, pipeline_for_status,
+    set_verification_decider, terminal_pipelines,
+};
+pub use bashrun::{
+    COMBINED_OUTPUT_MAX_BYTES, COMBINED_OUTPUT_TAIL_BYTES, COMBINED_OUTPUT_TRUNCATED, CancelToken,
+    RunError, go_duration_text, run_foreground,
+};
 pub use confine::{
     CODE_READ_OUTSIDE_SCOPE, ManagedConfigHook, SessionDataGuardHook, SessionTempSource,
     WriteHooks, confine, confine_opened, confine_read, confine_resolved, confine_scope,
@@ -159,4 +183,10 @@ pub fn unconfined_readers() -> Vec<Arc<dyn Tool>> {
 
 pub fn unconfined_writers() -> Vec<Arc<dyn Tool>> {
     confine_writers(&[], None, None)
+}
+
+/// Go `init`'s `tool.RegisterBuiltin(bash{})`: the unconfined shell tool,
+/// bound to nothing. A composition root overrides it with [`confine_bash`].
+pub fn unconfined_bash_tool() -> Arc<dyn Tool> {
+    Arc::new(bash::unconfined_bash())
 }
