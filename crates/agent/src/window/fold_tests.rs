@@ -897,6 +897,157 @@ fn archive_pointer_carries_the_focus() {
     assert!(!bare.contains("keep in focus"), "{bare}");
 }
 
+// Go: TestAnArchivedFoldMakesNoSummarizerCallAndPointsAtTheFile — a fold is
+// archived, not summarized: the folded span lands verbatim in a file beside
+// the transcript and what stays in context is a pointer to it, carrying the
+// requested focus.
+#[test]
+fn an_archived_fold_points_at_the_file_beside_the_transcript() {
+    let (window, dir) = archive_window(200_000, 0.8, "archive-point");
+    let mut transcript = foldable_transcript(60);
+    for m in &mut transcript {
+        if m.role == Role::ASSISTANT {
+            m.content = "decided: keep the public API stable".to_owned();
+        }
+    }
+    window.session().replace(transcript);
+    let path = dir.join("session.jsonl");
+    window.set_session_path(&path.to_string_lossy());
+    let canonical_len = window.session().len();
+
+    let result = fold_once(&window, &manual_request("the API contract", false)).expect("fold");
+    assert!(result.installed);
+    let visible = window.model_visible_messages();
+    assert!(
+        visible.len() < canonical_len,
+        "nothing left the context: {} visible of {canonical_len}",
+        visible.len()
+    );
+    assert!(
+        !visible
+            .iter()
+            .any(|m| m.role == Role::ASSISTANT && m.content.contains("a summarizer was asked")),
+        "a summarizer digest reached the context"
+    );
+
+    // The pointer names the archive beside the transcript and holds the
+    // folded work verbatim.
+    let out = reasonix_state::store::naming::session_outputs_dir(&path);
+    let files: Vec<_> = std::fs::read_dir(&out)
+        .expect("outputs dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(
+        files.len(),
+        1,
+        "want exactly one archive beside the transcript"
+    );
+    let digest = visible
+        .iter()
+        .find(|m| is_compaction_summary(m))
+        .expect("digest")
+        .content
+        .clone();
+    let file_name = files[0]
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        digest.contains(&file_name),
+        "pointer does not name {file_name}: {digest}"
+    );
+    assert!(digest.contains("archived, not summarized") && digest.contains("read_file"));
+    assert!(
+        digest.contains("the API contract"),
+        "the pointer dropped the focus"
+    );
+    let body = std::fs::read_to_string(&files[0]).expect("archive body");
+    assert!(
+        body.contains("decided: keep the public API stable"),
+        "the archive does not hold the folded work verbatim"
+    );
+}
+
+// Go: TestAnArchiveNeverHoldsLocalOnlyOutput — what the host keeps for
+// display never reaches the archive the model reads back.
+#[test]
+fn an_archive_never_holds_local_only_output() {
+    let (window, _dir) = archive_window(200_000, 0.8, "archive-local");
+    let mut transcript = foldable_transcript(60);
+    let mut local = msg(Role::ASSISTANT, "local-only output that must stay out");
+    local.local_only = true;
+    transcript.insert(20, local);
+    window.session().replace(transcript);
+    assert!(
+        fold_once(&window, &manual_request("", false))
+            .expect("fold")
+            .installed
+    );
+
+    let out = crate::window::fold_archive::outputs_dir(&window);
+    let files: Vec<_> = std::fs::read_dir(&out)
+        .expect("outputs dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert!(!files.is_empty(), "no archive written");
+    for f in files {
+        let body = std::fs::read_to_string(&f).expect("archive body");
+        assert!(
+            !body.contains("local-only output that must stay out"),
+            "the archive {} holds display-only output",
+            f.display()
+        );
+    }
+}
+
+// Go: TestAFoldRetainsNothingButThePointer — after a fold between turns the
+// context is the system prompt and the one pointer; the user's own words go
+// to the archive, not to the pointer.
+#[test]
+fn a_fold_retains_nothing_but_the_pointer() {
+    let (window, dir) = archive_window(200_000, 0.8, "archive-pointer-only");
+    window.session().replace(vec![
+        msg(Role::SYSTEM, "sys"),
+        msg(Role::USER, "FIRST-TURN codeword blue-whale"),
+        msg(Role::ASSISTANT, &format!("ok {}", "filler ".repeat(200))),
+        msg(Role::USER, "SECOND-TURN deadline friday"),
+        msg(Role::ASSISTANT, &format!("noted {}", "filler ".repeat(200))),
+        msg(Role::USER, "LAST-TURN owner lin"),
+        msg(Role::ASSISTANT, &format!("done {}", "filler ".repeat(200))),
+    ]);
+    assert!(
+        fold_once(&window, &manual_request("", false))
+            .expect("fold")
+            .installed
+    );
+
+    let visible = window.model_visible_messages();
+    assert_eq!(visible.len(), 2, "{visible:?}");
+    assert_eq!(visible[0].role, Role::SYSTEM);
+    assert!(is_compaction_summary(&visible[1]));
+    for word in ["blue-whale", "friday", "owner lin"] {
+        assert!(
+            !visible[1].content.contains(word),
+            "the pointer carries {word:?}; it must only point"
+        );
+    }
+    let out = crate::window::fold_archive::outputs_dir(&window);
+    let files: Vec<_> = std::fs::read_dir(&out)
+        .expect("outputs dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(files.len(), 1, "archive files = {files:?}");
+    let body = std::fs::read_to_string(&files[0]).expect("archive body");
+    for word in ["blue-whale", "friday", "owner lin"] {
+        assert!(body.contains(word), "the archive lost {word:?}");
+    }
+    let _ = dir;
+}
+
 // The receipt's summary hash fingerprints the digest; the projection
 // wrapper stays a user turn the model can strip.
 #[test]
