@@ -142,6 +142,25 @@ pub fn contains_memory_compiler_execution(content: &str) -> bool {
     content.contains(MEMORY_COMPILER_EXECUTION_OPEN)
 }
 
+/// The `(tag, opening, end)` read out of one block that opens `s` (Go:
+/// `leadingTransientBlock`, kept_projection.go's parser). `end` indexes
+/// past the whole match, so a caller can advance past the block; the tag
+/// comes from the opening because a regex cannot backreference a capture.
+pub fn leading_transient_block(s: &str) -> Option<(String, String, usize)> {
+    let m = re_transient_user_block().find(s)?;
+    if m.start() != 0 {
+        return None;
+    }
+    let head = m.as_str().trim_start_matches([' ', '\t', '\r', '\n']);
+    let close = head.find('>')?;
+    for t in TRANSIENT_USER_BLOCK_TAGS {
+        if head.starts_with(&format!("<{t}>")) || head.starts_with(&format!("<{t} ")) {
+            return Some((t.to_string(), head[..close + 1].to_string(), m.end()));
+        }
+    }
+    None
+}
+
 /// Go: `StripTransientUserBlocks`.
 pub fn strip_transient_user_blocks(content: &str) -> String {
     let s = drop_leading_transient_blocks(&unwrap_memory_compiler_execution(content));

@@ -50,6 +50,8 @@ pub mod kind {
     pub const TURN_PHASE: &str = "turn_phase";
     pub const STREAM_ATTEMPT: &str = "stream_attempt";
     pub const CONTEXT_MAINTENANCE: &str = "context_maintenance";
+    pub const COMPACTION_STARTED: &str = "compaction_started";
+    pub const COMPACTION_DONE: &str = "compaction_done";
 }
 
 /// Notice levels (Go `event.Level`; wire spelling `wireLevel`).
@@ -83,4 +85,6 @@ pub mod notice_code {
     pub const TOOL_BUDGET: &str = "tool_budget";
     pub const COMPACT_HELD: &str = "compact_held";
     pub const CONTEXT_COMPOSITION: &str = "context_composition";
+    pub const FOLD_NOT_REUSED_HISTORY: &str = "fold_not_reused_history";
+    pub const FOLD_NOT_REUSED_LINEAGE: &str = "fold_not_reused_lineage";
 }
