@@ -9,6 +9,7 @@ use std::sync::Arc;
 use reasonix_agent::sink::Sink as AgentSink;
 use reasonix_serve::broadcaster::Broadcaster;
 use reasonix_serve::sink;
+use reasonix_session::hub::{RuntimeKit, RuntimeKitFactory};
 
 /// Composes the runtime's emit chain over its broadcaster and hands back
 /// the sink the turn machine emits through (Go: the
@@ -22,6 +23,32 @@ pub fn turn_emit_pipeline(broadcaster: Arc<Broadcaster>, mark_diffs: bool) -> Ar
     let pipeline = sink::coalesce(sink::sync_sink(terminal), sink::DEFAULT_STREAM_DELTA_WINDOW);
     let pipeline = sink::mark_embedded_diffs(pipeline, mark_diffs);
     Arc::new(sink::PipelineSink::new(pipeline))
+}
+
+/// The pane kit factory (session's [`RuntimeKitFactory`]): the broadcaster
+/// and the emit chain over it, minted fresh per open — Go `openBound`'s
+/// `bc := NewBroadcaster()` + `paneSink := h.decorateSink(bc)`. This is the
+/// collaborator the host installs on the hub's open machine; the runtime
+/// spec (endpoint/key/model/prompt) comes from the serve config edge.
+pub struct PaneKit {
+    mark_diffs: bool,
+}
+
+impl PaneKit {
+    pub fn new(mark_diffs: bool) -> Self {
+        Self { mark_diffs }
+    }
+}
+
+impl RuntimeKitFactory for PaneKit {
+    fn kit(&self) -> RuntimeKit {
+        let broadcaster = Arc::new(Broadcaster::new());
+        let handle = broadcaster.clone();
+        RuntimeKit {
+            broadcaster: handle,
+            sink: turn_emit_pipeline(broadcaster, self.mark_diffs),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -91,5 +118,15 @@ mod tests {
         let w: serde_json::Value = serde_json::from_slice(&frame.data).unwrap();
         assert_eq!(w["kind"], "notice");
         assert_eq!(w["text"], "from a host emitter");
+    }
+
+    // One broadcaster per open, never shared (Go: `NewBroadcaster()` per
+    // pane — two panes on one hub never read each other's fan-out).
+    #[test]
+    fn the_pane_kit_mints_one_broadcaster_per_open() {
+        let factory = PaneKit::new(false);
+        let a = factory.kit();
+        let b = factory.kit();
+        assert!(!Arc::ptr_eq(&a.broadcaster, &b.broadcaster));
     }
 }
