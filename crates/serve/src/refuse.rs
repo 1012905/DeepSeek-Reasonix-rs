@@ -47,6 +47,7 @@ pub const LOOPBACK_ORIGIN_REJECTED: &str = "loopback.origin_rejected";
 pub const LOOPBACK_UNAUTHORIZED: &str = "loopback.unauthorized";
 pub const LOOPBACK_MISCONFIGURED: &str = "loopback.misconfigured";
 pub const NO_RUNTIME_OPEN: &str = "hub.no_runtime_open";
+pub const SHELL_UNAVAILABLE: &str = "shell.unavailable_over_http";
 pub const PAGE_NOT_BUILT: &str = "page.not_built";
 pub const STREAM_UNSUPPORTED: &str = "stream.unsupported";
 

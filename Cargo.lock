@@ -1075,6 +1075,7 @@ dependencies = [
 name = "reasonix-session"
 version = "0.3.0"
 dependencies = [
+ "bytes",
  "chrono",
  "criterion",
  "reasonix-agent",
