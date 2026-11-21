@@ -8,8 +8,8 @@ use reasonix_provider::{ChatCompletionRequest, Usage};
 
 use crate::error::TurnError;
 
-use super::estimate::{self, output_budget_reserve_for};
 use super::Window;
+use super::estimate::{self, output_budget_reserve_for};
 
 /// A reported total and its input/output split overlap. Either can
 /// establish a larger known count, but adding them would charge the same
@@ -24,10 +24,7 @@ pub fn budget_usage_tokens(usage: Option<&Usage>) -> u64 {
 
 /// Go: `addBudgetTokens` — saturating at u64::MAX.
 pub fn add_budget_tokens(used: u64, delta: u64) -> u64 {
-    match used.checked_add(delta) {
-        Some(next) => next,
-        None => u64::MAX,
-    }
+    used.saturating_add(delta)
 }
 
 impl Window {
@@ -65,9 +62,7 @@ impl Window {
         let available = window - est - output_budget_reserve_for(window);
         if available <= 0 {
             return Err(TurnError::CompactionRequired {
-                reason: format!(
-                    "estimated prompt {est} leaves no shared-window output budget"
-                ),
+                reason: format!("estimated prompt {est} leaves no shared-window output budget"),
             });
         }
         if budget <= available {

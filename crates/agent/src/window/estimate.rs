@@ -30,8 +30,7 @@ const IMAGE_MAX_DIM: i64 = 1568;
 
 /// One image priced at the fallback dimensions (Go: `imageTokenEstimate`
 /// with an unreadable header).
-pub const IMAGE_TOKEN_ESTIMATE_FALLBACK: i64 =
-    (IMAGE_MAX_DIM * IMAGE_MAX_DIM + 749) / 750;
+pub const IMAGE_TOKEN_ESTIMATE_FALLBACK: i64 = (IMAGE_MAX_DIM * IMAGE_MAX_DIM + 749) / 750;
 
 /// The margin kept between the estimated prompt and the window. The
 /// estimate is our own arithmetic, so its error grows with the prompt: a
@@ -213,7 +212,9 @@ pub struct PromptTokenCalibration {
 }
 
 impl OutputEstimateState {
-    pub(crate) fn lock(m: &Mutex<OutputEstimateState>) -> std::sync::MutexGuard<'_, OutputEstimateState> {
+    pub(crate) fn lock(
+        m: &Mutex<OutputEstimateState>,
+    ) -> std::sync::MutexGuard<'_, OutputEstimateState> {
         m.lock().expect("window lock")
     }
 }
@@ -355,8 +356,8 @@ pub fn text_tokens(window: &super::Window, s: &str) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window::testing::*;
     use crate::window::Window;
+    use crate::window::testing::*;
 
     fn shape_of(window: &Window, msgs: &[Message]) -> RequestCalibrationShape {
         let req = ChatCompletionRequest {
@@ -430,10 +431,7 @@ mod tests {
     #[test]
     fn calibration_ignores_non_replayable_ordinary_reasoning() {
         let window = window(0, 0.0);
-        let previous = vec![
-            user(&"x".repeat(300_000)),
-            assistant(""),
-        ];
+        let previous = [user(&"x".repeat(300_000)), assistant("")];
         let mut hidden = previous[1].clone();
         hidden.reasoning_content = "hidden".repeat(150_000);
         let previous = vec![previous[0].clone(), hidden];
