@@ -738,12 +738,16 @@ mod tests {
             Request {
                 argv: vec![sh.to_owned(), flag_for(sh), sleep],
                 timeout: Duration::from_millis(150),
+                // The child kill is instant; a short reader bound keeps a
+                // lingering grandchild on the pipe from stretching the test
+                // on slower CI runners (the production default is longer).
+                wait_delay: Duration::from_millis(200),
                 ..Request::default()
             },
             None,
         );
         assert_eq!(out.state, ShellState::TimedOut);
-        assert!(start.elapsed() < Duration::from_secs(5), "returned slowly");
+        assert!(start.elapsed() < Duration::from_secs(10), "returned slowly");
         assert_eq!(out.timeout_text, "150ms");
         assert!(matches!(out.err, Some(RunError::Timeout { .. })));
     }

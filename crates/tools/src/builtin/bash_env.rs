@@ -295,7 +295,13 @@ mod tests {
             String::from("path=/b"),
         ];
         let got = set_env_value(env, "PATH", "/c");
-        assert_eq!(got, vec![String::from("PATH=/c"), String::from("OTHER=1")]);
+        let mut want = vec![String::from("PATH=/c"), String::from("OTHER=1")];
+        // Only Windows folds case: there `path=/b` is the same key and is
+        // replaced; POSIX keeps both spellings as distinct variables.
+        if !cfg!(windows) {
+            want.push(String::from("path=/b"));
+        }
+        assert_eq!(got, want);
     }
 
     #[test]
