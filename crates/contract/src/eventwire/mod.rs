@@ -8,9 +8,12 @@ pub mod event;
 pub mod extension;
 pub mod guardian;
 pub mod lease;
+pub mod notice;
+pub mod notice_payload;
 pub mod receipt;
 pub mod tool;
 pub mod usage;
+pub mod vocab;
 
 /// The stable wire name of every kernel event kind, in `event.Kind` order.
 pub const KIND_NAMES: &[&str] = &[

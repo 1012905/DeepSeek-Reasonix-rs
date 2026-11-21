@@ -139,6 +139,13 @@ pub struct Bound {
     pub path: String,
 }
 
+impl Bound {
+    /// Whether content the model never saw was discarded outright.
+    pub fn lossy(&self) -> bool {
+        self.kind == crate::eventwire::vocab::bound_kind::TRUNCATED
+    }
+}
+
 /// A video file the call handed to the model to watch natively: name and size,
 /// never the bytes.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

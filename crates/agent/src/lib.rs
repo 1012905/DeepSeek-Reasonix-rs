@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod approval;
 pub mod boundary;
 pub mod cancel;
 pub mod compose;
@@ -36,7 +37,9 @@ pub use config::{
 pub use error::{StopCause, TurnError};
 pub use execute::ToolOutcome;
 pub use run::{Agent, TurnOutput};
-pub use seams::{Asker, Compactor, Gate, RequestComposer, SteerInbox, TranscriptSaver};
+pub use seams::{
+    Asker, Compactor, Gate, GateVerdict, RequestComposer, SteerInbox, TranscriptSaver,
+};
 pub use sink::{Discard, Sink};
 pub use stream::StreamedTurn;
 pub use usage::{finalize_sampling_usage, merge_sampling_usage};

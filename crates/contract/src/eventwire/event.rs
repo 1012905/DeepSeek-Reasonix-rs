@@ -209,6 +209,33 @@ pub struct CompletionSummary {
     pub criteria_rewritten: Vec<String>,
 }
 
+impl CompletionSummary {
+    /// Whether the turn ended with something a person should know about.
+    pub fn needs_attention(&self) -> bool {
+        use crate::eventwire::vocab::completion;
+        let verdict = self.verdict.trim().to_ascii_lowercase();
+        let review = self.review.trim().to_ascii_lowercase();
+        matches!(
+            verdict.as_str(),
+            completion::verdict::PARTIAL | completion::verdict::BLOCKED
+        ) || matches!(
+            review.as_str(),
+            completion::review::WARNED
+                | completion::review::FAILED
+                | completion::review::UNAVAILABLE
+        ) || self.checks_failed > 0
+            || self.checks_suppressed > 0
+            || !self.gap_kinds.is_empty()
+            || !self.criteria_rewritten.is_empty()
+    }
+
+    pub fn blocked(&self) -> bool {
+        self.verdict
+            .trim()
+            .eq_ignore_ascii_case(crate::eventwire::vocab::completion::verdict::BLOCKED)
+    }
+}
+
 /// A workspace mutation. Revisions and watch state always arrive; a nil
 /// payload still renders on the Go side, so readers never split "no changes"
 /// from "the event arrived without one".

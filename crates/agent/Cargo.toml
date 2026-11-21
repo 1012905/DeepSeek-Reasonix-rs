@@ -10,8 +10,13 @@ publish.workspace = true
 [dependencies]
 reasonix-contract = { workspace = true }
 reasonix-provider = { workspace = true }
+# The approval gate composes the safety permission gate instead of
+# re-deriving its verdict matrix (Go: control wraps permission.Gate).
+reasonix-safety = { workspace = true }
 reasonix-state = { workspace = true }
 reasonix-tools = { workspace = true }
+getrandom = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }

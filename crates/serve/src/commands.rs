@@ -38,6 +38,10 @@ pub(crate) fn command_routes(ctrl: Option<Arc<TurnController>>) -> axum::Router 
             "/approve",
             axum::routing::post(runtime_approve).fallback(wrong_method),
         )
+        .route(
+            "/answer",
+            axum::routing::post(runtime_answer).fallback(wrong_method),
+        )
         .with_state(ctrl)
 }
 
@@ -70,17 +74,26 @@ struct SubmitBody {
     local_shell: bool,
 }
 
-/// POST /approve's body (serve.go:507-520).
+use reasonix_agent::approval::{AskAnswer, DecisionInput};
+
+/// POST /approve's body (serve.go:507-520): the decision fields are the
+/// typed input a gate prompt is answered with.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ApproveBody {
     id: String,
-    #[allow(dead_code)]
     allow: bool,
-    #[allow(dead_code)]
     session: bool,
-    #[allow(dead_code)]
     persist: bool,
+}
+
+/// POST /answer's body (serve.go `answer`): an id and the wire answers to
+/// the questions an `ask_request` put to the frontend.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AnswerBody {
+    id: String,
+    answers: Vec<AskAnswer>,
 }
 
 /// Reads the first JSON value out of the body, tolerating unknown fields and
@@ -186,12 +199,13 @@ pub(crate) async fn runtime_new(State(_ctrl): State<Option<Arc<TurnController>>>
 }
 
 /// Go `s.approve` (serve.go:507-520): the body shape is checked first (a
-/// decode failure or an empty id answers `missing_field`), then the
-/// orchestration would run. Approval orchestration — the Asker seam and the
-/// approval bridge — is not ported, so the typed refusal is the answer: a
-/// 204 here would fake a decision nothing recorded.
+/// decode failure or an empty id answers `missing_field`), then the decision
+/// reaches the controller's pending prompt. Unknown or expired ids are
+/// ignored there (Go: `Approve`), so the route still answers 204 — a client
+/// that answers twice learns nothing from a second failure, and a faked
+/// success here would lie about a decision nobody recorded.
 pub(crate) async fn runtime_approve(
-    State(_ctrl): State<Option<Arc<TurnController>>>,
+    State(ctrl): State<Option<Arc<TurnController>>>,
     request: axum::extract::Request<Body>,
 ) -> Response {
     let raw = match axum::body::to_bytes(request.into_body(), crate::refuse::BODY_LIMIT).await {
@@ -205,7 +219,50 @@ pub(crate) async fn runtime_approve(
     if body.id.is_empty() {
         return crate::refuse::missing_field("id");
     }
-    not_in_this_build("approval orchestration is not part of this build")
+    if let Some(ctrl) = ctrl {
+        ctrl.approve(
+            &body.id,
+            DecisionInput {
+                allow: body.allow,
+                session: body.session,
+                persist: body.persist,
+            },
+        );
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        not_in_this_build("approval orchestration is not part of this build")
+    }
+}
+
+/// Go `s.answer` (serve.go `answer`): answers a pending `ask_request` by id.
+/// An unknown id is a 404 with a typed code (Go: `refuseSurfaceAnswer`);
+/// here the controller reports whether it was pending.
+pub(crate) async fn runtime_answer(
+    State(ctrl): State<Option<Arc<TurnController>>>,
+    request: axum::extract::Request<Body>,
+) -> Response {
+    let raw = match axum::body::to_bytes(request.into_body(), crate::refuse::BODY_LIMIT).await {
+        Ok(raw) => raw,
+        Err(_) => return crate::refuse::missing_field("id"),
+    };
+    let body: AnswerBody = match parse_body(&raw) {
+        Some(body) => body,
+        None => return crate::refuse::missing_field("id"),
+    };
+    if body.id.is_empty() {
+        return crate::refuse::missing_field("id");
+    }
+    let Some(ctrl) = ctrl else {
+        return not_in_this_build("ask orchestration is not part of this build");
+    };
+    if ctrl.answer(&body.id, body.answers) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        refuse_response(
+            StatusCode::NOT_FOUND,
+            &Reason::new(crate::refuse::NOT_FOUND, "the ask is no longer pending"),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -231,6 +288,7 @@ mod tests {
             workspace_root: ".".to_owned(),
             session_dir: String::new(),
             label: "t".to_owned(),
+            approval: None,
         })
     }
 
@@ -246,6 +304,7 @@ mod tests {
             .route("/cancel", axum::routing::post(runtime_cancel))
             .route("/new", axum::routing::post(runtime_new))
             .route("/approve", axum::routing::post(runtime_approve))
+            .route("/answer", axum::routing::post(runtime_answer))
             .with_state(ctrl)
     }
 
@@ -385,21 +444,33 @@ mod tests {
             text_of(response).await,
             "session reset is not part of this build\n"
         );
-        // An approve without an id is a 400 before the machine refusal.
+        // An approve without an id is a 400 before the decision is applied.
         let (status, json) =
             envelope_of(drive(Some(ctrl.clone()), "/approve", br#"{"allow":true}"#).await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(json["params"]["field"], "id");
+        // With a controller that has no interactive approval, an id nobody
+        // owns is ignored; the route still answers 204 so a client cannot
+        // distinguish a late duplicate from a first answer (Go: `Approve`).
         let response = drive(
             Some(ctrl.clone()),
             "/approve",
             br#"{"id":"a1","allow":true}"#,
         )
         .await;
-        assert_eq!(
-            text_of(response).await,
-            "approval orchestration is not part of this build\n"
-        );
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        // An answer to an ask nobody is waiting on is a typed 404.
+        let (status, json) = envelope_of(
+            drive(
+                Some(ctrl.clone()),
+                "/answer",
+                br#"{"id":"a1","answers":[]}"#,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json["code"], crate::refuse::NOT_FOUND);
     }
 
     #[tokio::test]
