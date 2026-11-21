@@ -3,8 +3,7 @@
 //!
 //! The session owns the authoritative message log plus the persistence
 //! bookkeeping (baseline, rewrite epoch, dirty flags) that lets saves
-//! fast-path. Deferred to later slices: history paging state
-//! (SESS-029).
+//! fast-path. History paging state (SESS-099) is not carried yet.
 
 use std::sync::{Arc, RwLock};
 
@@ -17,7 +16,9 @@ use crate::sessionstore::session_lease::SessionWriteAuthority;
 
 mod baseline;
 mod canonical;
+mod checkpoint;
 mod digest;
+mod load;
 mod observer;
 mod recovery;
 mod save;
@@ -26,15 +27,22 @@ pub(crate) mod storage_eq;
 pub use baseline::PersistedState;
 pub use canonical::canonical_session_path;
 pub(crate) use canonical::{canonical_session_save_path, with_session_save_path_lock};
+pub(crate) use checkpoint::{session_artifact_exists, write_session_messages};
+pub(crate) use digest::message_for_session_identity;
 pub use digest::{digest_and_size_session_messages, digest_session_messages};
+pub use load::{
+    is_cleanup_pending, is_visible_session, load_session, load_session_messages,
+    load_session_unlocked, prepare_session_path,
+};
+#[cfg(test)]
+pub(crate) use load::{
+    load_session_messages_from_jsonl, load_session_messages_from_jsonl_keeping_decoded_tail,
+};
 pub use observer::{SessionPersistEvent, SessionPersistObserver};
 pub(crate) use recovery::recovery_parent_stem;
 pub use recovery::{RecoveryBranchError, RecoveryBranchInfo, RecoveryBranchOptions};
-pub use save::{
-    LoadError, SaveError, WriteMessagesError, is_cleanup_pending, is_visible_session, load_session,
-    load_session_messages,
-};
-pub(crate) use save::{SessionSaveMode, session_artifact_exists};
+pub(crate) use save::SessionSaveMode;
+pub use save::{LoadError, SaveError, WriteMessagesError};
 
 /// The in-memory session (Go: Session).
 ///

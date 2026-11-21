@@ -2,10 +2,8 @@
 //!
 //! Derives the one-line listing projection — a human preview string and a
 //! user-turn count — from a message list (Go:
-//! `SessionPreviewFromMessages`). The disk-side variants
-//! (`SessionPreview`, `previewSession`, and
-//! `UserMessagesTitleSource`) belong to the load path and are
-//! covered by SESS-023.
+//! `SessionPreviewFromMessages`). The disk-side variants live in
+//! `listing.rs`.
 
 use reasonix_contract::provider::{Message, Role};
 

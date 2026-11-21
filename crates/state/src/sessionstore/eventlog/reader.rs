@@ -302,4 +302,143 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    /// The reference outcome of one framing step, independent of the
+    /// implementation types.
+    #[derive(Debug, PartialEq)]
+    enum RefErr {
+        Eof,
+        Damaged(String),
+        Limit {
+            resource: String,
+            value: i64,
+            limit: i64,
+        },
+    }
+
+    fn map_ref(err: NextError) -> RefErr {
+        match err {
+            NextError::Eof => RefErr::Eof,
+            NextError::Damaged(err) => RefErr::Damaged(match err.kind() {
+                io::ErrorKind::UnexpectedEof => "unexpected EOF".to_string(),
+                _ => err.to_string(),
+            }),
+            NextError::Limit(err) => RefErr::Limit {
+                resource: err.resource.to_string(),
+                value: err.value,
+                limit: err.limit,
+            },
+        }
+    }
+
+    /// Converts a clean EOF seen mid-record into the torn-tail damage the
+    /// reference reports for the same bytes.
+    fn to_unexpected_eof(err: NextError) -> RefErr {
+        match err {
+            NextError::Eof => RefErr::Damaged("unexpected EOF".to_string()),
+            other => map_ref(other),
+        }
+    }
+
+    /// Frames one record byte at a time, the way the reference scan does.
+    fn reference_next(r: &mut SessionRecordReader<&[u8]>) -> Result<(Vec<u8>, i64), RefErr> {
+        r.buffer.clear();
+        let head = loop {
+            let byte = r.read_byte().map_err(map_ref)?;
+            match byte {
+                b' ' | b'\t' | b'\r' | b'\n' => continue,
+                other => break other,
+            }
+        };
+        let start = r.offset - 1;
+        r.buffer.push(head);
+        if head == b'n' {
+            for _ in 0..3 {
+                // Mid-record EOF is a torn tail, not a clean end.
+                let byte = r.read_byte().map_err(to_unexpected_eof)?;
+                r.buffer.push(byte);
+            }
+            return Ok((std::mem::take(&mut r.buffer), start));
+        }
+        if head != b'{' {
+            return Err(RefErr::Damaged(
+                "session event record must be an object".to_string(),
+            ));
+        }
+        let mut depth: i64 = 1;
+        let (mut quoted, mut escaped) = (false, false);
+        while depth != 0 {
+            let byte = r.read_byte().map_err(to_unexpected_eof)?;
+            r.buffer.push(byte);
+            if quoted {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == b'"' {
+                    quoted = false;
+                }
+                continue;
+            }
+            match byte {
+                b'"' => quoted = true,
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => depth -= 1,
+                _ => {}
+            }
+        }
+        Ok((std::mem::take(&mut r.buffer), start))
+    }
+
+    #[test]
+    fn bulk_framing_agrees_with_byte_at_a_time() {
+        // Every record shape the log can hold, adjacent and pretty-printed,
+        // must frame identically through the buffered scan and the slow path.
+        let atoms: [&str; 14] = [
+            "{}",
+            r#"{"a":1}"#,
+            r#"{"s":"x{y}[z]"}"#,
+            r#"{"e":"q\"uote\\"}"#,
+            r#"{"n":{"m":[1,{"k":"v"}]}}"#,
+            "\n",
+            "  ",
+            "\r\n\t",
+            "null",
+            r#"{"u":"\u00e9 é 中文"}"#,
+            r#"{"unterminated":"#,
+            r#"{"deep":[[[[{"x":[]}]]]]}"#,
+            "x",
+            r#"{"schema_version":1,"type":"replace","messages":[]}"#,
+        ];
+        let mut state: u64 = 7;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as usize
+        };
+        for iter in 0..200 {
+            let mut doc = String::new();
+            for _ in 0..1 + next() % 6 {
+                doc.push_str(atoms[next() % atoms.len()]);
+            }
+            let data = doc.clone().into_bytes();
+            let max_bytes = 1 + (next() % (data.len() + 40)) as i64;
+            let mut bulk = SessionRecordReader::new(&data[..], "p", max_bytes);
+            let mut reference = SessionRecordReader::new(&data[..], "p", max_bytes);
+            for call in 0..8 {
+                let got = bulk.next().map_err(map_ref);
+                let want = reference_next(&mut reference);
+                assert_eq!(got, want, "iter {iter} call {call} on {doc:?}");
+                assert_eq!(
+                    bulk.offset(),
+                    reference.offset(),
+                    "iter {iter} call {call} on {doc:?}"
+                );
+                if got.is_err() {
+                    break;
+                }
+            }
+        }
+    }
 }

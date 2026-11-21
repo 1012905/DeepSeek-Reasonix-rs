@@ -1,8 +1,8 @@
 //! The session save pipeline (Go: save.go and its helpers —
-//! save_fast_baseline.go, save_supersede.go, save_listing_projection.go,
-//! the session file lock, the load chain in session_events.go /
-//! session_checkpoint_agreement.go / load_context.go, heal from
-//! save_recovery_helpers.go, and the CAS conflicts from save_conflict.go).
+//! save_fast_baseline.go, save_supersede.go, and the CAS conflicts from
+//! save_conflict.go). The load chain lives in `load.rs`, the checkpoint
+//! writes in `checkpoint.rs`, and the derived sidecars in
+//! `display_index.rs` / `display_read_model.rs`.
 //!
 //! Contract: docs/contracts/session-format.md 7 (SESS-016..019, SESS-026).
 //!
@@ -10,41 +10,34 @@
 //! leaves the newer transcript authoritative. The checkpoint rewrite and
 //! the branch-meta revision ledger follow.
 //!
-//! Deferred to the slices that own them: recovery branches (SESS-020),
-//! the v4 import / 1.x DAG load path and sidecar reconciliation
-//! (SESS-023), leases (SESS-025), and the
-//! display-index / display-read-model sidecars (SESS-028 — the full
-//! checkpoint rewrite stands in for the read-model writes, so the
-//! durable outcome is identical; only the in-place append optimization
-//! is skipped).
+//! Deferred to the slices that own them: the 1.x DAG load path (SESS-033),
+//! the v4 import inside `prepare_session_path` (SESS-036..038), and the
+//! overlong-name sidecar reconciliation (SESS-023's rename arm, which is in
+//! cleanup_pending.rs).
 
-use std::borrow::Cow;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 
-use reasonix_contract::gojson;
-use reasonix_contract::provider::{Message, normalize_session_messages};
-use reasonix_core::fileutil::{create_temp_file, mkdir_all_mode, replace_file};
+use reasonix_contract::provider::Message;
+use reasonix_core::fileutil::mkdir_all_mode;
 use thiserror::Error;
 
 use crate::sessionstore::branch::{
-    BRANCH_META_COUNTS_VERSION, BranchMetaError, load_branch_meta_retry,
-    record_session_content_revision, session_content_revision, update_branch_meta,
+    BranchMetaError, record_session_content_revision, session_content_revision,
 };
-use crate::sessionstore::eventlog::record::now_utc;
+use crate::sessionstore::display_index::{
+    load_session_display_index, refresh_session_display_index,
+};
+use crate::sessionstore::display_read_model::{
+    publish_append_only_save, warn_display_index_write, warn_event_index_write,
+};
 use crate::sessionstore::eventlog::writer_id::digest_string;
 use crate::sessionstore::eventlog::{
-    DegradedCheckpointError, ExternalizeError, RepairError, ReplayError,
-    SESSION_EVENT_IMAGE_BLOBS_SCHEMA_VERSION, SessionEventLogProbe, SessionEventReplay,
-    SessionEventWriteError, append_session_append_event, append_session_replace_event,
-    compact_session_event_log, composition_removed, holds_any_image, is_data_url,
-    probe_session_event_log, refuse_degraded_checkpoint_rewrite, repair_session_event_log_tail,
-    replay_session_event_log, session_event_log_oversized, session_event_log_size,
-    session_image_key, write_session_event_index, write_session_image_blob,
+    DegradedCheckpointError, ExternalizeError, RepairError, ReplayError, SessionEventWriteError,
+    append_session_replace_event, compact_session_event_log, composition_removed,
+    probe_session_event_log, repair_session_event_log_tail, session_event_log_oversized,
+    session_event_log_size,
 };
-use crate::sessionstore::preview::migrate_legacy_provider_content;
 use crate::sessionstore::save_conflict::{
     SessionSnapshotConflictError, SessionSnapshotConflictKind, snapshot_conflict,
     snapshot_conflict_of_kind,
@@ -53,22 +46,29 @@ use crate::sessionstore::session_lease::{
     SessionWriteAuthoritySave, WriteAuthorityError, observe_unleased_session_write,
 };
 use crate::sessionstore::session_lock::{SessionFileLockError, lock_session_file};
-use crate::sessionstore::sessionpreview::session_preview_from_messages;
-use crate::store::naming::{
-    session_blobs_dir, session_cleanup_pending, session_event_log, session_event_log_damaged,
-    session_meta, session_sidecar_files, session_superseded,
-};
+use crate::store::naming::session_display_index;
 
-use super::baseline::{FileStampOnDisk, PersistedDisk};
+use super::Session;
+use super::baseline::{PersistedDisk, stamp_baseline};
 use super::canonical::{canonical_session_save_path, with_session_save_path_lock};
-use super::digest::{
-    digest_and_size_session_messages, digest_session_messages, digest_size_and_prefix,
+use super::checkpoint::{
+    heal_empty_checkpoint_from_wal, keep_superseded_transcript, persist_session_listing_projection,
+    probe_refuses_save, session_artifact_exists, write_session_messages,
 };
+use super::digest::{digest_session_messages, digest_size_and_prefix};
+use super::load::load_snapshot_baseline;
 use super::storage_eq::{
     append_covers_persisted_baseline, messages_have_prefix,
     messages_have_prefix_with_compatible_system,
 };
-use super::{Session, SessionState};
+
+/// The directory of a path (Go: filepath.Dir), "." for bare names.
+pub(crate) fn parent_dir(path: &Path) -> PathBuf {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
+}
 
 /// The save flavor (Go: sessionSaveMode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,6 +184,10 @@ pub enum SaveError {
         version: i64,
         max: i64,
     },
+    #[error("decode session event log {path}: unsupported event type {event_type:?}")]
+    UnknownEventType { path: String, event_type: String },
+    #[error(transparent)]
+    DisplayModelWrite(#[from] crate::sessionstore::display_read_model::EventWriteError),
 }
 
 impl Session {
@@ -215,10 +219,18 @@ impl Session {
     }
 
     /// Save plus the persist-observer notification (Go: saveObserved).
+    ///
+    /// A snapshot save reports the previous display index's message count as
+    /// the append boundary, so the observer can tell an append from a rewrite
+    /// without re-reading the transcript.
     fn save_observed(&self, path: &str, mode: SessionSaveMode) -> Result<(), SaveError> {
-        // Go reads the display index to recover append-from (SESS-028);
-        // the read model is deferred in this build, so append-from stays -1.
-        let append_from = -1i64;
+        let append_from = if mode == SessionSaveMode::Snapshot {
+            load_session_display_index(&session_display_index(Path::new(path)))
+                .map(|index| index.message_count)
+                .unwrap_or(-1)
+        } else {
+            -1i64
+        };
         self.save_with_locks(path, mode)?;
         self.notify_persisted(path, mode != SessionSaveMode::Snapshot, append_from);
         Ok(())
@@ -281,6 +293,19 @@ impl Session {
         let owned_rewrite = mode != SessionSaveMode::Snapshot;
         let decision =
             self.snapshot_decision(path, &msgs, digest, prefix, version, owned_rewrite)?;
+        // (10b) A rewrite or fold must not bury a record it cannot reproduce.
+        // The decision is computed first: an append or an up-to-date no-op
+        // leaves every existing record in place.
+        let append_shape = decision.append_only && probe.native;
+        if (mode == SessionSaveMode::RewriteCompact || (!decision.up_to_date && !append_shape))
+            && let Some(event_type) =
+                crate::sessionstore::eventlog::unrewritable_record_type(Path::new(path), &probe)
+        {
+            return Err(SaveError::UnknownEventType {
+                path: path.to_string(),
+                event_type,
+            });
+        }
         // (11) Up to date: heal a stale ledger, never touch the transcript.
         if decision.up_to_date && mode != SessionSaveMode::RewriteCompact {
             if decision.ledger_stale {
@@ -295,6 +320,11 @@ impl Session {
                 }
                 if probe.native {
                     warn_event_index_write(path, &msgs, &digest, revision);
+                }
+                if let Err(err) =
+                    refresh_session_display_index(Path::new(path), &msgs, &digest, revision, -1)
+                {
+                    warn_display_index_write(path, &err);
                 }
                 self.mark_persisted_with_listing(
                     path,
@@ -318,44 +348,19 @@ impl Session {
         }
         // (12) Append-only: extend the event log in place.
         if decision.append_only && probe.native && mode != SessionSaveMode::RewriteCompact {
-            let log_size = session_event_log_size(Path::new(path));
-            if log_size == 0 {
-                append_session_replace_event(
-                    Path::new(path),
-                    &msgs,
-                    &digest,
-                    decision.revision,
-                    "snapshot",
-                )?;
-                warn_only_checkpoint_append(path, &msgs);
-            } else if session_event_log_oversized(log_size, content_bytes, &msgs) {
-                compact_session_event_log(
-                    Path::new(path),
-                    &msgs,
-                    &digest,
-                    decision.revision,
-                    "compact",
-                )?;
-                write_session_messages(Path::new(path), &msgs)?;
-            } else {
-                let tail = &msgs[decision.append_from as usize..];
-                append_session_append_event(
-                    Path::new(path),
-                    decision.append_from,
-                    tail,
-                    &digest,
-                    decision.revision,
-                )?;
-                warn_only_checkpoint_append(path, &msgs);
-            }
-            let revision =
-                record_session_content_revision(Path::new(path), &digest, decision.revision)?;
-            warn_event_index_write(path, &msgs, &digest, revision);
+            publish_append_only_save(
+                path,
+                &msgs,
+                &digest,
+                content_bytes,
+                decision.revision,
+                decision.append_from,
+            )?;
             self.mark_persisted_with_listing(
                 path,
                 &digest,
                 version,
-                revision,
+                decision.revision,
                 rewrite_version,
                 &msgs,
             );
@@ -393,6 +398,13 @@ impl Session {
         let revision = record_session_content_revision(Path::new(path), &digest, base_revision)?;
         if probe.native {
             warn_event_index_write(path, &msgs, &digest, revision);
+        }
+        // The display index is a pure derived sidecar: a write failure is
+        // warn-only and never fails a save whose transcript already landed.
+        if let Err(err) =
+            refresh_session_display_index(Path::new(path), &msgs, &digest, revision, -1)
+        {
+            warn_display_index_write(path, &err);
         }
         // (14) Mark the baseline and refresh the listing projection.
         self.mark_persisted_with_listing(path, &digest, version, revision, rewrite_version, &msgs);
@@ -791,7 +803,7 @@ impl Session {
 
     /// Whether a loaded session agrees with the branch-meta ledger (Go:
     /// loadAgreesWithLedger).
-    fn load_agrees_with_ledger(
+    pub(crate) fn load_agrees_with_ledger(
         &self,
         ledger_present: bool,
         content_digest: &str,
@@ -822,502 +834,28 @@ impl Session {
     }
 }
 
-/// Whether any durable artifact of the session exists (Go:
-/// sessionArtifactExists): the transcript, a sidecar, or an event log
-/// this build recognizes. A probe failure counts as existing.
-pub fn session_artifact_exists(session_path: &Path) -> bool {
-    if session_path.symlink_metadata().is_ok() {
-        return true;
-    }
-    for sidecar in session_sidecar_files(session_path) {
-        if sidecar == session_event_log(session_path) {
-            match probe_session_event_log(session_path) {
-                // An unreadable log is treated as present.
-                Err(_) => return true,
-                Ok(probe) => {
-                    if !probe.native {
-                        continue;
-                    }
-                }
-            }
-        }
-        if sidecar.symlink_metadata().is_ok() {
-            return true;
-        }
-    }
-    false
-}
-
-/// Writes the transcript checkpoint (Go: writeSessionMessages): a temp
-/// file in the session directory, one HTML-escaped JSON message per
-/// line, fsync, then the atomic replace. The image-payload guard runs
-/// first: a degraded checkpoint holding the only copy of an image is
-/// never rewritten.
-pub fn write_session_messages(
-    session_path: &Path,
-    msgs: &[Message],
-) -> Result<(), WriteMessagesError> {
-    refuse_degraded_checkpoint_rewrite(session_path, msgs)?;
-    let (mut file, tmp_path) = create_temp_file(&parent_dir(session_path), ".session.", ".tmp")
-        .map_err(WriteMessagesError::CreateTmp)?;
-    for msg in msgs {
-        let line = gojson::marshal(msg).map_err(WriteMessagesError::Encode)?;
-        if let Err(err) = file
-            .write_all(line.as_bytes())
-            .and_then(|()| file.write_all(b"\n"))
-        {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(WriteMessagesError::EncodeIo(err));
-        }
-    }
-    if let Err(err) = file.sync_all() {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(WriteMessagesError::Io(err));
-    }
-    drop(file);
-    if let Err(err) = replace_file(&tmp_path, session_path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(WriteMessagesError::Io(err));
-    }
-    Ok(())
-}
-
-/// Keeps the overwritten transcript for the lease audit trail (Go:
-/// keepSupersededTranscript). Warn-only: failures never block a save.
-fn keep_superseded_transcript(path: &str, superseding: bool) {
-    if !superseding || path.is_empty() {
-        return;
-    }
-    let current = match fs::read(path) {
-        Ok(current) => current,
-        Err(_) => return,
-    };
-    if current.is_empty() {
-        return;
-    }
-    let dest = session_superseded(Path::new(path));
-    if dest.as_os_str().is_empty() {
-        return;
-    }
-    let stamp = serde_json::to_string(&now_utc())
-        .unwrap_or_default()
-        .trim_matches('"')
-        .to_string();
-    let header = format!("// superseded at {stamp} by the runtime holding this session's lease\n");
-    #[cfg(unix)]
-    let mut options = {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let mut options = OpenOptions::new();
-        options.mode(0o600);
-        options
-    };
-    #[cfg(not(unix))]
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    let mut file = match options.open(&dest) {
-        Ok(file) => file,
-        Err(err) => {
-            tracing::warn!(
-                path = path,
-                error = %err,
-                "session: could not keep the superseded transcript"
-            );
-            return;
-        }
-    };
-    if let Err(err) = file
-        .write_all(header.as_bytes())
-        .and_then(|()| file.write_all(&current))
-    {
-        tracing::warn!(
-            path = path,
-            error = %err,
-            "session: could not keep the superseded transcript"
-        );
-    }
-}
-
-/// Loads a session under the save-path lock (Go: LoadSession).
-///
-/// Not ported: `PrepareSessionPath` (the 1.x v4 import) belongs to the
-/// deferred SESS-023 load-path slice; Go's `lockSessionSavePath` maps to
-/// `with_session_save_path_lock`, and the session file lock is not taken
-/// here — Go's LoadSession does not take it either.
-pub fn load_session(path: &str) -> Result<Session, LoadError> {
-    with_session_save_path_lock(path, || load_session_unlocked(Path::new(path)))
-}
-
-/// Loads a session without taking the file locks (Go:
-/// loadSessionUnlocked): replay the event log, normalize, and anchor the
-/// persisted baseline against the branch-meta ledger.
-pub fn load_session_unlocked(session_path: &Path) -> Result<Session, LoadError> {
-    let (msgs, _from_events, damaged) = load_session_messages(session_path)?;
-    let normalized = normalize_session_messages(&msgs);
-    let normalize_dirty = matches!(normalized, Cow::Owned(_));
-    let migrated = migrate_legacy_provider_content(&normalized);
-    let dirty = normalize_dirty || matches!(migrated, Cow::Owned(_));
-    let messages = migrated.into_owned();
-    let session = Session {
-        state: RwLock::new(SessionState {
-            messages,
-            event_log_damaged: damaged,
-            normalized_dirty: dirty,
-            raw_messages: if dirty { msgs } else { Vec::new() },
-            ..SessionState::default()
-        }),
-    };
-    // Bind the digest first: the read guard must drop before the
-    // mark_persisted* calls below take the write lock (Rust 2024 keeps
-    // if-let scrutinee temporaries alive through the arm).
-    let anchored = digest_and_size_session_messages(&session.read().messages).ok();
-    if let Some((digest, _content_bytes)) = anchored {
-        let path = session_path.to_string_lossy();
-        let version = session.transcript_version();
-        let rewrite_version = session.rewrite_version();
-        match load_branch_meta_retry(session_path) {
-            Err(_) => {
-                session.mark_persisted_revision_unknown(&path, &digest, version, rewrite_version);
-            }
-            Ok(meta) => {
-                let mut revision = 0;
-                if let Some(meta) = &meta {
-                    revision = meta.revision;
-                }
-                let ledger_digest = match &meta {
-                    Some(meta) => meta.content_digest.as_str(),
-                    None => "",
-                };
-                if session.load_agrees_with_ledger(meta.is_some(), ledger_digest, digest) {
-                    session.mark_persisted(&path, &digest, version, revision, rewrite_version);
-                } else {
-                    session.mark_persisted_from_load(
-                        &path,
-                        &digest,
-                        version,
-                        revision,
-                        rewrite_version,
-                    );
-                }
-            }
-        }
-    }
-    Ok(session)
-}
-
-/// Loads the stored messages (Go: loadSessionMessages): the event log
-/// when this build owns it, the JSONL checkpoint otherwise. Returns the
-/// messages, whether they came from the event log, and whether the log
-/// replay was damaged.
-pub fn load_session_messages(session_path: &Path) -> Result<(Vec<Message>, bool, bool), LoadError> {
-    let probe = probe_session_event_log(session_path)?;
-    if probe.future_schema || probe.dag {
-        // The 1.x DAG reader (SESS-023) is not available in this build.
-        return Err(LoadError::UnownedEventLog);
-    }
-    if probe.native && probe.size > 0 {
-        let replay = replay_session_event_log(&session_event_log(session_path))?;
-        if replay.records > 0 {
-            return resolve_replayed_messages(session_path, replay);
-        }
-        // Records but none replayed: fall back to the JSONL defensively.
-        return load_session_messages_from_jsonl(session_path).map(|msgs| (msgs, false, true));
-    }
-    load_session_messages_from_jsonl(session_path).map(|msgs| (msgs, false, false))
-}
-
-/// Reconciles a damaged replay against the checkpoint (Go:
-/// resolveReplayedMessages): a checkpoint that extends the replay heals
-/// the log's tail; otherwise the decoded replay wins.
-fn resolve_replayed_messages(
-    session_path: &Path,
-    replay: SessionEventReplay,
-) -> Result<(Vec<Message>, bool, bool), LoadError> {
-    if replay.damaged
-        && let Some(healed) = checkpoint_extending_replay(session_path, &replay.msgs)
-    {
-        return Ok((healed, false, true));
-    }
-    Ok((replay.msgs, true, replay.damaged))
-}
-
-/// Heals a damaged replay from a longer checkpoint (Go:
-/// checkpointExtendingReplay): the checkpoint must strictly extend the
-/// replayed prefix.
-fn checkpoint_extending_replay(session_path: &Path, replayed: &[Message]) -> Option<Vec<Message>> {
-    let msgs = match load_session_messages_from_jsonl(session_path) {
-        Ok(msgs) => msgs,
-        Err(_) => load_session_messages_from_jsonl_keeping_decoded_tail(session_path),
-    };
-    if msgs.len() <= replayed.len() {
-        return None;
-    }
-    if !messages_have_prefix(&msgs, replayed)
-        && !messages_have_prefix_with_compatible_system(&msgs, replayed)
-    {
-        return None;
-    }
-    Some(msgs)
-}
-
-/// Strict JSONL load (Go: loadSessionMessagesFromJSONL): any decode
-/// error names the file.
-fn load_session_messages_from_jsonl(session_path: &Path) -> Result<Vec<Message>, LoadError> {
-    let data = fs::read(session_path)?;
-    let mut msgs = Vec::new();
-    for item in serde_json::Deserializer::from_slice(&data).into_iter::<Message>() {
-        match item {
-            Ok(msg) => msgs.push(msg),
-            Err(source) => {
-                return Err(LoadError::Decode {
-                    path: session_path.to_string_lossy().into_owned(),
-                    source,
-                });
-            }
-        }
-    }
-    Ok(msgs)
-}
-
-/// Lenient JSONL load keeping the decoded prefix (Go:
-/// loadSessionMessagesFromJSONLKeepingDecodedTail): a torn final line is
-/// dropped; any other decode error gives up entirely.
-fn load_session_messages_from_jsonl_keeping_decoded_tail(session_path: &Path) -> Vec<Message> {
-    let Ok(data) = fs::read(session_path) else {
-        return Vec::new();
-    };
-    let text = String::from_utf8_lossy(&data);
-    let lines: Vec<&str> = text.split('\n').collect();
-    let last = lines.iter().rposition(|line| !line.trim().is_empty());
-    let mut msgs = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<Message>(line) {
-            Ok(msg) => msgs.push(msg),
-            Err(_) => {
-                if Some(i) != last {
-                    return Vec::new();
-                }
-                return msgs;
-            }
-        }
-    }
-    msgs
-}
-
-/// Loads the baseline session for a CAS check (Go:
-/// loadSnapshotBaseline), refusing saves that would drop the only copy
-/// of a stored image and restoring data-URL image blobs the caller
-/// lost.
-pub fn load_snapshot_baseline(session_path: &Path, next: &[Message]) -> Result<Session, LoadError> {
-    let current = load_session_unlocked(session_path)?;
-    let stored = current.snapshot();
-    for (i, m) in next.iter().enumerate() {
-        if !m.unavailable_images.is_empty()
-            && i < stored.len()
-            && holds_any_image(&stored[i], &m.unavailable_images)
-        {
-            return Err(LoadError::ImagesLost);
-        }
-    }
-    let dir = session_blobs_dir(session_path);
-    let mut restored = false;
-    for (i, m) in stored.iter().enumerate() {
-        if m.unavailable_images.is_empty() || i >= next.len() {
-            continue;
-        }
-        for url in &next[i].images {
-            if !is_data_url(url)
-                || !m
-                    .unavailable_images
-                    .iter()
-                    .any(|lost| lost.reference == session_image_key(url))
-            {
-                continue;
-            }
-            write_session_image_blob(&dir, url)?;
-            restored = true;
-        }
-    }
-    if !restored {
-        return Ok(current);
-    }
-    load_session_unlocked(session_path)
-}
-
-/// Rebuilds a missing or empty transcript checkpoint from the event log
-/// (Go: healEmptyCheckpointFromWAL). Load failures are swallowed: there
-/// is nothing to heal from then.
-fn heal_empty_checkpoint_from_wal(session_path: &Path) -> Result<(), SaveError> {
-    let need_heal = match fs::metadata(session_path) {
-        Ok(info) => info.len() == 0,
-        Err(err) => err.kind() == io::ErrorKind::NotFound,
-    };
-    if !need_heal {
-        return Ok(());
-    }
-    let probe = probe_session_event_log(session_path)?;
-    if !probe.native || probe.size <= 0 || probe.future_schema {
-        return Ok(());
-    }
-    let Ok((msgs, from_events, damaged)) = load_session_messages(session_path) else {
-        return Ok(());
-    };
-    if !from_events || damaged || msgs.is_empty() {
-        return Ok(());
-    }
-    write_session_messages(session_path, &msgs).map_err(SaveError::HealFromWal)
-}
-
-/// Refuses saves onto logs this build cannot own (Go: probeRefusesSave):
-/// future schemas and 1.x DAG logs.
-fn probe_refuses_save(path: &str, probe: &SessionEventLogProbe) -> Result<(), SaveError> {
-    if probe.future_schema {
-        return Err(SaveError::FutureSchema {
-            path: path.to_string(),
-            version: probe.schema_version,
-            max: SESSION_EVENT_IMAGE_BLOBS_SCHEMA_VERSION,
-        });
-    }
-    if probe.dag {
-        return Err(SaveError::DagForeign {
-            path: path.to_string(),
-        });
-    }
-    Ok(())
-}
-
-/// Refreshes the branch-meta listing projection (Go:
-/// persistSessionListingProjection). Warn-only: a deferred listing never
-/// fails the save.
-fn persist_session_listing_projection(session_path: &Path, msgs: &[Message]) {
-    let (preview, turns) = session_preview_from_messages(msgs);
-    let result = update_branch_meta(session_path, false, |meta| {
-        meta.preview = preview;
-        meta.turns = turns;
-        meta.schema_version = BRANCH_META_COUNTS_VERSION;
-        Ok(())
-    });
-    if let Err(err) = result {
-        tracing::warn!(
-            path = %session_path.display(),
-            error = %err,
-            "session: listing metadata update deferred"
-        );
-    }
-}
-
-/// Warn-only event index refresh (Go: writeSessionEventIndex + the
-/// slog.Warn "session: keeping save after event index write failure").
-fn warn_event_index_write(path: &str, msgs: &[Message], digest: &[u8; 32], revision: i64) {
-    if let Err(err) = write_session_event_index(Path::new(path), msgs.len(), digest, revision) {
-        tracing::warn!(
-            path = path,
-            error = %err,
-            "session: keeping save after event index write failure"
-        );
-    }
-}
-
-/// Warn-only checkpoint rewrite on the append path (Go: the display
-/// read-model append; writeSessionMessages stands in for it, SESS-028).
-fn warn_only_checkpoint_append(path: &str, msgs: &[Message]) {
-    if let Err(err) = write_session_messages(Path::new(path), msgs) {
-        tracing::warn!(
-            path = path,
-            error = %err,
-            "session: keeping save after display read-model append failure"
-        );
-    }
-}
-
-/// The directory of a path (Go: filepath.Dir), "." for bare names.
-fn parent_dir(path: &Path) -> PathBuf {
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-        _ => PathBuf::from("."),
-    }
-}
-
-/// The four file stamps the fast baseline guards on (Go: stampBaseline):
-/// the transcript, the event log, the branch meta, and the damaged flag.
-fn stamp_baseline(session_path: &Path) -> [FileStampOnDisk; 4] {
-    [
-        file_stamp(session_path),
-        file_stamp(&session_event_log(session_path)),
-        file_stamp(&session_meta(session_path)),
-        file_stamp(&session_event_log_damaged(session_path)),
-    ]
-}
-
-/// One os.Stat stamp (Go: fileStampOnDisk): size, mtime, existence.
-fn file_stamp(path: &Path) -> FileStampOnDisk {
-    match fs::metadata(path) {
-        Ok(meta) => FileStampOnDisk {
-            size: meta.len() as i64,
-            modified_nanos: modified_nanos(&meta),
-            here: true,
-        },
-        Err(_) => FileStampOnDisk::default(),
-    }
-}
-
-/// The mtime in nanoseconds since the epoch, 0 when unavailable.
-fn modified_nanos(meta: &fs::Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0)
-}
-
-// ---------------------------------------------------------------------------
-// Visibility
-// ---------------------------------------------------------------------------
-
-/// Go save.go `IsCleanupPending`: a delayed-cleanup marker hides a
-/// logically removed session from resume/list surfaces until delayed
-/// physical cleanup has finished.
-pub fn is_cleanup_pending(session_path: &str) -> bool {
-    let marker = session_cleanup_pending(Path::new(session_path));
-    if marker.as_os_str().is_empty() {
-        return false;
-    }
-    marker.exists()
-}
-
-/// Go session_v4_removal.go `isV4SessionRemoved`, pinned false here: a
-/// `.v4-removed` marker can only exist for a v4-imported session
-/// (SESS-036..038), which this store cannot produce yet.
-fn is_v4_session_removed(_session_path: &str) -> bool {
-    false
-}
-
-/// Go save.go `IsVisibleSession`: whether a persisted session should
-/// appear on normal user/agent-facing list, restore, and retrieval
-/// surfaces.
-pub fn is_visible_session(session_path: &str) -> bool {
-    !session_path.trim().is_empty()
-        && !is_cleanup_pending(session_path)
-        && !is_v4_session_removed(session_path)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
+    use std::fs::{self, File};
+    use std::sync::RwLock;
     use std::time::{Duration, SystemTime};
 
     use reasonix_contract::provider::Role;
 
     use super::*;
-    use crate::sessionstore::branch::load_branch_meta;
+    use crate::sessionstore::branch::{BRANCH_META_COUNTS_VERSION, load_branch_meta};
     use crate::sessionstore::eventlog::read_session_event_index;
+    use crate::sessionstore::eventlog::replay_session_event_log;
     use crate::sessionstore::eventlog::test_support::tempdir;
-    use crate::sessionstore::session::RecoveryBranchOptions;
+    use crate::sessionstore::session::{
+        RecoveryBranchOptions, SessionState, load_session, load_session_messages,
+        load_session_unlocked,
+    };
     use crate::sessionstore::session_lease::{
         next_session_write_generation, try_acquire_session_lease,
     };
+    use crate::store::naming::{session_event_log, session_meta};
+    use reasonix_contract::gojson;
     use reasonix_contract::provider::ToolCall;
     use std::sync::Arc;
 
@@ -1564,6 +1102,98 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_record_opens_but_refuses_a_rewrite() {
+        let dir = tempdir();
+        let path = dir.path().join("s.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        let session = session_of(vec![user_message("hello")]);
+        session.save(&path_str).expect("first save");
+
+        // A newer build appended a record this one does not understand.
+        let log = session_event_log(&path);
+        let mut body = fs::read_to_string(&log).expect("read log");
+        body.push_str(
+            "{\"schema_version\":1,\"type\":\"mutate\",\"messages\":[{\"role\":\"user\",\"content\":\"future\"}]}
+",
+        );
+        fs::write(&log, &body).expect("append unknown record");
+
+        // The read tolerates it and keeps the known transcript.
+        let loaded = load_session(&path_str).expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded.snapshot()[0].content, "hello");
+
+        // A fold would drop it, so it is refused.
+        let grown = session_of(loaded.snapshot());
+        grown.add(assistant_message("answer"));
+        let err = grown
+            .save_rewrite_compact(&path_str)
+            .expect_err("fold refused");
+        match &err {
+            SaveError::UnknownEventType { path, event_type } => {
+                assert!(path.ends_with("s.jsonl"));
+                assert_eq!(event_type, "mutate");
+            }
+            other => panic!("expected an unknown-event-type refusal, got: {other}"),
+        }
+        assert_eq!(fs::read_to_string(&log).expect("unread log"), body);
+
+        // An append still lands: the record stays in place.
+        let appended = session_of(loaded.snapshot());
+        appended.add(assistant_message("answer"));
+        appended.save(&path_str).expect("append allowed");
+        let replay = replay_session_event_log(&log).expect("replay");
+        assert_eq!(replay.unknown_records, vec!["mutate".to_string()]);
+        assert_eq!(replay.msgs.len(), 2);
+    }
+
+    #[test]
+    fn the_display_index_tracks_every_save() {
+        let dir = tempdir();
+        let path = dir.path().join("s.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        let session = session_of(vec![user_message("one")]);
+        session.save(&path_str).expect("first save");
+
+        let index_path = session_display_index(&path);
+        let first = load_session_display_index(&index_path).expect("index");
+        assert_eq!(first.message_count, 1);
+        assert_eq!(first.authored_turns, 1);
+        assert!(first.revision_known);
+
+        session.add(assistant_message("two"));
+        session.add(user_message("three"));
+        session.save(&path_str).expect("append save");
+        let second = load_session_display_index(&index_path).expect("index");
+        assert_eq!(second.message_count, 3);
+        assert_eq!(second.authored_turns, 2);
+        assert_eq!(second.revision, first.revision + 1);
+        // The prefix entries survive the incremental extension unchanged.
+        assert_eq!(second.entries[0], first.entries[0]);
+        let transcript = fs::metadata(&path).expect("stat").len() as i64;
+        assert_eq!(second.transcript_size, transcript);
+    }
+
+    #[test]
+    fn the_read_model_append_keeps_the_transcript_current() {
+        let dir = tempdir();
+        let path = dir.path().join("s.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        let session = session_of(vec![user_message("one")]);
+        session.save(&path_str).expect("first save");
+        let before =
+            crate::sessionstore::session::load_session_messages_from_jsonl(&path).expect("model");
+        assert_eq!(before.len(), 1);
+
+        session.add(assistant_message("two"));
+        session.save(&path_str).expect("append save");
+        let after =
+            crate::sessionstore::session::load_session_messages_from_jsonl(&path).expect("model");
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[1].content, "two");
+    }
+
+    #[test]
     fn plain_jsonl_load_anchors_the_baseline() {
         let dir = tempdir();
         let path = dir.path().join("s.jsonl");
@@ -1601,118 +1231,6 @@ mod tests {
         fresh.save(&path_str).expect("heal and save");
 
         assert_eq!(transcript_lines(&path).len(), 1);
-    }
-
-    #[test]
-    fn write_session_messages_escapes_html_like_go() {
-        let dir = tempdir();
-        let path = dir.path().join("s.jsonl");
-
-        write_session_messages(&path, &[user_message("<b>&</b>")]).expect("write");
-
-        let data = fs::read_to_string(&path).expect("read transcript");
-        assert!(data.contains("\\u003c"));
-        assert!(data.contains("\\u0026"));
-        assert!(!data.contains('<'));
-    }
-
-    #[test]
-    fn jsonl_decode_errors_name_the_path() {
-        let dir = tempdir();
-        let path = dir.path().join("s.jsonl");
-        fs::write(&path, b"{\"role\":\"user\",\"content\":\n").expect("write torn line");
-
-        let err =
-            load_session_messages_from_jsonl(&path).expect_err("torn line fails strict decode");
-        assert!(err.to_string().starts_with("decode "));
-        assert!(err.to_string().contains(path.to_string_lossy().as_ref()));
-
-        let good = gojson::marshal(&user_message("kept")).expect("marshal");
-        fs::write(&path, format!("{good}\n{{\"role\":\n")).expect("write valid plus torn");
-        let tail = load_session_messages_from_jsonl_keeping_decoded_tail(&path);
-        assert_eq!(tail.len(), 1);
-    }
-
-    #[test]
-    fn save_if_absent_creates_then_refuses() {
-        let dir = tempdir();
-        let path = dir.path().join("s.jsonl");
-        let path_str = path.to_string_lossy().into_owned();
-        let session = session_of(vec![user_message("absent")]);
-
-        session.save_if_absent(&path_str).expect("create");
-        assert!(path.exists());
-
-        let err = session.save_if_absent(&path_str).expect_err("refused");
-        assert_eq!(err.to_string(), "file already exists");
-    }
-
-    #[test]
-    fn superseded_transcripts_are_kept_warn_only() {
-        let dir = tempdir();
-        let path = dir.path().join("s.jsonl");
-        let path_str = path.to_string_lossy().into_owned();
-        fs::write(&path, "line-one\n").expect("write transcript");
-
-        keep_superseded_transcript(&path_str, true);
-
-        let kept = fs::read_to_string(session_superseded(&path)).expect("superseded kept");
-        assert!(kept.starts_with("// superseded at "));
-        assert!(kept.contains(" by the runtime holding this session's lease\n"));
-        assert!(kept.ends_with("line-one\n"));
-
-        let other = dir.path().join("other.jsonl");
-        let other_str = other.to_string_lossy().into_owned();
-        fs::write(&other, "other\n").expect("write transcript");
-        keep_superseded_transcript(&other_str, false);
-        assert!(!session_superseded(&other).exists());
-    }
-
-    #[test]
-    fn file_stamps_track_existence_and_modification() {
-        let dir = tempdir();
-        let missing = dir.path().join("missing.jsonl");
-        assert_eq!(file_stamp(&missing), FileStampOnDisk::default());
-
-        let path = dir.path().join("s.jsonl");
-        let path_str = path.to_string_lossy().into_owned();
-        let session = session_of(vec![user_message("stamped")]);
-        session.save(&path_str).expect("save");
-
-        let stamps = stamp_baseline(&path);
-        assert!(stamps[0].here);
-        assert!(stamps[1].here);
-        assert!(stamps[2].here);
-        assert!(!stamps[3].here);
-        assert!(stamps[0].size > 0);
-    }
-
-    #[test]
-    fn session_artifact_exists_scans_the_sidecars() {
-        let dir = tempdir();
-
-        let empty = dir.path().join("empty.jsonl");
-        assert!(!session_artifact_exists(&empty));
-
-        let meta_only = dir.path().join("meta-only.jsonl");
-        fs::write(session_meta(&meta_only), b"{}\n").expect("write branch meta");
-        assert!(session_artifact_exists(&meta_only));
-
-        let legacy = dir.path().join("legacy.jsonl");
-        fs::write(
-            session_event_log(&legacy),
-            "{\"schema_version\":0,\"type\":\"legacy\"}\n",
-        )
-        .expect("write legacy log");
-        assert!(!session_artifact_exists(&legacy));
-
-        let native = dir.path().join("native.jsonl");
-        fs::write(
-            session_event_log(&native),
-            "{\"schema_version\":3,\"type\":\"replace\"}\n",
-        )
-        .expect("write native log");
-        assert!(session_artifact_exists(&native));
     }
 
     #[test]
@@ -1754,30 +1272,6 @@ mod tests {
             .expect("branch meta present");
         assert_eq!(meta.revision, 2);
         assert_eq!(transcript_lines(&path).len(), 2);
-    }
-
-    #[test]
-    fn cleanup_pending_hides_a_session() {
-        let dir = tempdir();
-        let path = dir.path().join("s.jsonl");
-        let path_str = path.to_string_lossy().into_owned();
-        session_of(vec![user_message("hello world")])
-            .save(&path_str)
-            .expect("save");
-
-        assert!(is_visible_session(&path_str));
-        assert!(!is_visible_session(""));
-        assert!(!is_visible_session("   "));
-        assert!(!is_cleanup_pending(""));
-
-        let marker = crate::store::naming::session_cleanup_pending(&path);
-        std::fs::write(&marker, "{}").expect("write cleanup marker");
-        assert!(is_cleanup_pending(&path_str));
-        assert!(!is_visible_session(&path_str));
-
-        std::fs::remove_file(&marker).expect("remove cleanup marker");
-        assert!(!is_cleanup_pending(&path_str));
-        assert!(is_visible_session(&path_str));
     }
 
     const RESHAPED_DIFF: &str = "@@ -1 +1 @@\n-a\n+b\n";

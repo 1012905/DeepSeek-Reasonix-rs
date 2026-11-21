@@ -18,11 +18,11 @@ use serde_json::value::RawValue;
 use super::images::resolve_session_event_images;
 use super::preflight::{preflight_session_event_messages, trim_ascii};
 use super::reader::{NextError, SessionRecordReader};
-use super::record::{CreatedAt, SessionEventWireRecord, native_session_event_schema};
-use super::{
-    DecodeError, SESSION_EVENT_TYPE_APPEND, SESSION_EVENT_TYPE_REPLACE, SessionReplayLimitError,
-    SessionReplayLimits,
+use super::record::{
+    CreatedAt, NativeEventType, SessionEventWireRecord, native_event_type,
+    native_session_event_schema,
 };
+use super::{DecodeError, SessionReplayLimitError, SessionReplayLimits};
 use reasonix_contract::gojson;
 use reasonix_contract::provider::Message;
 
@@ -32,8 +32,6 @@ use reasonix_contract::provider::Message;
 pub enum ReplayError {
     #[error("decode session event log {path}: unsupported schema version {version}")]
     UnsupportedSchemaVersion { path: String, version: i64 },
-    #[error("decode session event log {path}: unsupported event type {event_type:?}")]
-    UnsupportedEventType { path: String, event_type: String },
     #[error("{0}")]
     Limit(#[from] SessionReplayLimitError),
     #[error(transparent)]
@@ -64,9 +62,19 @@ pub struct SessionEventReplay {
     pub size: i64,
     /// True when the replay stopped early on damaged input.
     pub damaged: bool,
+    /// Record types this build does not understand, in log order. The replay
+    /// skips them so the read never fails; a writer must refuse to overwrite a
+    /// log that holds one, because the record's meaning would be lost.
+    pub unknown_records: Vec<String>,
 }
 
 impl SessionEventReplay {
+    /// Whether the log holds a record type this build does not understand
+    /// (Go: the hard error in the `default:` arm, now carried instead).
+    pub fn has_unknown_records(&self) -> bool {
+        !self.unknown_records.is_empty()
+    }
+
     /// Drops the oldest messages until the tail fits the budget (Go:
     /// trimToTail). Never removes the final message; prefers cutting
     /// at a user boundary and backs off over trailing tool results so
@@ -120,6 +128,73 @@ impl SessionEventReplay {
         self.payload_bytes = self.sizes.iter().sum();
         self.collection_items = 0;
     }
+}
+
+/// Every record type in the log this build does not understand, in log order
+/// (the classification the replay's tolerance arm performs, without building
+/// a transcript). A writer uses it to refuse a rewrite that would bury a
+/// record whose meaning it cannot reproduce.
+pub fn scan_unknown_event_records(
+    log_path: &Path,
+    limits: &SessionReplayLimits,
+) -> Result<Vec<String>, ReplayError> {
+    let path = log_path.to_string_lossy().into_owned();
+    let mut file = File::open(log_path)?;
+    let size = file.metadata()?.len() as i64;
+    if size > limits.max_bytes {
+        return Err(ReplayError::Limit(super::session_replay_limit_error(
+            &path,
+            "encoded_bytes",
+            size,
+            limits.max_bytes,
+        )));
+    }
+    let mut reader = SessionRecordReader::new(&mut file, &path, limits.max_bytes);
+    let mut unknown: Vec<String> = Vec::new();
+    loop {
+        let (raw, _start) = match reader.next() {
+            Ok(frame) => frame,
+            Err(NextError::Eof) => return Ok(unknown),
+            Err(NextError::Limit(err)) => return Err(ReplayError::Limit(err)),
+            Err(NextError::Damaged(_err)) => return Ok(unknown),
+        };
+        let record: SessionEventWireRecord =
+            match serde_json::from_slice::<Option<SessionEventWireRecord>>(&raw) {
+                Ok(Some(record)) => record,
+                Ok(None) => SessionEventWireRecord::default(),
+                Err(_err) => return Ok(unknown),
+            };
+        if !native_session_event_schema(record.schema_version) {
+            return Err(ReplayError::UnsupportedSchemaVersion {
+                path: path.clone(),
+                version: record.schema_version,
+            });
+        }
+        if native_event_type(&record.event_type).is_none() {
+            unknown.push(record.event_type);
+        }
+    }
+}
+
+/// The first record type in `session_path`'s log that a rewrite would bury, if
+/// any (the refusal a save owes a log it cannot fully understand).
+///
+/// Read tolerates an unknown record — the log must always open — but a replace
+/// or a fold would drop it and change the log's meaning for the build that
+/// wrote it. Only a native, non-empty log can have one.
+pub fn unrewritable_record_type(
+    session_path: &Path,
+    probe: &super::SessionEventLogProbe,
+) -> Option<String> {
+    if !probe.native || probe.size <= 0 {
+        return None;
+    }
+    let log = crate::store::session_event_log(session_path);
+    if log.as_os_str().is_empty() {
+        return None;
+    }
+    let types = scan_unknown_event_records(&log, &SessionReplayLimits::default()).ok()?;
+    types.into_iter().next()
 }
 
 /// Replays an event log with default limits (Go:
@@ -202,8 +277,18 @@ pub fn replay_session_event_records(
             .as_deref()
             .map(|raw| raw.get().len() as i64)
             .unwrap_or_default();
-        match record.event_type.as_str() {
-            SESSION_EVENT_TYPE_REPLACE => {
+        let Some(kind) = native_event_type(&record.event_type) else {
+            // An unknown type is tolerated on read: the log must always open.
+            // The record's meaning is unknown, so it contributes nothing to
+            // the transcript, and it names itself here so a writer can refuse
+            // to bury it (see `has_unknown_records`).
+            replay.unknown_records.push(record.event_type.clone());
+            replay.records += 1;
+            replay.last_good_end = reader.offset();
+            continue;
+        };
+        match kind {
+            NativeEventType::Replace => {
                 if limits.tail_budget == 0
                     && let Some(err) = limits.payload_err(&path, raw_len)
                 {
@@ -237,7 +322,7 @@ pub fn replay_session_event_records(
                 replay.collection_items = items;
                 replay.trim_to_tail(limits.tail_budget);
             }
-            SESSION_EVENT_TYPE_APPEND => {
+            NativeEventType::Append => {
                 if record.message_index < 0
                     || record.message_index as usize != replay.dropped + replay.msgs.len()
                 {
@@ -276,12 +361,6 @@ pub fn replay_session_event_records(
                 }
                 replay.msgs.extend(msgs);
                 replay.trim_to_tail(limits.tail_budget);
-            }
-            other => {
-                return Err(ReplayError::UnsupportedEventType {
-                    path: path.clone(),
-                    event_type: other.to_owned(),
-                });
             }
         }
         replay.records += 1;
@@ -452,20 +531,46 @@ mod tests {
     }
 
     #[test]
-    fn unknown_event_type_is_a_hard_error() {
+    fn unknown_event_type_is_tolerated_and_named() {
         let tmp = test_support::tempdir();
-        let log = write_log(&tmp, &record_line(1, "mutate", "[]"));
-        let err = replay_session_event_log(&log).unwrap_err();
-        match &err {
-            ReplayError::UnsupportedEventType { path, event_type } => {
-                assert_eq!(event_type, "mutate");
-                assert_eq!(
-                    err.to_string(),
-                    format!("decode session event log {path}: unsupported event type \"mutate\"")
-                );
-            }
-            other => panic!("{other:?}"),
-        }
+        let body = format!(
+            "{}
+{}
+",
+            record_line(1, "replace", r#"[{"role":"user","content":"kept"}]"#),
+            record_line(1, "mutate", r#"[{"role":"user","content":"dropped"}]"#),
+        );
+        let log = write_log(&tmp, &body);
+        let replay = replay_session_event_log(&log).unwrap();
+        // The known prefix still decodes; the unknown record contributes
+        // nothing and does not damage the log.
+        assert_eq!(replay.msgs.len(), 1);
+        assert_eq!(replay.msgs[0].content, "kept");
+        assert!(!replay.damaged);
+        assert_eq!(replay.records, 2);
+        assert_eq!(replay.unknown_records, vec!["mutate".to_string()]);
+        assert!(replay.has_unknown_records());
+
+        let unknown = scan_unknown_event_records(&log, &SessionReplayLimits::default()).unwrap();
+        assert_eq!(unknown, vec!["mutate".to_string()]);
+    }
+
+    #[test]
+    fn scan_of_a_clean_log_finds_no_unknown_records() {
+        let tmp = test_support::tempdir();
+        let body = format!(
+            "{}
+{}
+",
+            record_line(1, "replace", "[]"),
+            append_line(0, r#"[{"role":"user","content":"ok"}]"#),
+        );
+        let log = write_log(&tmp, &body);
+        assert!(
+            scan_unknown_event_records(&log, &SessionReplayLimits::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

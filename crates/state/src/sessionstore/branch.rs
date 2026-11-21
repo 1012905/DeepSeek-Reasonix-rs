@@ -743,7 +743,7 @@ fn preserve_branch_meta_persistence(next: &mut BranchMeta, existing: &BranchMeta
 // ---------------------------------------------------------------------------
 
 /// Go branch.go `saveBranchMetaAfter`.
-fn save_branch_meta_after(
+pub(crate) fn save_branch_meta_after(
     session_path: &Path,
     meta: &mut BranchMeta,
     touch_updated: bool,

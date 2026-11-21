@@ -12,9 +12,6 @@
 //!   a remembered listing every transcript's branch meta is read, exactly
 //!   what Go does in a folder the index does not cover; the observable
 //!   grouping is identical.
-//! - `isV4SessionRemoved` inside `is_visible_session` stays false
-//!   (SESS-038): a `.v4-removed` marker can only exist for a v4-imported
-//!   session, which this store cannot produce yet.
 
 use std::collections::HashMap;
 use std::io;
