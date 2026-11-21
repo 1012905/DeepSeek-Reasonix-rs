@@ -272,13 +272,12 @@ fn prepare(
         }
     };
     if let Some(gate) = inputs.gate {
-        let verdict = gate.check(tool.name(), &args, tool.read_only());
-        if !matches!(verdict, Ok(true)) {
-            let outcome = match verdict {
-                Ok(false) => refused_outcome("blocked: the host declined this call", ""),
-                Err(reason) => refused_outcome(&format!("blocked: {reason}"), ""),
-                Ok(true) => unreachable!("checked above"),
-            };
+        let verdict = gate.check_verdict(tool.name(), &args, tool.read_only());
+        if !verdict.allow {
+            let outcome = refused_outcome(
+                &format!("blocked: {}", verdict.reason),
+                &verdict.refusal_code,
+            );
             outcomes.lock().expect("batch lock")[index] = Some(outcome);
             return None;
         }
@@ -359,12 +358,12 @@ fn execute_one(call: &ToolCall, inputs: &BatchInputs<'_>) -> ToolOutcome {
         Err(detail) => return malformed_arguments_outcome(detail),
     };
     if let Some(gate) = inputs.gate {
-        match gate.check(tool.name(), &args, tool.read_only()) {
-            Ok(true) => {}
-            Ok(false) => {
-                return refused_outcome("blocked: the host declined this call", "");
-            }
-            Err(reason) => return refused_outcome(&format!("blocked: {reason}"), ""),
+        let verdict = gate.check_verdict(tool.name(), &args, tool.read_only());
+        if !verdict.allow {
+            return refused_outcome(
+                &format!("blocked: {}", verdict.reason),
+                &verdict.refusal_code,
+            );
         }
     }
     let ctx = CallContext::new();

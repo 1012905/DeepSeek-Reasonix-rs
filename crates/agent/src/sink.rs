@@ -47,6 +47,8 @@ pub mod kind {
     pub const TOOL_RESULT: &str = "tool_result";
     pub const USAGE: &str = "usage";
     pub const NOTICE: &str = "notice";
+    pub const APPROVAL_REQUEST: &str = "approval_request";
+    pub const ASK_REQUEST: &str = "ask_request";
     pub const TURN_PHASE: &str = "turn_phase";
     pub const STREAM_ATTEMPT: &str = "stream_attempt";
     pub const CONTEXT_MAINTENANCE: &str = "context_maintenance";
@@ -87,4 +89,5 @@ pub mod notice_code {
     pub const CONTEXT_COMPOSITION: &str = "context_composition";
     pub const FOLD_NOT_REUSED_HISTORY: &str = "fold_not_reused_history";
     pub const FOLD_NOT_REUSED_LINEAGE: &str = "fold_not_reused_lineage";
+    pub const DECISION_RECEIPT: &str = "decision_receipt";
 }
