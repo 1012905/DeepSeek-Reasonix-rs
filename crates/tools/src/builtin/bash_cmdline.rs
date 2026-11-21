@@ -15,7 +15,6 @@ pub const CODE_COMMAND_LINE_TOO_LONG: &str = "shell.command_line_too_long";
 
 /// CreateProcessW's lpCommandLine ceiling in UTF-16 code units, the
 /// terminating NUL included.
-#[cfg(windows)]
 pub const WINDOWS_COMMAND_LINE_MAX: usize = 32767;
 
 /// Go `syscall.EscapeArg`: the Windows command-line quoting os/exec applies
