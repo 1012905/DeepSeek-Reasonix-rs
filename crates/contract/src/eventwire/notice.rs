@@ -214,7 +214,8 @@ pub fn localized_or_text<'a>(
     localized: impl FnOnce(&str) -> Option<&'a str>,
     text: &'a str,
 ) -> &'a str {
-    if !code.is_empty() && is_known(code)
+    if !code.is_empty()
+        && is_known(code)
         && let Some(found) = localized(code)
     {
         return found;
