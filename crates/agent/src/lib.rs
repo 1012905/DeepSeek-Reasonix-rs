@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cancel;
+pub mod compose;
 pub mod config;
 pub mod error;
 pub mod execute;
@@ -26,6 +27,7 @@ pub mod stream;
 pub mod usage;
 
 pub use cancel::CancelToken;
+pub use compose::DefaultComposer;
 pub use config::{
     AgentConfig, MAX_EMPTY_FINAL_BLOCKS, MAX_SAMPLING_ATTEMPTS, MAX_TOOL_OUTPUT_BYTES,
 };

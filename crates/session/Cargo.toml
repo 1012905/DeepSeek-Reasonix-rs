@@ -9,11 +9,15 @@ publish.workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+reasonix-agent = { workspace = true }
 reasonix-contract = { workspace = true }
+reasonix-provider = { workspace = true }
 reasonix-state = { workspace = true }
+reasonix-tools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

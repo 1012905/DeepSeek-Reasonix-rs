@@ -419,7 +419,7 @@ impl Agent {
             .expect("seams lock")
             .composer
             .clone()
-            .unwrap_or_else(|| Arc::new(crate::seams::DefaultComposer));
+            .unwrap_or_else(|| Arc::new(crate::compose::DefaultComposer::default()));
         composer.compose(
             &self.config.system_prompt,
             &self.session.snapshot(),

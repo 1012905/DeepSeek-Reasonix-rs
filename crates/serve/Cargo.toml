@@ -12,6 +12,9 @@ reasonix-config = { workspace = true }
 reasonix-contract = { workspace = true }
 # The sink pipeline's diff recognizer (Go internal/base/diff).
 reasonix-core = { workspace = true }
+# The emit-pipeline bridge onto the agent loop's sink trait (agent spine
+# integration note: serve may depend on the agent crate, never the reverse).
+reasonix-agent = { workspace = true }
 # [secrets] arms the read-tool denylists at boot (Go build.go:230).
 reasonix-tools = { workspace = true }
 reasonix-session = { workspace = true }
@@ -40,6 +43,9 @@ tracing = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }
+# The pipeline-adapter tests drive a real turn over the canned provider.
+reasonix-provider = { workspace = true }
+reasonix-state = { workspace = true }
 # start_paused drives the coalesce window deterministically in tests.
 tokio = { version = "1", features = ["test-util"] }
 # Test-only: drives routers to responses (tower::ServiceExt::oneshot).

@@ -10,6 +10,7 @@
 //! opt-in — and [`capabilities::AuditForwarder`] is the one component every
 //! forwarding wrapper shares, held complete by its registry test.
 
+pub mod adapter;
 pub mod capabilities;
 pub mod coalesce;
 pub mod costquote;
@@ -20,9 +21,9 @@ pub mod sync;
 use std::any::Any;
 use std::sync::Arc;
 
-use reasonix_contract::eventwire::event::Event;
 use reasonix_contract::pricing::CostQuote;
 
+pub use adapter::PipelineSink;
 pub use capabilities::{
     AuditForwarder, CAPABILITY_NAMES, DelegationAudit, MemoryRecallAudit, MemoryRecallHit,
     RunBudgetSample, RunBudgetTotals, WorkspaceMutation, capture_usage_scope, quote_usage,
@@ -34,6 +35,10 @@ pub use costquote::{
 };
 pub use markdiff::mark_embedded_diffs;
 pub use notice_ledger::NoticeLedger;
+// The event type the pipeline consumes, re-exported so composition roots
+// above serve (assembly) hold it without a second edge into the contract
+// crate.
+pub use reasonix_contract::eventwire::event::Event;
 pub use sync::sync_sink;
 
 /// Consumes a turn's events. Emitters call it serially from the run loop, so
