@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 pub mod controller;
+pub mod fanout;
 pub mod hub;
 pub mod listing;
 pub mod model;

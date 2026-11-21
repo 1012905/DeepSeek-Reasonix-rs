@@ -108,7 +108,21 @@ impl Sink for Recorder {
 /// `*Broadcaster`).
 struct TestBroadcaster;
 
-impl BroadcasterHandle for TestBroadcaster {}
+impl BroadcasterHandle for TestBroadcaster {
+    fn subscribe(
+        &self,
+        _mode: reasonix_session::fanout::SubscriptionMode,
+    ) -> reasonix_session::fanout::Subscription {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        reasonix_session::fanout::Subscription::new(Box::new(rx), Box::new(|| {}))
+    }
+    fn watermark(&self) -> i64 {
+        0
+    }
+    fn replay(&self, _after: i64) -> (Vec<bytes::Bytes>, bool) {
+        (Vec::new(), true)
+    }
+}
 
 /// The test's pane composition: one broadcaster handle and the recorder
 /// sink per open, both kept so the test can prove the hub adopted them.

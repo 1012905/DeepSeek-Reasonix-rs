@@ -11,11 +11,13 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 
 use reasonix_contract::eventwire::event::Event;
 use reasonix_session::controller::BroadcasterHandle;
+use reasonix_session::fanout::FrameQueue;
 
 /// Bytes, not frames: frames here span three orders of magnitude, so a count
 /// bounds nothing anyone cares about. 8MiB holds a whole session of
@@ -38,33 +40,7 @@ pub const SUBSCRIBER_WINDOW: usize = 64;
 /// forever, so these frames are never droppable.
 pub const SUBAGENT_PROGRESS_STATUS: &str = "reasonix.subagent.status";
 
-/// One JSON frame on its way to a client, carrying the number it was
-/// assigned. `seq` is zero for frames that are not resumable — the transport
-/// uses it to decide what to write as an SSE `id` and what to remember as a
-/// resume point, without parsing the payload back.
-#[derive(Debug, Clone)]
-pub struct Frame {
-    pub seq: i64,
-    pub data: Bytes,
-}
-
-/// The five subscription modes (Go `SubscribeFrom`/`SubscribeInitialNotices`/
-/// `SubscribeAttached`/`SubscribeResume`; plain `Subscribe` is `From(0)`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubscriptionMode {
-    /// Resume after frame `after` — an SSE reconnect carries Last-Event-ID.
-    /// Zero means "no cursor": no history is replayed.
-    From(i64),
-    /// Attach without a cursor; only the first such window per session
-    /// receives pre-connection notices, as unnumbered copies.
-    InitialNotices,
-    /// `InitialNotices` that also states where it attached, as an unnumbered
-    /// watermark ahead of every later frame.
-    Attached,
-    /// A window that stated its own position, zero included: it holds no
-    /// numbered frame and is owed the whole log.
-    Resume(i64),
-}
+pub use reasonix_session::fanout::{Frame, Subscription, SubscriptionMode};
 
 /// Whether losing this frame degrades the view rather than breaking it
 /// (Go `droppable`): a streaming delta is superseded by the text after it; a
@@ -148,7 +124,11 @@ struct SubscriberState {
 /// a client that stopped reading costs the producer one bounded append.
 struct Subscriber {
     state: Mutex<SubscriberState>,
-    notify: tokio::sync::Notify,
+    /// The wake a push or a close hands out, capacity one: a token is pending
+    /// while frames wait, and the poll side registers its waker inside the
+    /// channel itself, so the wake survives the poll returning — a `Notify`
+    /// future dropped between polls would unregister and lose it.
+    doorbell: tokio::sync::mpsc::Sender<()>,
 }
 
 impl Subscriber {
@@ -172,7 +152,7 @@ impl Subscriber {
             Self::evict(&mut state);
         }
         drop(state);
-        self.notify.notify_one();
+        let _ = self.doorbell.try_send(());
     }
 
     /// Go `subscriber.evictLocked`: the oldest frame the client can most
@@ -200,7 +180,7 @@ impl Subscriber {
         state.queue.clear();
         state.bytes = 0;
         drop(state);
-        self.notify.notify_waiters();
+        let _ = self.doorbell.try_send(());
     }
 }
 
@@ -316,13 +296,14 @@ impl Broadcaster {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let id = inner.next_sub;
         inner.next_sub += 1;
+        let (doorbell, doorbell_rx) = tokio::sync::mpsc::channel(1);
         let subscriber = Arc::new(Subscriber {
             state: Mutex::new(SubscriberState {
                 queue: VecDeque::new(),
                 bytes: 0,
                 closed: false,
             }),
-            notify: tokio::sync::Notify::new(),
+            doorbell,
         });
         let (initial_notices, attached, after) = match mode {
             SubscriptionMode::From(after) => (false, false, after),
@@ -387,11 +368,23 @@ impl Broadcaster {
         }
         inner.subs.insert(id, subscriber.clone());
         drop(inner);
-        Subscription {
-            inner: self.inner.clone(),
-            id,
-            subscriber,
-        }
+        // The queue owns the doorbell receiver; the unsubscribe closure holds
+        // sibling handles over the same Arc'd subscriber state.
+        let queue = LiveQueue {
+            subscriber: subscriber.clone(),
+            doorbell: doorbell_rx,
+        };
+        let unbind = {
+            let inner = self.inner.clone();
+            move || {
+                let mut guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+                if guard.subs.remove(&id).is_some() {
+                    drop(guard);
+                    subscriber.close();
+                }
+            }
+        };
+        Subscription::new(Box::new(queue), Box::new(unbind))
     }
 
     /// The last numbered frame. A client compares it against what it has seen
@@ -450,8 +443,22 @@ impl Default for Broadcaster {
 }
 
 /// The fan-out handle the session hub names (docs/contract.md §4.1): the
-/// entity lives in serve; session only carries the marker trait.
-impl BroadcasterHandle for Broadcaster {}
+/// entity lives in serve; the subscriber surface it carries is session's
+/// [reasonix_session::fanout::BroadcasterHandle], so a runtime's routes
+/// drive the broadcaster the open machine minted through the trait.
+impl BroadcasterHandle for Broadcaster {
+    fn subscribe(&self, mode: SubscriptionMode) -> Subscription {
+        Broadcaster::subscribe(self, mode)
+    }
+
+    fn watermark(&self) -> i64 {
+        Broadcaster::watermark(self)
+    }
+
+    fn replay(&self, after: i64) -> (Vec<Bytes>, bool) {
+        Broadcaster::replay(self, after)
+    }
+}
 
 /// The terminal sink of the emit pipeline (docs/contracts/sse.md §5): boot
 /// wraps the broadcaster in mark-embedded-diffs → coalesce → sync → quote
@@ -494,76 +501,41 @@ pub(crate) fn watermark_json(seq: i64) -> String {
     format!(r#"{{"kind":"stream_watermark","seq":{seq}}}"#)
 }
 
-/// A live view of the broadcaster for one client. Dropping it unsubscribes —
-/// the Rust counterpart of Go's returned `func()`, which the SSE handler
-/// defers.
-pub struct Subscription {
-    inner: Arc<Mutex<Inner>>,
-    id: u64,
+/// The broadcaster-side queue of one live subscriber (the state Go's
+/// `Subscription` holds): it answers session's [`FrameQueue`] over the same
+/// VecDeque-plus-wake pair, and the view runs the unsubscribe on drop.
+struct LiveQueue {
     subscriber: Arc<Subscriber>,
+    doorbell: tokio::sync::mpsc::Receiver<()>,
 }
 
-impl Subscription {
-    /// The subscriber id, for `emit_to` targeting.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// The next frame, waiting while the queue is empty. `None` once the
-    /// subscription was closed (unsubscribed) — the SSE stream ends.
-    pub async fn recv(&mut self) -> Option<Frame> {
+impl FrameQueue for LiveQueue {
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Frame>> {
         loop {
-            // Register interest BEFORE checking the queue: a push that lands
-            // between the check and the await would otherwise be missed.
-            let notified = self.subscriber.notify.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            {
-                let mut state = self
-                    .subscriber
-                    .state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                if let Some(queued) = state.queue.pop_front() {
-                    state.bytes -= queued.frame.data.len();
-                    return Some(queued.frame);
-                }
-                if state.closed {
-                    return None;
-                }
+            let mut state = self
+                .subscriber
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(queued) = state.queue.pop_front() {
+                state.bytes -= queued.frame.data.len();
+                return Poll::Ready(Some(queued.frame));
             }
-            notified.await;
+            if state.closed {
+                return Poll::Ready(None);
+            }
+            drop(state);
+            // The waker registers inside the doorbell channel: a push that
+            // lands after this poll still wakes the next one, and a token
+            // parked before it is consumed on the way around.
+            match self.doorbell.poll_recv(cx) {
+                Poll::Ready(Some(())) => continue,
+                // The doorbell closed only with the subscriber — the queue's
+                // closed flag above is the answer either way.
+                Poll::Ready(None) => continue,
+                Poll::Pending => return Poll::Pending,
+            }
         }
-    }
-
-    /// The next frame if one is queued, without waiting. Used by benches and
-    /// tests that drive the queue synchronously.
-    pub fn try_recv(&mut self) -> Option<Frame> {
-        let mut state = self
-            .subscriber
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        state.queue.pop_front().map(|queued| {
-            state.bytes -= queued.frame.data.len();
-            queued.frame
-        })
-    }
-
-    /// Go's returned `func()`: removes the subscriber and closes its queue.
-    /// Idempotent; also runs on drop.
-    pub fn unsubscribe(&self) {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if inner.subs.remove(&self.id).is_some() {
-            drop(inner);
-            self.subscriber.close();
-        }
-    }
-}
-
-impl Drop for Subscription {
-    fn drop(&mut self) {
-        self.unsubscribe();
     }
 }
 
@@ -655,7 +627,7 @@ mod tests {
     #[tokio::test]
     async fn unsubscribe_drops_the_subscriber_and_emit_survives() {
         let b = Broadcaster::new();
-        let ch = b.subscribe(SubscriptionMode::From(0));
+        let mut ch = b.subscribe(SubscriptionMode::From(0));
         assert_eq!(b.subscriber_count(), 1);
         ch.unsubscribe();
         assert_eq!(b.subscriber_count(), 0);
