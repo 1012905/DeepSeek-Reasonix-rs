@@ -933,6 +933,15 @@ version = "0.3.0"
 [[package]]
 name = "reasonix-agent"
 version = "0.3.0"
+dependencies = [
+ "reasonix-contract",
+ "reasonix-provider",
+ "reasonix-state",
+ "reasonix-tools",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "reasonix-assembly"
