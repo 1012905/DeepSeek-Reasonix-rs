@@ -86,8 +86,8 @@ pub async fn prepare(opts: HostBootOptions) -> Result<HostBoot, BootError> {
             .map(PathBuf::from)
             .collect();
     // The auto workspace is created here (created last, only when nothing
-    // else won); the root feeds the pane runtime when that slice lands.
-    let _root = pick_launch_workspace(
+    // else won); the root feeds the pane runtime.
+    let root = pick_launch_workspace(
         &opts.cwd,
         &opts.app_exe,
         &remembered,
@@ -95,14 +95,28 @@ pub async fn prepare(opts: HostBootOptions) -> Result<HostBoot, BootError> {
     );
     on_phase("workspace");
 
-    // The pane runtime lands with the agent slice.
+    // The approval posture the configuration named, or the headless default.
+    // A named posture is what makes a published runtime answerable; an
+    // unnamed one keeps the Go-nil seams rather than inventing a prompt.
+    let approval = serve::boot::runtime_approval(&config);
     on_phase("runtime");
 
-    let hub = Arc::new(Hub::from_process_roots().unwrap_or_else(|| {
-        Hub::new(HubPaths {
-            state_root: PathBuf::new(),
-        })
-    }));
+    // The open machine carries the posture because it is the only code that
+    // holds it at publish time (Go: `EnableInteractiveApproval` runs from
+    // publish, not from the frontend that asked). The provider fields stay
+    // empty until the provider-config edge lands: an open before then
+    // refuses with the typed missing field rather than a faked runtime.
+    let spec = reasonix_session::hub::RuntimeSpec {
+        workspace_root: root.to_string_lossy().into_owned(),
+        ..reasonix_session::hub::RuntimeSpec::default()
+    };
+    let hub = Arc::new(Hub::with_options(
+        hub_paths,
+        reasonix_session::hub::HubOptions {
+            spec,
+            kit: Arc::new(crate::emit::PaneKit::with_approval(false, approval)),
+        },
+    ));
     on_phase("hub");
 
     // Runtime adoption lands with the open machine.

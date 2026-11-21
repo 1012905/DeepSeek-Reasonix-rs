@@ -147,6 +147,7 @@ struct PartialDesktop {
     telemetry: Option<bool>,
     metrics: Option<bool>,
     tray: Option<String>,
+    default_tool_approval_mode: Option<String>,
 }
 
 fn apply_layer(config: &mut Config, delta: LayerDelta, project_scope: bool) {
@@ -171,7 +172,7 @@ fn apply_layer(config: &mut Config, delta: LayerDelta, project_scope: bool) {
         }
     }
     if let Some(desktop) = delta.desktop {
-        apply_desktop(&mut config.desktop, desktop);
+        apply_desktop(&mut config.desktop, desktop, project_scope);
     }
 }
 
@@ -196,7 +197,7 @@ fn apply_serve(serve: &mut ServeSection, partial: PartialServe) {
     }
 }
 
-fn apply_desktop(desktop: &mut DesktopSection, partial: PartialDesktop) {
+fn apply_desktop(desktop: &mut DesktopSection, partial: PartialDesktop, project_scope: bool) {
     if let Some(value) = partial.telemetry {
         desktop.telemetry = Some(value);
     }
@@ -205,6 +206,11 @@ fn apply_desktop(desktop: &mut DesktopSection, partial: PartialDesktop) {
     }
     if let Some(value) = partial.tray {
         desktop.tray = value;
+    }
+    // load_project.go's narrowPermissions keeps the approval posture
+    // user-scope: a workspace file never decides what runs in it unattended.
+    if !project_scope && let Some(value) = partial.default_tool_approval_mode {
+        desktop.default_tool_approval_mode = value;
     }
 }
 

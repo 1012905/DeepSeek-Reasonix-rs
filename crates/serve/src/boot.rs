@@ -50,6 +50,33 @@ pub fn arm_secrets(config: &Config) {
     reasonix_tools::builtin::set_protect_sensitive_files(config.secrets.protect_sensitive_files);
 }
 
+/// How long an approval or ask prompt blocks when the configuration names a
+/// posture. The reference leaves the value to each frontend's `boot.Options`
+/// (`ApprovalTimeout`), and this build has no interactive frontend of its
+/// own; the desktop's window is the one that would set it, so a resolved
+/// posture here waits a day rather than forever — a walked-away user must
+/// not wedge the runtime. A configuration that named no posture keeps the
+/// headless posture, where nothing waits at all.
+pub const APPROVAL_PROMPT_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
+
+/// The runtime approval surface the resolved configuration asks for, or
+/// `None` when it asks for none (Go: `withWindowPosture` + the publish-time
+/// `EnableInteractiveApproval`).
+///
+/// The posture is read through [Config]'s own accessor, which already
+/// normalizes aliases and keeps an unrecognized value at ask. Absent means
+/// absent: this function never invents an approval the user did not
+/// configure, and it never widens one they did.
+pub fn runtime_approval(config: &Config) -> Option<reasonix_agent::approval::ApprovalConfig> {
+    config.desktop_default_tool_approval_mode().map(|mode| {
+        reasonix_agent::approval::ApprovalConfig {
+            mode,
+            timeout: APPROVAL_PROMPT_TIMEOUT,
+        }
+    })
+}
+
 /// Go `config.ReasonixHomeDir()`, re-exported for the host's `-instance-id`
 /// mode: the data home the root chain resolves, empty when none can be.
 pub fn reasonix_home_dir() -> PathBuf {

@@ -321,7 +321,7 @@ pub(crate) fn runtime_routes(
     let runtime_id = reasonix_session::model::RuntimeId(runtime.id.clone());
     let ctrl = hub.turn_controller(runtime_id.clone());
     let bc = hub.broadcaster(runtime_id);
-    crate::eventstream::events_routes(bc)
+    crate::eventstream::events_routes(bc, ctrl.clone())
         .merge(sessions_routes(hub, runtime.root.clone()))
         .merge(crate::commands::command_routes(ctrl))
 }
