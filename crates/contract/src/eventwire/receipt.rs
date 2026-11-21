@@ -28,6 +28,32 @@ pub struct CompletionReceipt {
     pub severity: String,
 }
 
+impl CompletionReceipt {
+    /// Whether this receipt has anything a person needs.
+    pub fn says_something(&self) -> bool {
+        !self.gaps.is_empty()
+            || !self.risks.is_empty()
+            || !self.unverified.is_empty()
+            || self.verdict == "done"
+    }
+
+    /// How hard this receipt asks to be read. An unfamiliar gap kind is warn.
+    pub fn severity(&self) -> &'static str {
+        use crate::eventwire::vocab::{receipt_gap_severity, receipt_severity};
+        let mut out = receipt_severity::NONE;
+        if !self.risks.is_empty() || !self.unverified.is_empty() {
+            out = receipt_severity::NOTICE;
+        }
+        for gap in &self.gaps {
+            if receipt_gap_severity(&gap.kind) == receipt_severity::WARN {
+                return receipt_severity::WARN;
+            }
+            out = receipt_severity::NOTICE;
+        }
+        out
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReceiptChange {
