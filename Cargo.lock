@@ -934,10 +934,13 @@ version = "0.3.0"
 name = "reasonix-agent"
 version = "0.3.0"
 dependencies = [
+ "getrandom 0.3.4",
  "reasonix-contract",
  "reasonix-provider",
+ "reasonix-safety",
  "reasonix-state",
  "reasonix-tools",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
@@ -1081,6 +1084,7 @@ dependencies = [
  "reasonix-agent",
  "reasonix-contract",
  "reasonix-provider",
+ "reasonix-safety",
  "reasonix-state",
  "reasonix-tools",
  "serde",

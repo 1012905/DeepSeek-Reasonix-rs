@@ -51,6 +51,39 @@ pub trait Gate: Send + Sync {
         args: &serde_json::Value,
         read_only: bool,
     ) -> Result<bool, String>;
+
+    /// The typed verdict: the refusal code travels beside the words so a
+    /// caller never recovers the host's identity from a sentence (Go:
+    /// `permission.Verdict`). The default derives it from `check`, which
+    /// carries no code — a gate that refuses with an identity overrides it.
+    fn check_verdict(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        read_only: bool,
+    ) -> GateVerdict {
+        match self.check(tool_name, args, read_only) {
+            Ok(allow) => GateVerdict {
+                allow,
+                ..GateVerdict::default()
+            },
+            Err(reason) => GateVerdict {
+                allow: false,
+                reason,
+                ..GateVerdict::default()
+            },
+        }
+    }
+}
+
+/// A gate's answer with the refusal identity a frontend and the transcript
+/// carry (Go: `permission.Verdict`). `reason` is model-facing prose;
+/// `refusal_code` is the identity matched by code, never by wording.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GateVerdict {
+    pub allow: bool,
+    pub reason: String,
+    pub refusal_code: String,
 }
 
 /// One answer to a structured question (Go: `event.AskAnswer`; host-side
