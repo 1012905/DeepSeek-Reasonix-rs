@@ -10,7 +10,9 @@ publish.workspace = true
 [dependencies]
 reasonix-contract = { workspace = true }
 reasonix-core = { workspace = true }
+reasonix-safety = { workspace = true }
 encoding_rs.workspace = true
+getrandom.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

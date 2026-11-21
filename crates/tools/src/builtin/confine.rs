@@ -29,6 +29,15 @@ pub const CODE_READ_OUTSIDE_SCOPE: &str = "workspace.read_outside_scope";
 /// session stores. `None` is Go's zero value — unconfined.
 pub trait SessionDataGuardHook: Send + Sync {
     fn check(&self, target: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// The warning appended to bash output when the command references
+    /// Reasonix's own session stores (confine.go
+    /// `SessionDataGuard.CommandHint`). A notice, never a refusal; the
+    /// needle machinery is the session-guard slice's and the default is
+    /// quiet.
+    fn command_hint(&self, _work_dir: &str, _command: &str) -> String {
+        String::new()
+    }
 }
 
 /// The managed-config hook (confine.go `ManagedConfigPaths`): names the
