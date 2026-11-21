@@ -245,11 +245,11 @@ pipe-leading line must be a six-cell ledger row.
 | MCP-036 | MCP | composition guards | reasonix-ext | todo | M1: docs/contracts/mcp.md §31 |
 | MCP-037 | MCP | credential projection | reasonix-ext | todo | M1: docs/contracts/mcp.md §32 |
 | MCP-038 | MCP | divergences §33 | reasonix-ext | todo | M1: docs/contracts/mcp.md §33 |
-| EXT-001 | EXT | transport framing §1 | reasonix-ext | todo | M1: docs/contracts/ext.md §1 |
-| EXT-002 | EXT | lifecycle handshake §2 | reasonix-ext | todo | M1: docs/contracts/ext.md §2 |
-| EXT-003 | EXT | content references §3 | reasonix-ext | todo | M1: docs/contracts/ext.md §3 |
-| EXT-004 | EXT | interception contract §4 | reasonix-ext | todo | M1: docs/contracts/ext.md §4 |
-| EXT-005 | EXT | streaming providers §5 | reasonix-ext | todo | M1: docs/contracts/ext.md §5 |
+| EXT-001 | EXT | transport framing §1 | reasonix-ext | done | crates/ext/src/framing.rs + framing/tests.rs (10 framing tests); crates/ext/src/error.rs (20-reason frozen error table), limits.rs; cargo test -p reasonix-ext (2026-11-21) |
+| EXT-002 | EXT | lifecycle handshake §2 | reasonix-ext | done | crates/ext/src/lifecycle.rs (6 handshake tests: initialize→result→initialized→shutdown, manifest subset validation, version compare); error.rs::compare_version_oracle (2026-11-21) |
+| EXT-003 | EXT | content references §3 | reasonix-ext | done | crates/ext/src/content.rs (3 tests: externalization descriptors + paged reads with hash/size guards) (2026-11-21) |
+| EXT-004 | EXT | interception contract §4 | reasonix-ext | done | crates/ext/src/intercept.rs (5 tests: per-point decision guards + timeout families) (2026-11-21) |
+| EXT-005 | EXT | streaming providers §5 | reasonix-ext | done | crates/ext/src/provider.rs (6 tests: catalog/stream DTOs, null-array/tool-parameter/chunk/sequence guards) (2026-11-21) |
 | EXT-006 | EXT | structured UI §6 | reasonix-ext | todo | M1: docs/contracts/ext.md §6 |
 | EXT-007 | EXT | extension tools §7 | reasonix-ext | todo | M1: docs/contracts/ext.md §7 |
 | EXT-008 | EXT | error table §8 | reasonix-ext | todo | M1: docs/contracts/ext.md §8 |
