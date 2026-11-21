@@ -132,6 +132,7 @@ async fn controller(base: &str, sink: Arc<dyn Sink>) -> Arc<TurnController> {
         workspace_root: "C:\\work\\proj".to_owned(),
         session_dir: String::new(),
         label: "m".to_owned(),
+        approval: None,
     })
 }
 

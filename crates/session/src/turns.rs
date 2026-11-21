@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use reasonix_agent::approval::{ApprovalBroker, ApprovalConfig, BrokerAsker, InteractiveGate};
 use reasonix_agent::config::AgentConfig;
 use reasonix_agent::seams::{SteerInbox, TranscriptSaver};
 use reasonix_agent::sink::Sink;
@@ -39,6 +40,12 @@ pub struct TurnControllerParts {
     pub session_dir: String,
     /// The name new transcript files carry (Go `Label` — the model name).
     pub label: String,
+    /// Interactive approval posture. `None` keeps the Go-nil seams: no
+    /// gate, no asker, the headless behaviour the turn-group had. A host
+    /// that installs one gets Gate + Asker bound onto its agent and an
+    /// `approve`/`answer` surface on this controller (Go:
+    /// `EnableInteractiveApproval`).
+    pub approval: Option<ApprovalConfig>,
 }
 
 /// Why a submission was dropped without starting a turn (Go: the refused
@@ -75,6 +82,10 @@ pub struct TurnController {
     steer: Arc<MemorySteerInbox>,
     running: AtomicBool,
     cancel_requested: AtomicBool,
+    /// The host-owned approval surface; `None` is the Go-nil posture.
+    broker: Option<Arc<ApprovalBroker>>,
+    /// The base policy the interactive gate is shaped from.
+    approval_policy: reasonix_safety::permission::Policy,
 }
 
 impl TurnController {
@@ -91,6 +102,7 @@ impl TurnController {
             workspace_root,
             session_dir,
             label,
+            approval,
         } = parts;
         // The transcript opens with the cache-stable prompt (Go:
         // sessionstore.NewSession(b.prompt.prompt)); the composer leaves a
@@ -105,6 +117,14 @@ impl TurnController {
         ));
         let steer = Arc::new(MemorySteerInbox::default());
         agent.set_steer_inbox(steer.clone());
+        let approval_policy = reasonix_safety::permission::Policy::new("ask", &[], &[], &[]);
+        let broker = approval.map(|config| {
+            let broker = ApprovalBroker::new(config, session.clone(), sink.clone());
+            let gate = InteractiveGate::new(&broker, &approval_policy, &config);
+            agent.set_gate(Arc::new(gate));
+            agent.set_asker(Arc::new(BrokerAsker(broker.clone())));
+            broker
+        });
         let ctrl = Arc::new(Self {
             agent,
             session,
@@ -116,6 +136,8 @@ impl TurnController {
             steer,
             running: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
+            broker,
+            approval_policy,
         });
         ctrl.agent
             .set_transcript_saver(Arc::new(AdmissionSave(ctrl.clone())));
@@ -127,8 +149,45 @@ impl TurnController {
         &self.agent
     }
 
+    /// Answers a pending tool approval by id (Go `Controller.Approve`).
+    /// Unknown ids are ignored; the decision reaches the gate and a receipt
+    /// reaches the transcript and SSE. `false` when no approval is installed
+    /// or the id is not pending.
+    pub fn approve(&self, id: &str, input: reasonix_agent::approval::DecisionInput) -> bool {
+        self.broker.as_ref().is_some_and(|b| b.decide(id, input))
+    }
+
+    /// Answers a pending structured question by id (Go
+    /// `Controller.AnswerQuestion`).
+    pub fn answer(&self, id: &str, answers: Vec<reasonix_agent::approval::AskAnswer>) -> bool {
+        self.broker.as_ref().is_some_and(|b| b.answer(id, answers))
+    }
+
+    /// Whether an interactive approval surface is installed (Go:
+    /// `EnableInteractiveApproval` having run). A frontend can tell a
+    /// headless run from one it can answer.
+    pub fn interactive_approval(&self) -> bool {
+        self.broker.is_some()
+    }
+
+    /// The typed ask flow for a host that installs an `ask` tool (Go
+    /// `Controller.Ask`). The plain Asker seam is installed on the agent;
+    /// this surface also reports a timeout so a host can render the skip.
+    pub fn ask(
+        &self,
+        questions: &[reasonix_contract::eventwire::ask::AskQuestion],
+    ) -> Option<reasonix_agent::approval::AskResult> {
+        self.broker.as_ref().map(|b| b.ask_questions(questions))
+    }
+
+    /// The base policy used to shape the interactive gate, for a host that
+    /// rebuilds the gate after a posture change (Go `refreshInteractiveGate`).
+    pub fn approval_policy(&self) -> &reasonix_safety::permission::Policy {
+        &self.approval_policy
+    }
+
     /// The transcript this controller's turns write (Go
-    /// `c.executor.Session()`).
+    /// `c.executor.Session`).
     pub fn session(&self) -> &Arc<Session> {
         &self.session
     }

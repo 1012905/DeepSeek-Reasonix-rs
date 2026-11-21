@@ -78,7 +78,8 @@ pub mod outcome {
 }
 
 /// A decision about one pending tool prompt (Go: `Approve`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default)]
 pub struct DecisionInput {
     pub allow: bool,
     pub session: bool,
@@ -86,8 +87,10 @@ pub struct DecisionInput {
 }
 
 /// A structured answer to one question, in wire shape (Go: `event.AskAnswer`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default)]
 pub struct AskAnswer {
+    #[serde(rename = "questionId")]
     pub id: String,
     pub selected: Vec<String>,
 }
