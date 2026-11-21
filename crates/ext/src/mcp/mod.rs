@@ -6,6 +6,7 @@
 
 pub mod naming;
 pub mod types;
+pub mod wire;
 
 pub use naming::{
     MAX_MODEL_TOOL_NAME, NamingError, bounded_tool_name, mcp_connect_permission_name, mcp_roots,
@@ -13,3 +14,8 @@ pub use naming::{
     tool_prefix, validate_mcp_tool_names,
 };
 pub use types::{ContentBlock, McpRoot, McpTool, ToolCallResult};
+pub use wire::{
+    InboundMessage, RpcError, RpcRequest, RpcResponse, ServerReply, ServerResult,
+    decode_inbound_message, decode_rpc_response, format_mcp_progress, is_notification_id,
+    progress_token_key, rpc_error_from_response, server_request_reply,
+};
