@@ -48,13 +48,14 @@ pub use probe::{
     SessionEventLogProbe, probe_session_event_log, probe_session_event_log_with_limits,
 };
 pub use record::{
-    CreatedAt, SessionEventImages, SessionEventWireRecord, SessionImageSlot,
-    composition_event_schema, composition_removed, native_session_event_schema,
+    CreatedAt, NativeEventType, SessionEventImages, SessionEventWireRecord, SessionImageSlot,
+    composition_event_schema, composition_removed, native_event_type, native_session_event_schema,
     session_event_record_schema,
 };
 pub use repair::{RepairError, preserve_damaged_event_log_tail, repair_session_event_log_tail};
 pub use replay::{
-    ReplayError, SessionEventReplay, replay_session_event_log, replay_session_event_log_with_limits,
+    ReplayError, SessionEventReplay, replay_session_event_log,
+    replay_session_event_log_with_limits, scan_unknown_event_records, unrewritable_record_type,
 };
 pub use writer::{
     SessionEventRecord, SessionEventWriteError, append_session_append_event, append_session_event,

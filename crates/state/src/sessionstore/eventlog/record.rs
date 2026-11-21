@@ -17,6 +17,7 @@ use std::fmt;
 use super::{
     SESSION_EVENT_COMPOSITION_SCHEMA_VERSION, SESSION_EVENT_IMAGE_BLOBS_SCHEMA_VERSION,
     SESSION_EVENT_LIVE_COMPOSITION_SCHEMA_VERSION, SESSION_EVENT_SCHEMA_VERSION,
+    SESSION_EVENT_TYPE_APPEND, SESSION_EVENT_TYPE_REPLACE,
 };
 
 go_struct! {
@@ -359,6 +360,27 @@ pub fn session_event_record_schema(images: &[SessionEventImages]) -> i64 {
         SESSION_EVENT_SCHEMA_VERSION
     } else {
         SESSION_EVENT_IMAGE_BLOBS_SCHEMA_VERSION
+    }
+}
+
+/// The record kinds a native (schema 1+) log may hold. This is the single
+/// place a `type` string becomes a kind, so the replay and any derived reader
+/// classify a record the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeEventType {
+    /// A whole-transcript replacement.
+    Replace,
+    /// An append onto the running transcript.
+    Append,
+}
+
+/// Classifies one record's `type` (Go: the `switch rec.Type` cases in
+/// replaySessionEventRecords). `None` means a type this build does not know.
+pub fn native_event_type(event_type: &str) -> Option<NativeEventType> {
+    match event_type {
+        SESSION_EVENT_TYPE_REPLACE => Some(NativeEventType::Replace),
+        SESSION_EVENT_TYPE_APPEND => Some(NativeEventType::Append),
+        _ => None,
     }
 }
 

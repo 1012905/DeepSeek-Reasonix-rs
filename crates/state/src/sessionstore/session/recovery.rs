@@ -23,11 +23,10 @@ use thiserror::Error;
 
 use super::Session;
 use super::canonical::with_session_save_path_lock;
+use super::checkpoint::write_session_messages;
 use super::digest::digest_session_messages;
-use super::save::{
-    LoadError, WriteMessagesError, is_cleanup_pending, load_session_unlocked,
-    write_session_messages,
-};
+use super::load::{is_cleanup_pending, load_session_unlocked};
+use super::save::{LoadError, WriteMessagesError};
 use super::storage_eq::{messages_have_prefix, messages_have_prefix_with_compatible_system};
 use crate::sessionstore::branch::{
     BRANCH_META_COUNTS_VERSION, BranchMeta, BranchMetaError, branch_id, load_branch_meta,

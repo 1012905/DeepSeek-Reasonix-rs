@@ -96,13 +96,35 @@ pub fn clear_cleanup_pending(session_path: &str) -> io::Result<()> {
     if path.as_os_str().is_empty() {
         return Ok(());
     }
-    // Go preserves a v4-import removal marker here; this store has no
-    // v4 import sessions yet (SESS-036..038), so only the marker
-    // itself goes.
+    preserve_v4_removal(session_path)?;
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
+    }
+}
+
+/// Copies a removed 1.x import's marker to its `.v4-removed` tombstone before
+/// the marker goes, so the v4 discovery pass cannot re-import the deleted
+/// conversation (Go: `preserveV4Removal`). Only the removal operations leave a
+/// tombstone; a fork or a re-home marker is not a deletion.
+fn preserve_v4_removal(session_path: &str) -> io::Result<()> {
+    let target = naming::session_v4_removed_marker(Path::new(session_path));
+    if target.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let marker = naming::session_cleanup_pending(Path::new(session_path));
+    let raw = match fs::read(&marker) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    let meta: CleanupPendingMeta = serde_json::from_slice(&raw).unwrap_or_default();
+    match meta.operation.as_str() {
+        "remove" | "delete" | "clear" => {
+            reasonix_core::fileutil::atomic_write_file(&target, &raw, 0o644)
+        }
+        _ => Ok(()),
     }
 }
 

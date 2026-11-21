@@ -6,9 +6,13 @@
 //! decides whether a snapshot can skip saving, feeds `PersistedState`
 //! views, and gates observer notifications.
 
+use std::fs;
+use std::path::Path;
+
 use super::Session;
 use super::canonical::canonical_session_save_path;
 use crate::sessionstore::eventlog::writer_id::digest_string;
+use crate::store::naming::{session_event_log, session_event_log_damaged, session_meta};
 
 /// In-memory record of the last persisted snapshot (Go:
 /// `sessionPersistState`). `ok` distinguishes "never saved"
@@ -189,6 +193,38 @@ impl Session {
             st.event_log_damaged = false;
         }
     }
+}
+
+/// The four file stamps the fast baseline guards on (Go: stampBaseline):
+/// the transcript, the event log, the branch meta, and the damaged flag.
+pub(crate) fn stamp_baseline(session_path: &Path) -> [FileStampOnDisk; 4] {
+    [
+        file_stamp(session_path),
+        file_stamp(&session_event_log(session_path)),
+        file_stamp(&session_meta(session_path)),
+        file_stamp(&session_event_log_damaged(session_path)),
+    ]
+}
+
+/// One os.Stat stamp (Go: fileStampOnDisk): size, mtime, existence.
+pub(crate) fn file_stamp(path: &Path) -> FileStampOnDisk {
+    match fs::metadata(path) {
+        Ok(meta) => FileStampOnDisk {
+            size: meta.len() as i64,
+            modified_nanos: modified_nanos(&meta),
+            here: true,
+        },
+        Err(_) => FileStampOnDisk::default(),
+    }
+}
+
+/// The mtime in nanoseconds since the epoch, 0 when unavailable.
+pub(crate) fn modified_nanos(meta: &fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

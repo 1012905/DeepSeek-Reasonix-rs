@@ -273,6 +273,65 @@ pub fn session_cleanup_pending(session_path: &Path) -> PathBuf {
     append_suffix(&session_stem(session_path), ".cleanup-pending.json")
 }
 
+/// `<stem>.v4-removed` - the durable tombstone of a deleted 1.x import, so
+/// the v4 discovery pass never re-imports it (Go: `v4RemovalPath`,
+/// session_v4_removal.go). Empty unless the name is `v4-<1.x id>.jsonl` in a
+/// folder named `sessions` with a `sessions-v4` sibling.
+pub fn session_v4_removed_marker(session_path: &Path) -> PathBuf {
+    if session_path.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    let Some(name) = strip_suffix(session_path, ".jsonl") else {
+        return PathBuf::new();
+    };
+    let Some(file_name) = Path::new(&name).file_name() else {
+        return PathBuf::new();
+    };
+    let file_name = file_name.to_string_lossy().into_owned();
+    let Some(id) = file_name.strip_prefix("v4-") else {
+        return PathBuf::new();
+    };
+    // Go checks `filepath.Dir(sessionPath)` — the folder the transcript
+    // lives in, not the transcript itself.
+    let Some(dir) = Path::new(&name).parent() else {
+        return PathBuf::new();
+    };
+    if !is_v4_session_id(id) || v4_sessions_root(dir).as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    append_suffix(Path::new(&name), ".v4-removed")
+}
+
+/// The `sessions-v4` folder beside a `sessions` folder (Go: `v4RootFor`).
+/// Empty for any other folder name, so the tombstone stays a sessions-folder
+/// concept.
+pub fn v4_sessions_root(sessions_dir: &Path) -> PathBuf {
+    let is_sessions_folder = sessions_dir
+        .file_name()
+        .is_some_and(|name| name == "sessions");
+    match (is_sessions_folder, sessions_dir.parent()) {
+        (true, Some(parent)) if !parent.as_os_str().is_empty() => parent.join("sessions-v4"),
+        _ => PathBuf::new(),
+    }
+}
+
+/// Whether an id is one 1.x generates: lowercase hex, 16-64 digits, with or
+/// without a Desktop marker prefix (Go: `isV4SessionID`).
+pub fn is_v4_session_id(id: &str) -> bool {
+    let mut rest = id;
+    for prefix in ["desktop-manual-", "desktop-"] {
+        if let Some(stripped) = rest.strip_prefix(prefix) {
+            rest = stripped;
+            break;
+        }
+    }
+    if !(16..=64).contains(&rest.len()) {
+        return false;
+    }
+    rest.bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
 /// Inverse of [`session_event_log`]: strips `.events.jsonl`,
 /// requires a non-empty stem, appends `.jsonl`; yields the empty path
 /// otherwise (`SessionPathForEventLog`, session-format.md 1, 20.1).

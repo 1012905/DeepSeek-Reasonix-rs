@@ -9,10 +9,8 @@
 //! through `serde_ignored`, rejects trailing data, and admits a
 //! composition binding only when it sits on the leading system message.
 //!
-//! Known divergences (both stay inside the same error class):
+//! Known divergence (stays inside the same error class):
 //!
-//! * `PrepareSessionPath` (the 1.x v4 import) is not ported yet, so
-//!   `load_session` skips it (SESS-023).
 //! * On a payload with both an unknown field and a type error, Go reports
 //!   the first unknown field in document order; serde ignores the unknown
 //!   field and reports the type error first. Both classify as
