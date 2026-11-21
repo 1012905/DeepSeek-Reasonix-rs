@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anchors;
+pub mod ask;
 pub mod bash;
 pub mod bash_cmdline;
 pub mod bash_env;
@@ -36,6 +37,10 @@ pub mod writefile;
 pub mod writepaths;
 
 pub use anchors::{CODE_WRITE_OUTSIDE_SCOPE, ConfineError, confine_write_side_resolved};
+pub use ask::{
+    ASK_DESCRIPTION, ASK_DISMISSED, ASK_REASON_MISSING_VALUE, ASK_REASON_USER_DECISION,
+    ASK_TOOL_NAME, ASK_UNRESOLVED, AskTool, ask_tool, schema_value as ask_schema_value,
+};
 pub use bash::{
     BASH_TOOL_STEER, BashError, BashTool, ExternalRefTokens, bash_error, confine_bash,
     descriptor_from_shell, unconfined_bash,
@@ -189,4 +194,12 @@ pub fn unconfined_writers() -> Vec<Arc<dyn Tool>> {
 /// bound to nothing. A composition root overrides it with [`confine_bash`].
 pub fn unconfined_bash_tool() -> Arc<dyn Tool> {
     Arc::new(bash::unconfined_bash())
+}
+
+/// Go `addTurnExitTools`' `ask` registration: the decision that is the
+/// user's to make. It stays registered every turn — the schema is
+/// cache-stable and the host does not detect the condition first — and
+/// reaches the user through the call context's asker.
+pub fn turn_exit_tools() -> Vec<Arc<dyn Tool>> {
+    vec![ask::ask_tool()]
 }

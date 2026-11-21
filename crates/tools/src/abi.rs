@@ -155,6 +155,21 @@ pub trait PathWriter: Capability {
     fn writes_named_paths(&self) -> bool;
 }
 
+/// A tool whose result is the user's own answer. Running it ends the round:
+/// every call written alongside it was written without that answer, so
+/// carrying one over would reason from a decision nobody made yet (Go
+/// `tool.IsDecisionBarrier`).
+pub trait DecisionBarrier: Capability {
+    fn decision_barrier(&self) -> bool;
+}
+
+/// Whether running this tool ends its round.
+pub fn is_decision_barrier(tool: &dyn Tool) -> bool {
+    tool.capabilities()
+        .get::<dyn DecisionBarrier>()
+        .is_some_and(|b| b.decision_barrier())
+}
+
 /// Whether this call must run on its own. A tool without [`SequentialTool`]
 /// is ordered by read-only alone.
 pub fn runs_sequentially(tool: &dyn Tool, ctx: &CallContext, args: &Value) -> bool {

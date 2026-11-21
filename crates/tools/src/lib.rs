@@ -17,6 +17,7 @@
 
 pub mod abi;
 pub mod arguments;
+pub mod ask;
 pub mod builtin;
 pub mod invoke;
 pub mod provenance;
@@ -28,11 +29,12 @@ pub mod shell;
 pub mod withdrawn;
 
 pub use abi::{
-    CallContext, CapabilitySet, ContextualReasoner, ContextualTool, PathWriter, PreviewChange,
-    Previewer, SequentialTool, Tool, ToolResult, ToolSchema, preview_change, runs_sequentially,
-    writes_named_paths,
+    CallContext, CapabilitySet, ContextualReasoner, ContextualTool, DecisionBarrier, PathWriter,
+    PreviewChange, Previewer, SequentialTool, Tool, ToolResult, ToolSchema, is_decision_barrier,
+    preview_change, runs_sequentially, writes_named_paths,
 };
 pub use arguments::{UniqueJsonError, parse_unique, unwrap_arguments};
+pub use ask::{AskAnswer, AskOutcome, Asker, asker_from};
 pub use invoke::{Invoker, NESTED_CALL_FAILED, NestedCallError, is_nested_call_of, nested_call_id};
 pub use provenance::{
     Provenance, ProvenanceDeclarer, ProvenanceKind, ProvenanceSink, host_of, provenance_header,
