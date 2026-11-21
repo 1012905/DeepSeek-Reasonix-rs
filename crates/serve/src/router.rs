@@ -26,8 +26,6 @@ use axum::routing::{any, get, post};
 use crate::auth::{
     AuthGate, HostGated, csrf_guard_middleware, host_guard_middleware, mutation_gate_middleware,
 };
-use crate::broadcaster::Broadcaster;
-use crate::eventstream::session_routes;
 use crate::gate::{GateDecision, LoopbackGate};
 use crate::refuse::{NO_RUNTIME_OPEN, Reason, RefuseError, not_found, refuse_response, write_err};
 
@@ -267,50 +265,103 @@ async fn get_tree(State(state): State<RouterState>) -> Response {
 }
 
 /// Go `s.sessions` (sessions_list.go, routes.go:91) as a per-runtime route
-/// (mounted by `session_routes`, never by the hub mux): the runtime's
-/// workspace names the transcript directory. The runtime identity joins when
-/// controllers migrate, so the first runtime's root stands in; with no
-/// runtime the directory is empty, and an empty or unreadable directory
-/// answers `[]`, never an error.
-pub(crate) async fn runtime_sessions(State(hub): State<Arc<Hub>>) -> Response {
-    let workspace = hub
-        .runtimes()
-        .first()
-        .map(|rt| rt.root.clone())
-        .unwrap_or_default();
+/// (mounted by `sessions_routes`, never by the hub mux): the runtime's own
+/// workspace names the transcript directory. An empty or unreadable
+/// directory answers `[]`, never an error.
+pub(crate) async fn runtime_sessions(State((hub, root)): State<(Arc<Hub>, String)>) -> Response {
     // The transcript walk is blocking file I/O (docs/kernel-rs/AGENTS.md
     // 10.3) — it does not belong on the async workers.
     let rows: Vec<SessionRow> =
-        tokio::task::spawn_blocking(move || hub.sessions(std::path::Path::new(&workspace)))
+        tokio::task::spawn_blocking(move || hub.sessions(std::path::Path::new(&root)))
             .await
             .unwrap_or_default();
     write_json(&rows)
 }
 
-/// Go `routeRuntime`: an unknown id is a 404 naming the kind; a known one
-/// would be served by its own mux, whose machine is not published in this
-/// build — the honest answer then is the same no-runtime refusal (unreachable
-/// while the open machine refuses).
+/// Go `routeRuntime` (hub.go:622-629): an unknown id is a 404 naming the
+/// kind; a known one is served by its own mux, frozen at publish the way
+/// Go's `http.StripPrefix("/rt/"+ID, Server.routes())` freezes it — the
+/// runtime routes stay unprefixed.
 async fn route_runtime(State(state): State<RouterState>, request: Request) -> Response {
     let path = request.uri().path().trim_start_matches("/rt/");
     let id = path.split('/').next().unwrap_or("");
-    if state.hub.runtimes().iter().any(|rt| rt.id == id) {
-        return no_runtime_open();
+    let Some(runtime) = state.hub.runtimes().into_iter().find(|rt| rt.id == id) else {
+        return not_found("runtime", id);
+    };
+    let router = runtime_routes(state.hub.clone(), &runtime);
+    // Strip the runtime prefix (Go StripPrefix): "/rt/r1/events" reaches the
+    // runtime mux as "/events". The bare "/rt/r1" never gets here — the
+    // hub-level routes only match the trailing-slash shapes.
+    let (mut parts, body) = request.into_parts();
+    let consumed = "/rt/".len() + runtime.id.len();
+    let mut rest = parts.uri.path().get(consumed..).unwrap_or("/").to_owned();
+    if rest.is_empty() {
+        rest.push('/');
     }
-    not_found("runtime", id)
+    let path_and_query = match parts.uri.query() {
+        Some(query) => format!("{rest}?{query}"),
+        None => rest,
+    };
+    parts.uri = axum::http::Uri::builder()
+        .path_and_query(path_and_query)
+        .build()
+        .expect("a stripped path re-parses");
+    serve_mounted(router, Request::from_parts(parts, body)).await
 }
 
-/// Go `routeDefault`: serves the first local runtime unprefixed for a browser
-/// opened straight at the port. With only refusals in this build, the only
-/// reachable states are the empty hub and the page branch: GET / with a page
-/// while authenticated serves the shell — only past the gate, since "/" is
-/// public in token mode so a bare shell can bootstrap.
+/// One runtime's own mux (Go `Server.routes()`' subset this build answers),
+/// the handler `publish` freezes for `/rt/{id}/`: the event stream family,
+/// the runtime's session list, and the turn-command verbs. Built per
+/// dispatch from the hub's runtime table — the table is the state publish
+/// froze; the router is its view.
+pub(crate) fn runtime_routes(
+    hub: Arc<Hub>,
+    runtime: &reasonix_session::model::RuntimeSummary,
+) -> Router {
+    let runtime_id = reasonix_session::model::RuntimeId(runtime.id.clone());
+    let ctrl = hub.turn_controller(runtime_id.clone());
+    let bc = hub.broadcaster(runtime_id);
+    crate::eventstream::events_routes(bc)
+        .merge(sessions_routes(hub, runtime.root.clone()))
+        .merge(crate::commands::command_routes(ctrl))
+}
+
+/// Go `s.sessions` (sessions_list.go): the runtime's own workspace names
+/// the transcript directory, unlike the hub-level tree route.
+fn sessions_routes(hub: Arc<Hub>, root: String) -> Router {
+    Router::new()
+        .route(
+            "/sessions",
+            get(runtime_sessions).fallback(method_not_allowed_response),
+        )
+        .with_state((hub, root))
+}
+
+/// Serves `request` through a runtime's mounted router (Go: rt.handler or
+/// routeDefault's `local.Server.routes().ServeHTTP(w, r)`). The nested
+/// router is bare — every hub-level middleware has already run — and its
+/// error type is infallible.
+async fn serve_mounted(router: Router, request: Request) -> Response {
+    use tower::Service as _Service;
+    let mut svc: Router = router;
+    std::future::poll_fn(|cx| _Service::<Request>::poll_ready(&mut svc, cx))
+        .await
+        .unwrap_or_else(|e| match e {});
+    match _Service::<Request>::call(&mut svc, request).await {
+        Ok(response) => response,
+        Err(e) => match e {},
+    }
+}
+
+/// Go `routeDefault` (hub.go:635-667): serves the first local runtime
+/// unprefixed for a browser opened straight at the port or an older
+/// frontend. The page branch is only reachable with no runtime open: GET /
+/// with a page while authenticated serves the shell — only past the gate,
+/// since "/" is public in token mode so a bare shell can bootstrap.
 async fn route_default(State(state): State<RouterState>, request: Request) -> Response {
-    if !state.hub.runtimes().is_empty() {
-        // A published runtime's session routes need its broadcaster through
-        // the frozen read handle; until the write side migrates, no runtime
-        // is reachable here, so the refusal below is the answer either way.
-        return no_runtime_open();
+    if let Some(runtime) = state.hub.runtimes().into_iter().next() {
+        let router = runtime_routes(state.hub.clone(), &runtime);
+        return serve_mounted(router, request).await;
     }
     let page = (request.method() == Method::GET
         && request.uri().path() == "/"
@@ -464,14 +515,6 @@ fn panic_response(panic: Box<dyn std::any::Any + Send>) -> Response {
         .unwrap_or_else(|| "panic".to_owned());
     tracing::error!(panic = %message, "serve: handler panicked");
     crate::refuse::http_error(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-}
-
-/// Mounts a runtime's routes at a prefix — what Go's
-/// `http.StripPrefix("/rt/"+ID, Server.routes())` does. The host calls this
-/// when a runtime exists; with none, nothing mounts.
-pub fn mount_runtime_routes(prefix: &str, hub: Arc<Hub>, bc: Arc<Broadcaster>) -> Router {
-    let runtime = session_routes(hub, bc);
-    Router::new().nest(prefix, runtime)
 }
 
 #[cfg(test)]

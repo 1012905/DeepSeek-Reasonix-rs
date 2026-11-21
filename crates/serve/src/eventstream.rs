@@ -26,9 +26,9 @@ use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
-use reasonix_session::hub::Hub;
+use reasonix_session::controller::BroadcasterHandle;
 
-use crate::broadcaster::{Broadcaster, Subscription, SubscriptionMode};
+use crate::broadcaster::{Subscription, SubscriptionMode};
 
 /// Go `sseKeepaliveInterval`: how often /events emits a `: ping`. The comment
 /// keeps the socket warm under idle-proxy timeouts; the consumer drops it.
@@ -122,26 +122,30 @@ pub fn subscription_mode(after: i64, first: bool, attached: bool) -> Subscriptio
     }
 }
 
-/// The per-runtime route set this slice implements: `GET /events` and
-/// `GET /events/replay` (Go routes.go:21-22) plus `GET /sessions`
-/// (routes.go:91), mounted under a runtime's prefix by the host. The
-/// hub-level router registers none of them — with no runtime open these
-/// paths fall to routeDefault's 503, as they do in Go.
-pub fn session_routes(hub: Arc<Hub>, bc: Arc<Broadcaster>) -> Router {
-    let events = Router::new()
-        .route("/events", get(events_handler).fallback(wrong_method))
-        .route(
-            "/events/replay",
-            get(events_replay_handler).fallback(wrong_method),
-        )
-        .with_state(bc);
-    let sessions = Router::new()
-        .route(
-            "/sessions",
-            get(crate::router::runtime_sessions).fallback(wrong_method),
-        )
-        .with_state(hub);
-    events.merge(sessions)
+/// The per-runtime event routes (Go routes.go:21-22), mounted under a
+/// runtime's prefix by the hub router's dispatch and served unprefixed by
+/// routeDefault. With no fan-out published — a host-adopted runtime — the
+/// paths answer the same 503 they gave before the mux mounted.
+pub fn events_routes(bc: Option<Arc<dyn BroadcasterHandle>>) -> Router {
+    match bc {
+        Some(bc) => Router::new()
+            .route("/events", get(events_handler).fallback(wrong_method))
+            .route(
+                "/events/replay",
+                get(events_replay_handler).fallback(wrong_method),
+            )
+            .with_state(bc),
+        None => Router::new()
+            .route("/events", get(no_stream).fallback(wrong_method))
+            .route("/events/replay", get(no_stream).fallback(wrong_method)),
+    }
+}
+
+async fn no_stream() -> Response {
+    crate::refuse::refuse_response(
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        &crate::refuse::Reason::new(crate::refuse::NO_RUNTIME_OPEN, "no runtime is open"),
+    )
 }
 
 async fn wrong_method() -> impl IntoResponse {
@@ -152,7 +156,7 @@ async fn wrong_method() -> impl IntoResponse {
 /// disconnects. Subscribe and replay are one handoff under the broadcaster
 /// lock (the prompt machine joins when the controller migrates).
 async fn events_handler(
-    State(bc): State<Arc<Broadcaster>>,
+    State(bc): State<Arc<dyn BroadcasterHandle>>,
     request: axum::extract::Request<Body>,
 ) -> Response {
     let after = last_event_id(request.headers(), request.uri());
@@ -161,7 +165,7 @@ async fn events_handler(
     stream_response(subscription, bc)
 }
 
-fn stream_response(subscription: Subscription, bc: Arc<Broadcaster>) -> Response {
+fn stream_response(subscription: Subscription, bc: Arc<dyn BroadcasterHandle>) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(16);
     let watermark_source = bc.clone();
     tokio::spawn(async move {
@@ -211,7 +215,7 @@ fn stream_response(subscription: Subscription, bc: Arc<Broadcaster>) -> Response
 /// machine is not in this build, so the answer is the empty connection-local
 /// snapshot and the current watermark.
 async fn events_replay_handler(
-    State(bc): State<Arc<Broadcaster>>,
+    State(bc): State<Arc<dyn BroadcasterHandle>>,
     request: axum::extract::Request<Body>,
 ) -> Response {
     let first = attaching(request.headers(), request.uri());
@@ -257,17 +261,10 @@ fn write_replay_frames(frames: &[Bytes], complete: bool, watermark: i64) -> Resp
 mod tests {
     use super::*;
     use crate::broadcaster::Broadcaster;
-    use reasonix_session::hub::HubPaths;
 
     use reasonix_contract::eventwire::event::Event;
     use reasonix_contract::eventwire::tool::Tool;
     use tokio_stream::StreamExt as _StreamExt;
-
-    fn test_hub() -> Arc<Hub> {
-        Arc::new(Hub::new(HubPaths {
-            state_root: std::env::temp_dir().join("eventstream-tests-absent"),
-        }))
-    }
 
     fn tool_result(id: &str) -> Event {
         Event {
@@ -646,7 +643,7 @@ mod tests {
         let b = Arc::new(Broadcaster::new());
         b.emit(tool_result("t1"));
         b.emit(tool_result("t2"));
-        let router = session_routes(test_hub(), b.clone());
+        let router = events_routes(Some(b.clone()));
         let request = axum::extract::Request::builder()
             .uri("/events/replay?lastEventId=1")
             .body(Body::empty())
@@ -668,7 +665,7 @@ mod tests {
     #[tokio::test]
     async fn replay_endpoint_answers_empty_array_never_null_for_a_current_client() {
         let b = Arc::new(Broadcaster::new());
-        let router = session_routes(test_hub(), b.clone());
+        let router = events_routes(Some(b.clone()));
         let request = axum::extract::Request::builder()
             .uri("/events/replay")
             .body(Body::empty())
@@ -693,7 +690,7 @@ mod tests {
     #[tokio::test]
     async fn events_stream_opens_with_connected_then_numbers_frames() {
         let b = Arc::new(Broadcaster::new());
-        let router = session_routes(test_hub(), b.clone());
+        let router = events_routes(Some(b.clone()));
         let request = axum::extract::Request::builder()
             .uri("/events")
             .body(Body::empty())

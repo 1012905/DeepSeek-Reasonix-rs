@@ -258,14 +258,6 @@ mod tests {
     use crate::broadcaster::Broadcaster;
     use axum::body::Body;
     use bytes::Bytes;
-    use reasonix_session::hub::Hub;
-    use reasonix_session::hub::HubPaths;
-
-    fn test_hub() -> Arc<Hub> {
-        Arc::new(Hub::new(HubPaths {
-            state_root: std::env::temp_dir().join("serve-listen-tests"),
-        }))
-    }
 
     // m-5 / OPT-002: a real TCP disconnect must release the SSE
     // subscription — no orphaned subscriber behind a gone socket.
@@ -280,7 +272,7 @@ mod tests {
                 let _ = rx.await;
             },
             listener,
-            crate::eventstream::session_routes(test_hub(), bc.clone()),
+            crate::eventstream::events_routes(Some(bc.clone())),
         ));
         tokio::time::sleep(Duration::from_millis(100)).await;
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();

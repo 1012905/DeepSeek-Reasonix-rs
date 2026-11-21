@@ -168,23 +168,37 @@ impl TurnController {
         *self.session_dir.lock().expect("dir lock") = dir.to_owned();
     }
 
-    /// Submits raw user input as one turn and drives it to completion (Go
-    /// `Submit`'s plain-turn path: `runGuarded` → `runTurnLoop` →
-    /// `runWithRunner`). Slash commands, memory quick-adds and shell lines
-    /// are the composition machine and stay unported — this entry is the
-    /// trusted user-turn path (`SubmitUserTurn`).
+    /// Synchronous turn admission (Go: the `running` swap inside
+    /// `runGuarded`, taken before the caller's goroutine starts). A caller
+    /// that admits and then spawns never answers 202 for a turn another
+    /// submit already owns — the admission decides, not the spawn order.
+    pub fn try_admit(&self) -> bool {
+        !self.running.swap(true, Ordering::SeqCst)
+    }
+
+    /// Drives an admitted turn to completion (Go: the body of `Submit` after
+    /// admission: `runTurnLoop` → `runWithRunner`). Slash commands, memory
+    /// quick-adds and shell lines are the composition machine and stay
+    /// unported — this entry is the trusted user-turn path
+    /// (`SubmitUserTurn`).
     ///
     /// The `turn_done` event reaches the sink before this returns, so a
     /// spawned caller publishes completion through the stream exactly once.
-    pub async fn submit(&self, input: &str) -> Result<TurnReceipt, SubmitRefusal> {
-        if self.running.swap(true, Ordering::SeqCst) {
-            return Err(SubmitRefusal::Busy);
-        }
+    pub async fn run_admitted(&self, input: &str) -> TurnReceipt {
         self.cancel_requested.store(false, Ordering::SeqCst);
         self.ensure_session_path();
         let result = self.agent.run(input).await;
         self.running.store(false, Ordering::SeqCst);
-        Ok(self.finish_turn(result))
+        self.finish_turn(result)
+    }
+
+    /// Submits raw user input as one turn and drives it to completion (Go
+    /// `Submit`'s plain-turn path). Admission and the turn are one call.
+    pub async fn submit(&self, input: &str) -> Result<TurnReceipt, SubmitRefusal> {
+        if !self.try_admit() {
+            return Err(SubmitRefusal::Busy);
+        }
+        Ok(self.run_admitted(input).await)
     }
 
     /// Aborts the in-flight turn at its next await point (Go `Cancel`).
