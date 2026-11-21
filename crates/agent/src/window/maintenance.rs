@@ -666,7 +666,7 @@ impl Window {
     /// `persistCompactionStateLocked`): a controller whose transcript save
     /// would be refused must not install a fold either. No path bound means
     /// nothing to publish — the receipts stay the in-memory generation's.
-    fn persist_compaction_state(
+    pub(crate) fn persist_compaction_state(
         &self,
         state: &reasonix_state::sessionstore::compaction_state::CompactionState,
     ) -> Result<(), reasonix_state::sessionstore::compaction_state::SaveSessionCompactionStateError>
