@@ -13,7 +13,9 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use reasonix_agent::approval::{ApprovalBroker, ApprovalConfig, BrokerAsker, InteractiveGate};
+use reasonix_agent::approval::{
+    ApprovalBroker, ApprovalConfig, BrokerAsker, InteractiveGate, PendingPrompts,
+};
 use reasonix_agent::config::AgentConfig;
 use reasonix_agent::seams::{SteerInbox, TranscriptSaver};
 use reasonix_agent::sink::Sink;
@@ -168,6 +170,44 @@ impl TurnController {
     /// headless run from one it can answer.
     pub fn interactive_approval(&self) -> bool {
         self.broker.is_some()
+    }
+
+    /// The prompts this run is blocked on, in a stable order (Go
+    /// `PendingPrompt` + `replayPendingPromptsTo`). A frontend that attached
+    /// after the original emission re-renders its card from this; the
+    /// emission itself was connection-local, so the log cannot rebuild it.
+    pub fn pending_prompts(&self) -> PendingPrompts {
+        self.broker
+            .as_ref()
+            .map(|b| b.pending_prompts())
+            .unwrap_or_default()
+    }
+
+    /// Whether a turn is stopped on a prompt only a person can answer (Go
+    /// `Controller.PendingPrompt`).
+    pub fn pending_prompt(&self) -> bool {
+        !self.pending_prompts().is_empty()
+    }
+
+    /// Re-emits every pending prompt to the composed sink (Go
+    /// `ReplayPendingPrompts`), so a stream that subscribes mid-prompt gets
+    /// the card it is missing.
+    pub fn replay_pending_prompts(&self) {
+        if let Some(broker) = &self.broker {
+            broker.replay_pending_prompts();
+        }
+    }
+
+    /// Subscribes a client and reads the pending prompts under one hold (Go
+    /// `ReplayPendingPromptsWith`): a card raised in between is either
+    /// delivered as the original event or present in the snapshot. A
+    /// controller with no approval surface answers an empty snapshot, which
+    /// is exactly what a headless run owes.
+    pub fn prompt_handoff<T>(&self, subscribe: impl FnOnce() -> T) -> (T, PendingPrompts) {
+        match &self.broker {
+            Some(broker) => broker.prompt_handoff(subscribe),
+            None => (subscribe(), PendingPrompts::default()),
+        }
     }
 
     /// The typed ask flow for a host that installs an `ask` tool (Go

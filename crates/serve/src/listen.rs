@@ -272,7 +272,7 @@ mod tests {
                 let _ = rx.await;
             },
             listener,
-            crate::eventstream::events_routes(Some(bc.clone())),
+            crate::eventstream::events_routes(Some(bc.clone()), None),
         ));
         tokio::time::sleep(Duration::from_millis(100)).await;
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();

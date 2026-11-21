@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use reasonix_agent::approval::ApprovalConfig;
 use reasonix_agent::config::AgentConfig;
 use reasonix_agent::sink::Sink;
 use reasonix_provider::config::{ClientConfig, build_client};
@@ -49,6 +50,12 @@ pub struct RuntimeSpec {
 pub struct RuntimeKit {
     pub broadcaster: Arc<dyn BroadcasterHandle>,
     pub sink: Arc<dyn Sink>,
+    /// The interactive approval surface the host's resolved configuration
+    /// named for this runtime, or `None` for the headless posture (Go: the
+    /// publish-time `EnableInteractiveApproval`, which the host completes
+    /// because only it holds the posture). A kit that never resolved one
+    /// leaves `None` — approval is never invented here.
+    pub approval: Option<ApprovalConfig>,
 }
 
 /// Mints one [`RuntimeKit`] per open. The factory is the host's
@@ -124,7 +131,7 @@ impl Hub {
             workspace_root: root.clone(),
             session_dir,
             label: model,
-            approval: None,
+            approval: kit.approval,
         });
         // Go resumes into the named transcript; resume is a later wave, so
         // the fresh-pin half (Go `SetSessionPath`) pins the file the next
@@ -201,15 +208,21 @@ fn first_non_empty<'a>(values: &[&'a str]) -> Option<&'a str> {
 
 /// The registry one runtime drives: the read tools plus the write family,
 /// the writers confined to the workspace (Go `ConfineReaders`/
-/// `ConfineWriters` at boot). Search lands with grep's slice; the
-/// session-store guard and managed-config hooks land with the machines
-/// that own their path sets.
+/// `ConfineWriters` at boot) and the turn-exit tools every turn carries. The
+/// `ask` tool is registered whether or not an asker is installed: the schema
+/// is cache-stable, and a headless run answers "unresolved" from the tool
+/// itself rather than advertising a different surface per posture. Search
+/// lands with grep's slice; the session-store guard and managed-config hooks
+/// land with the machines that own their path sets.
 fn open_registry(root: &str) -> Arc<Registry> {
     let registry = Registry::new();
     for tool in reasonix_tools::builtin::confine_readers(&[]) {
         registry.add(tool);
     }
     for tool in reasonix_tools::builtin::confine_writers(&[root.to_owned()], None, None) {
+        registry.add(tool);
+    }
+    for tool in reasonix_tools::builtin::turn_exit_tools() {
         registry.add(tool);
     }
     Arc::new(registry)

@@ -129,6 +129,7 @@ impl BroadcasterHandle for TestBroadcaster {
 struct PaneKit {
     sink: Arc<Recorder>,
     kits: Mutex<Vec<RuntimeKit>>,
+    approval: Option<reasonix_agent::approval::ApprovalConfig>,
 }
 
 impl PaneKit {
@@ -136,6 +137,17 @@ impl PaneKit {
         Arc::new(Self {
             sink: Recorder::shared(),
             kits: Mutex::new(Vec::new()),
+            approval: None,
+        })
+    }
+
+    /// A pane whose runtime is opened answerable (Go: the publish-time
+    /// `EnableInteractiveApproval`, driven by the resolved posture).
+    fn answerable(approval: reasonix_agent::approval::ApprovalConfig) -> Arc<Self> {
+        Arc::new(Self {
+            sink: Recorder::shared(),
+            kits: Mutex::new(Vec::new()),
+            approval: Some(approval),
         })
     }
 
@@ -154,6 +166,7 @@ impl RuntimeKitFactory for PaneKit {
         let kit = RuntimeKit {
             broadcaster: Arc::new(TestBroadcaster),
             sink: self.sink.clone(),
+            approval: self.approval,
         };
         self.kits.lock().expect("kit lock").push(kit.clone());
         kit
@@ -472,4 +485,138 @@ async fn the_opened_registry_drives_the_write_family_in_the_workspace() {
 
     let written = std::fs::read_to_string(workspace.join("note.txt")).expect("written file");
     assert_eq!(written, "from the hub runtime");
+}
+
+/// A runtime opened through the hub with a resolved posture is answerable:
+/// the model's writer is gated, the human's approval is what lets it run,
+/// and the approved file appears (Go: the publish-time
+/// `EnableInteractiveApproval`, driven by the resolved config). Two workers
+/// because the gate blocks its thread waiting for the decision, exactly as a
+/// person-facing prompt does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_open_with_approval_runs_the_write_only_after_the_answer() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let workspace = tmp.path().join("proj");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let pane = PaneKit::answerable(reasonix_agent::approval::ApprovalConfig {
+        mode: reasonix_agent::approval::mode::ASK,
+        timeout: std::time::Duration::from_secs(5),
+    });
+    let target = workspace.join("gated.txt");
+    let write_args = format!(
+        r#"{{"path":"{}","content":"after the answer"}}"#,
+        target.to_string_lossy().replace('\\', "/")
+    );
+    let base = serve_responses(vec![
+        chunked_sse(&[
+            &tool_call_frame(0, "call_1", "write_file", &write_args),
+            &usage_frame(20, 15, "tool_calls"),
+            "[DONE]",
+        ]),
+        chunked_sse(&[
+            &text_frame("written."),
+            &usage_frame(40, 6, "stop"),
+            "[DONE]",
+        ]),
+    ])
+    .await;
+    let hub = hub_opening(tmp.path(), spec(&base, &workspace), pane.clone());
+
+    // The headless default is what an unconfigured spec still gets.
+    assert!(
+        spec(&base, &workspace).workspace_root == workspace.to_string_lossy()
+            && pane.approval.is_some()
+    );
+
+    hub.open_runtime(OpenRuntimeRequest {
+        root: workspace.to_string_lossy().into_owned(),
+        ..OpenRuntimeRequest::default()
+    })
+    .expect("runtime opened");
+    let ctrl = hub.turn_controller(RuntimeId("r1".into())).unwrap();
+    assert!(
+        ctrl.interactive_approval(),
+        "the posture reached the runtime"
+    );
+
+    let submit_ctrl = ctrl.clone();
+    let submission = tokio::spawn(async move { submit_ctrl.submit("write it").await });
+    let id = loop {
+        let reqs = pane.sink.events_of("approval_request");
+        if let Some(a) = reqs.first().and_then(|e| e.approval.as_ref()) {
+            break a.id.clone();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    };
+    assert!(!target.exists(), "nothing ran before the human answered");
+    assert!(ctrl.approve(
+        &id,
+        reasonix_agent::approval::DecisionInput {
+            allow: true,
+            session: false,
+            persist: false,
+        }
+    ));
+    let receipt = submission.await.expect("turn task").expect("admitted");
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("approved write"),
+        "after the answer"
+    );
+}
+
+/// The other half of the same rule: a hub whose kit carries no posture opens
+/// a headless runtime, and a writer runs with no prompt at all.
+#[tokio::test]
+async fn an_open_without_a_configured_posture_stays_headless() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let workspace = tmp.path().join("proj");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let pane = PaneKit::shared();
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("nothing to write."),
+        &usage_frame(20, 5, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let hub = hub_opening(tmp.path(), spec(&base, &workspace), pane.clone());
+    hub.open_runtime(OpenRuntimeRequest {
+        root: workspace.to_string_lossy().into_owned(),
+        ..OpenRuntimeRequest::default()
+    })
+    .expect("runtime opened");
+    let ctrl = hub.turn_controller(RuntimeId("r1".into())).unwrap();
+    assert!(
+        !ctrl.interactive_approval(),
+        "an unconfigured open invents no approval"
+    );
+    assert!(pane.sink.events_of("approval_request").is_empty());
+    assert!(ctrl.pending_prompts().is_empty());
+}
+
+/// The `ask` tool is part of every opened runtime's registry, whether or not
+/// an asker is installed (the schema is cache-stable; a headless run answers
+/// "unresolved" from the tool itself).
+#[tokio::test]
+async fn an_opened_runtime_advertises_the_ask_tool() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let workspace = tmp.path().join("proj");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let pane = PaneKit::shared();
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("ok"),
+        &usage_frame(5, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let hub = hub_opening(tmp.path(), spec(&base, &workspace), pane);
+    hub.open_runtime(OpenRuntimeRequest {
+        root: workspace.to_string_lossy().into_owned(),
+        ..OpenRuntimeRequest::default()
+    })
+    .expect("runtime opened");
+    let ctrl = hub.turn_controller(RuntimeId("r1".into())).unwrap();
+    let names: Vec<String> = ctrl.agent().registry().names();
+    assert!(names.contains(&"ask".to_owned()), "registry: {names:?}");
+    assert!(names.contains(&"write_file".to_owned()));
 }

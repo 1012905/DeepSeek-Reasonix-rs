@@ -124,6 +124,41 @@ impl Default for ApprovalConfig {
     }
 }
 
+/// The two halves of one snapshot, in emission order: approvals first, then
+/// questions (Go `emitPendingPrompts`). `prompt_serial` admits at most one
+/// prompt at a time, so a live run carries one entry; the shape stays a list
+/// because that invariant is the serialization's, not the snapshot's.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PendingPrompts {
+    pub approvals: Vec<WireApproval>,
+    pub asks: Vec<Ask>,
+}
+
+impl PendingPrompts {
+    pub fn is_empty(&self) -> bool {
+        self.approvals.is_empty() && self.asks.is_empty()
+    }
+
+    /// The prompts as the event frames a client re-renders from.
+    pub fn events(&self) -> Vec<Event> {
+        self.approvals
+            .iter()
+            .cloned()
+            .map(|approval| Event {
+                kind: kind::APPROVAL_REQUEST.to_owned(),
+                approval: Some(approval),
+                ..Event::default()
+            })
+            .chain(self.asks.iter().cloned().map(|ask| Event {
+                kind: kind::ASK_REQUEST.to_owned(),
+                ask: Some(ask),
+                ..Event::default()
+            }))
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Approved {
     allow: bool,
@@ -140,6 +175,45 @@ struct Pending {
     tool: String,
     subject: String,
     reply: Option<Reply>,
+    /// The frame the frontend was shown, kept so a client that attaches
+    /// after the emission can still render the card it is blocked on.
+    shown: ShownPrompt,
+}
+
+/// What one pending prompt looks like on the wire (Go: the `event.Approval` /
+/// `event.Ask` a reconnect is re-emitted). The approval payload is the larger
+/// of the two and rides boxed; a map of live prompts should not carry the
+/// approval's size in every entry.
+#[derive(Debug, Clone)]
+enum ShownPrompt {
+    Approval(Box<WireApproval>),
+    Ask(Box<Ask>),
+}
+
+impl ShownPrompt {
+    fn id(&self) -> &str {
+        match self {
+            ShownPrompt::Approval(a) => &a.id,
+            ShownPrompt::Ask(a) => &a.id,
+        }
+    }
+
+    /// The event frame this prompt is delivered as. One frame per prompt, so
+    /// a replayed card and the original emission cannot disagree.
+    fn event(&self) -> Event {
+        match self {
+            ShownPrompt::Approval(approval) => Event {
+                kind: kind::APPROVAL_REQUEST.to_owned(),
+                approval: Some((**approval).clone()),
+                ..Event::default()
+            },
+            ShownPrompt::Ask(ask) => Event {
+                kind: kind::ASK_REQUEST.to_owned(),
+                ask: Some((**ask).clone()),
+                ..Event::default()
+            },
+        }
+    }
 }
 
 /// The bookkeeping half of approval (Go: `approvalManager`): it touches only
@@ -219,6 +293,11 @@ pub struct ApprovalBroker {
     manager: Arc<Mutex<Manager>>,
     /// Held across a blocking wait; answer paths never take it.
     prompt_serial: Arc<Mutex<()>>,
+    /// Serializes prompt emission against snapshot reads (Go
+    /// `promptEmitMu`): a snapshot that ran between registering a prompt and
+    /// emitting it would list a card the client never received, and one that
+    /// ran just after would list nothing while the event was still in flight.
+    prompt_emit: Arc<Mutex<()>>,
     config: ApprovalConfig,
     session: Arc<Session>,
     sink: Arc<dyn Sink>,
@@ -229,6 +308,7 @@ impl ApprovalBroker {
         Arc::new(Self {
             manager: Arc::new(Mutex::new(Manager::new())),
             prompt_serial: Arc::new(Mutex::new(())),
+            prompt_emit: Arc::new(Mutex::new(())),
             config,
             session,
             sink,
@@ -309,8 +389,7 @@ impl ApprovalBroker {
         let approved = if self.config.timeout.is_zero() {
             rx.recv().ok()
         } else {
-            let r = rx.recv_timeout(self.config.timeout);
-            r.ok()
+            rx.recv_timeout(self.config.timeout).ok()
         };
         match approved {
             Some(a) => Ok(a),
@@ -345,6 +424,70 @@ impl ApprovalBroker {
         (answers.unwrap_or_default(), timed_out)
     }
 
+    /// Shows one prompt to the frontend, holding off snapshot reads until the
+    /// pending record exists. Registration precedes the emission, so a client
+    /// that attached between the two is served the prompt by the snapshot
+    /// rather than waiting on an event that already went out.
+    fn emit_prompt(&self, shown: &ShownPrompt) {
+        let _emitting = self.prompt_emit.lock().unwrap_or_else(|e| e.into_inner());
+        self.sink.emit(shown.event());
+    }
+
+    /// The prompts this run is blocked on, in a stable order (Go
+    /// `replayPendingPromptsTo`). Taken under the emission lock, so a prompt
+    /// raised during the read is either in the snapshot or numbered after
+    /// it — never half-registered in neither.
+    pub fn pending_prompts(&self) -> PendingPrompts {
+        let _emitting = self.prompt_emit.lock().unwrap_or_else(|e| e.into_inner());
+        self.snapshot_prompts()
+    }
+
+    /// Subscribes a client and reads the pending prompts as one handoff (Go
+    /// `ReplayPendingPromptsWith`): no prompt can be emitted between the
+    /// subscription and the snapshot, so a client that attached while a card
+    /// was open either receives the original event or finds it in the
+    /// snapshot — never neither.
+    pub fn prompt_handoff<T>(&self, subscribe: impl FnOnce() -> T) -> (T, PendingPrompts) {
+        let _emitting = self.prompt_emit.lock().unwrap_or_else(|e| e.into_inner());
+        let subscribed = subscribe();
+        (subscribed, self.snapshot_prompts())
+    }
+
+    fn snapshot_prompts(&self) -> PendingPrompts {
+        let manager = self.manager.lock().expect("approval manager lock");
+        let mut shown: Vec<&ShownPrompt> = manager.pending.values().map(|p| &p.shown).collect();
+        // Stable ordering, so a snapshot round-trip compares equal regardless
+        // of map iteration order.
+        shown.sort_by(|a, b| a.id().cmp(b.id()));
+        let mut out = PendingPrompts::default();
+        for s in shown {
+            match s {
+                ShownPrompt::Approval(a) => out.approvals.push((**a).clone()),
+                ShownPrompt::Ask(a) => out.asks.push((**a).clone()),
+            }
+        }
+        out
+    }
+
+    /// Re-emits every prompt this run is blocked on, so a frontend that
+    /// reconnected after the original emission can rebuild its card (Go
+    /// `ReplayPendingPrompts`).
+    pub fn replay_pending_prompts(&self) {
+        for event in self.pending_prompts().events() {
+            self.sink.emit(event);
+        }
+    }
+
+    /// The frame one pending prompt was shown as.
+    fn shown(&self, id: &str) -> Option<ShownPrompt> {
+        self.manager
+            .lock()
+            .expect("approval manager lock")
+            .pending
+            .get(id)
+            .map(|p| p.shown.clone())
+    }
+
     /// The typed ask flow. A host building an `ask` tool calls this rather
     /// than the plain [`crate::Asker`] seam so a skip stays distinguishable.
     pub fn ask_questions(&self, questions: &[AskQuestion]) -> AskResult {
@@ -353,6 +496,11 @@ impl ApprovalBroker {
         let (id, rx) = {
             let mut m = self.manager.lock().expect("approval manager lock");
             let id = m.issue();
+            let ask = Ask {
+                id: id.clone(),
+                questions: questions.to_vec(),
+                ..Ask::default()
+            };
             let (tx, rx) = mpsc::channel();
             m.pending.insert(
                 id.clone(),
@@ -360,19 +508,16 @@ impl ApprovalBroker {
                     tool: String::new(),
                     subject: subject.clone(),
                     reply: Some(Reply::Ask(tx)),
+                    shown: ShownPrompt::Ask(Box::new(ask)),
                 },
             );
             (id, rx)
         };
-        self.sink.emit(Event {
-            kind: kind::ASK_REQUEST.to_owned(),
-            ask: Some(Ask {
-                id: id.clone(),
-                questions: questions.to_vec(),
-                ..Ask::default()
-            }),
-            ..Event::default()
-        });
+        // The shown payload is the one the pending record keeps, so a replayed
+        // prompt and the original emission are the same bytes.
+        if let Some(shown) = self.shown(&id) {
+            self.emit_prompt(&shown);
+        }
         let (answers, timed_out) = self.wait_ask(&id, rx);
         let outcome = if timed_out {
             outcome::TIMED_OUT
@@ -414,19 +559,7 @@ impl ApprovalBroker {
                 return Ok(allowed);
             }
             let id = m.issue();
-            m.pending.insert(
-                id.clone(),
-                Pending {
-                    tool: tool.to_owned(),
-                    subject: subject.to_owned(),
-                    reply: Some(Reply::Approval(view_tx)),
-                },
-            );
-            id
-        };
-        self.sink.emit(Event {
-            kind: kind::APPROVAL_REQUEST.to_owned(),
-            approval: Some(WireApproval {
+            let shown = WireApproval {
                 id: id.clone(),
                 tool: tool.to_owned(),
                 subject: subject.to_owned(),
@@ -434,9 +567,21 @@ impl ApprovalBroker {
                 reason_code: explicit_reason_code(tool, subject),
                 allows_session: !requires_fresh_human(tool),
                 ..WireApproval::default()
-            }),
-            ..Event::default()
-        });
+            };
+            m.pending.insert(
+                id.clone(),
+                Pending {
+                    tool: tool.to_owned(),
+                    subject: subject.to_owned(),
+                    reply: Some(Reply::Approval(view_tx)),
+                    shown: ShownPrompt::Approval(Box::new(shown)),
+                },
+            );
+            id
+        };
+        if let Some(shown) = self.shown(&id) {
+            self.emit_prompt(&shown);
+        }
         let approved = self.wait_approval(&id, rx);
         drop(serial);
         // A timeout is the host's own denial; the record names it so a
@@ -569,24 +714,28 @@ impl crate::seams::Gate for InteractiveGate {
     }
 }
 
-/// The agent's [`crate::Asker`] seam backed by the same broker.
+/// The agent's [`crate::Asker`] seam backed by the same broker. The timeout
+/// is an identity on the outcome, so the tool renders a skip rather than an
+/// empty answer a model could read as a dismissal.
 pub struct BrokerAsker(pub Arc<ApprovalBroker>);
 
 impl crate::seams::Asker for BrokerAsker {
-    fn ask(&self, questions: &[AskQuestion]) -> Vec<crate::seams::AskAnswer> {
-        self.0
-            .ask_questions(questions)
-            .answers
-            .into_iter()
-            .map(|a| crate::seams::AskAnswer {
-                question_id: a.id,
-                selected: a.selected,
-                value: None,
-            })
-            .collect()
+    fn ask(&self, questions: &[AskQuestion]) -> crate::seams::AskOutcome {
+        let result = self.0.ask_questions(questions);
+        crate::seams::AskOutcome {
+            answers: result
+                .answers
+                .into_iter()
+                .map(|a| crate::seams::AskAnswer {
+                    question_id: a.id,
+                    selected: a.selected,
+                    value: None,
+                })
+                .collect(),
+            timed_out: result.timed_out.then_some(self.0.config.timeout),
+        }
     }
 }
-
 /// The call's subject, read from args by the owner of rule matching.
 pub fn call_subject(args: &serde_json::Value) -> String {
     let Ok(raw) = serde_json::to_string(args) else {

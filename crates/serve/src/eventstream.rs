@@ -126,7 +126,15 @@ pub fn subscription_mode(after: i64, first: bool, attached: bool) -> Subscriptio
 /// runtime's prefix by the hub router's dispatch and served unprefixed by
 /// routeDefault. With no fan-out published — a host-adopted runtime — the
 /// paths answer the same 503 they gave before the mux mounted.
-pub fn events_routes(bc: Option<Arc<dyn BroadcasterHandle>>) -> Router {
+///
+/// The controller rides along for the attach half: the prompt a run is
+/// stopped on is connection-local state the numbered log never carries, so a
+/// client that attaches has to read it from the run itself (Go
+/// `pendingPromptSnapshot`).
+pub fn events_routes(
+    bc: Option<Arc<dyn BroadcasterHandle>>,
+    ctrl: Option<Arc<reasonix_session::turns::TurnController>>,
+) -> Router {
     match bc {
         Some(bc) => Router::new()
             .route("/events", get(events_handler).fallback(wrong_method))
@@ -134,11 +142,18 @@ pub fn events_routes(bc: Option<Arc<dyn BroadcasterHandle>>) -> Router {
                 "/events/replay",
                 get(events_replay_handler).fallback(wrong_method),
             )
-            .with_state(bc),
+            .with_state(StreamState { bc, ctrl }),
         None => Router::new()
             .route("/events", get(no_stream).fallback(wrong_method))
             .route("/events/replay", get(no_stream).fallback(wrong_method)),
     }
+}
+
+/// The fan-out handle plus the run that answers for its pending prompts.
+#[derive(Clone)]
+struct StreamState {
+    bc: Arc<dyn BroadcasterHandle>,
+    ctrl: Option<Arc<reasonix_session::turns::TurnController>>,
 }
 
 async fn no_stream() -> Response {
@@ -153,25 +168,48 @@ async fn wrong_method() -> impl IntoResponse {
 }
 
 /// Go `events`: streams the controller's event flow as SSE until the client
-/// disconnects. Subscribe and replay are one handoff under the broadcaster
-/// lock (the prompt machine joins when the controller migrates).
+/// disconnects. Subscribe and the pending-prompt read are one handoff under
+/// the prompt-emission lock (Go `ReplayPendingPromptsWith`), so a card raised
+/// between the two reaches this client either as its own event or in the
+/// snapshot the attach answers with.
 async fn events_handler(
-    State(bc): State<Arc<dyn BroadcasterHandle>>,
+    State(state): State<StreamState>,
     request: axum::extract::Request<Body>,
 ) -> Response {
     let after = last_event_id(request.headers(), request.uri());
     let first = attaching(request.headers(), request.uri());
-    let subscription = bc.subscribe(subscription_mode(after, first, false));
-    stream_response(subscription, bc)
+    let mode = subscription_mode(after, first, false);
+    let bc = state.bc.clone();
+    // The handoff's snapshot is the one this stream opens with: reading it
+    // again later would deliver a card twice — once live, once replayed.
+    let (subscription, pending) = match &state.ctrl {
+        Some(ctrl) => ctrl.prompt_handoff(|| bc.subscribe(mode)),
+        None => (bc.subscribe(mode), Default::default()),
+    };
+    stream_response(subscription, bc, pending)
 }
 
-fn stream_response(subscription: Subscription, bc: Arc<dyn BroadcasterHandle>) -> Response {
+fn stream_response(
+    subscription: Subscription,
+    bc: Arc<dyn BroadcasterHandle>,
+    pending: reasonix_agent::approval::PendingPrompts,
+) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(16);
     let watermark_source = bc.clone();
     tokio::spawn(async move {
         let mut subscription = subscription;
         if tx.send(Ok(Bytes::from_static(CONNECTED))).await.is_err() {
             return;
+        }
+        // A card that was pending when this client attached goes out right
+        // after the connect comment: the emission it missed was
+        // connection-local, so the stream owes the state, not the history.
+        for event in pending.events() {
+            if let Ok(data) = serde_json::to_vec(&event)
+                && tx.send(Ok(frame_bytes(0, &data))).await.is_err()
+            {
+                return;
+            }
         }
         let mut deadline = tokio::time::Instant::now() + SSE_KEEPALIVE_INTERVAL;
         loop {
@@ -211,21 +249,28 @@ fn stream_response(subscription: Subscription, bc: Arc<dyn BroadcasterHandle>) -
 /// Go `eventsReplay`: what a client missed. `complete` false means the log no
 /// longer reaches that far back, so each read model has to be re-read from
 /// the authority that answers it — a hole looks like a quiet turn, and is
-/// said plainly. An attach carries no numbered frames: the pending-prompt
-/// machine is not in this build, so the answer is the empty connection-local
-/// snapshot and the current watermark.
+/// said plainly. An attach owes no numbered frames, but it does owe the
+/// connection-local state no numbered frame carries: the prompt the run is
+/// stopped on goes out as unnumbered frames ahead of the caller's watermark.
 async fn events_replay_handler(
-    State(bc): State<Arc<dyn BroadcasterHandle>>,
+    State(state): State<StreamState>,
     request: axum::extract::Request<Body>,
 ) -> Response {
     let first = attaching(request.headers(), request.uri());
-    let (raw_frames, complete) = if first {
-        (Vec::new(), true)
-    } else {
-        let after = last_event_id(request.headers(), request.uri());
-        bc.replay(after)
-    };
-    write_replay_frames(&raw_frames, complete, bc.watermark())
+    if first {
+        let mut frames: Vec<Bytes> = Vec::new();
+        if let Some(ctrl) = &state.ctrl {
+            for event in ctrl.pending_prompts().events() {
+                if let Ok(data) = serde_json::to_vec(&event) {
+                    frames.push(Bytes::from(data));
+                }
+            }
+        }
+        return write_replay_frames(&frames, true, state.bc.watermark());
+    }
+    let after = last_event_id(request.headers(), request.uri());
+    let (raw_frames, complete) = state.bc.replay(after);
+    write_replay_frames(&raw_frames, complete, state.bc.watermark())
 }
 
 /// Go `writeEventsReplayFrames`: `{"frames":[...],"complete":bool,"watermark":N}`
@@ -643,7 +688,7 @@ mod tests {
         let b = Arc::new(Broadcaster::new());
         b.emit(tool_result("t1"));
         b.emit(tool_result("t2"));
-        let router = events_routes(Some(b.clone()));
+        let router = events_routes(Some(b.clone()), None);
         let request = axum::extract::Request::builder()
             .uri("/events/replay?lastEventId=1")
             .body(Body::empty())
@@ -665,7 +710,7 @@ mod tests {
     #[tokio::test]
     async fn replay_endpoint_answers_empty_array_never_null_for_a_current_client() {
         let b = Arc::new(Broadcaster::new());
-        let router = events_routes(Some(b.clone()));
+        let router = events_routes(Some(b.clone()), None);
         let request = axum::extract::Request::builder()
             .uri("/events/replay")
             .body(Body::empty())
@@ -690,7 +735,7 @@ mod tests {
     #[tokio::test]
     async fn events_stream_opens_with_connected_then_numbers_frames() {
         let b = Arc::new(Broadcaster::new());
-        let router = events_routes(Some(b.clone()));
+        let router = events_routes(Some(b.clone()), None);
         let request = axum::extract::Request::builder()
             .uri("/events")
             .body(Body::empty())
@@ -728,5 +773,116 @@ mod tests {
             .expect("frame bytes");
         assert!(frame.starts_with(b"id: 1\ndata: "));
         assert!(frame.ends_with(b"\n\n"));
+    }
+
+    /// A controller with an interactive approval surface and nothing else: a
+    /// dead provider is never reached, because the asks under test come from
+    /// the test's own question rather than a turn.
+    fn asking_controller() -> Arc<reasonix_session::turns::TurnController> {
+        use reasonix_agent::approval::{ApprovalConfig, mode};
+        use reasonix_session::turns::{TurnController, TurnControllerParts};
+
+        let mut cfg = reasonix_provider::config::ClientConfig::new("t", "http://127.0.0.1:1", "m");
+        cfg.api_key = "k".to_owned();
+        TurnController::new(TurnControllerParts {
+            config: reasonix_agent::config::AgentConfig::default(),
+            client: reasonix_provider::config::build_client(&cfg).expect("client builds"),
+            registry: Arc::new(reasonix_tools::Registry::new()),
+            sink: Arc::new(reasonix_agent::sink::Discard),
+            workspace_root: ".".to_owned(),
+            session_dir: String::new(),
+            label: "t".to_owned(),
+            approval: Some(ApprovalConfig {
+                mode: mode::ASK,
+                timeout: Duration::from_secs(5),
+            }),
+        })
+    }
+
+    fn one_question() -> Vec<reasonix_contract::eventwire::ask::AskQuestion> {
+        use reasonix_contract::eventwire::ask::{AskOption, AskQuestion};
+        vec![AskQuestion {
+            id: "q1".to_owned(),
+            header: "Library".to_owned(),
+            prompt: "which".to_owned(),
+            options: vec![
+                AskOption {
+                    label: "A".to_owned(),
+                    description: String::new(),
+                },
+                AskOption {
+                    label: "B".to_owned(),
+                    description: String::new(),
+                },
+            ],
+            ..AskQuestion::default()
+        }]
+    }
+
+    /// The attach replay carries the card a reconnecting client must
+    /// re-render, as an unnumbered frame, and the answer lands against the id
+    /// it named (Go `pendingPromptSnapshot` + `ReplayPendingPromptsWith`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_attach_replays_the_open_question_and_its_answer_lands() {
+        let ctrl = asking_controller();
+        // The ask blocks its caller, so it waits on its own thread.
+        let ask_ctrl = ctrl.clone();
+        let asked = std::thread::spawn(move || ask_ctrl.ask(&one_question()));
+        let id = loop {
+            let pending = ctrl.pending_prompts();
+            if let Some(ask) = pending.asks.first() {
+                break ask.id.clone();
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+
+        let b = Arc::new(Broadcaster::new());
+        let router = events_routes(Some(b.clone()), Some(ctrl.clone()));
+        let request = axum::extract::Request::builder()
+            .uri("/events/replay")
+            .body(Body::empty())
+            .unwrap();
+        let response = oneshot(router, request).await;
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["complete"], true);
+        let frames = json["frames"].as_array().unwrap();
+        assert_eq!(frames.len(), 1, "the attach owes the open card: {json}");
+        assert_eq!(frames[0]["kind"], "ask_request");
+        assert_eq!(frames[0]["ask"]["id"], id);
+        assert_eq!(frames[0]["ask"]["questions"][0]["header"], "Library");
+
+        // The answer lands against the id the replay named.
+        assert!(ctrl.answer(
+            &id,
+            vec![reasonix_agent::approval::AskAnswer {
+                id: "q1".to_owned(),
+                selected: vec!["B".to_owned()],
+            }]
+        ));
+        let result = asked.join().expect("ask thread").expect("ask ran");
+        assert!(!result.timed_out);
+        drop(ctrl);
+    }
+
+    /// A headless runtime owes no card: the attach answers an empty frame
+    /// list rather than a prompt nobody can answer.
+    #[tokio::test]
+    async fn an_attach_without_an_approval_surface_answers_no_frames() {
+        let b = Arc::new(Broadcaster::new());
+        let router = events_routes(Some(b), None);
+        let request = axum::extract::Request::builder()
+            .uri("/events/replay")
+            .body(Body::empty())
+            .unwrap();
+        let response = oneshot(router, request).await;
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["frames"].as_array().unwrap().len(), 0);
+        assert_eq!(json["complete"], true);
     }
 }

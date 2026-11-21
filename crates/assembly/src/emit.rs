@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use reasonix_agent::approval::ApprovalConfig;
 use reasonix_agent::sink::Sink as AgentSink;
 use reasonix_serve::broadcaster::Broadcaster;
 use reasonix_serve::sink;
@@ -30,13 +31,33 @@ pub fn turn_emit_pipeline(broadcaster: Arc<Broadcaster>, mark_diffs: bool) -> Ar
 /// `bc := NewBroadcaster()` + `paneSink := h.decorateSink(bc)`. This is the
 /// collaborator the host installs on the hub's open machine; the runtime
 /// spec (endpoint/key/model/prompt) comes from the serve config edge.
+///
+/// `approval` is the posture the resolved configuration named, or `None`
+/// when it named none — the headless default. Booleans are not a posture:
+/// the value comes from [reasonix_config::Config]'s own accessor, so a
+/// setting this host does not recognise cannot silently open a prompt the
+/// user never asked for, or approve a call they never saw.
 pub struct PaneKit {
     mark_diffs: bool,
+    approval: Option<ApprovalConfig>,
 }
 
 impl PaneKit {
     pub fn new(mark_diffs: bool) -> Self {
-        Self { mark_diffs }
+        Self {
+            mark_diffs,
+            approval: None,
+        }
+    }
+
+    /// Mints kits carrying the resolved approval posture (Go: the host
+    /// completing `EnableInteractiveApproval` at publish time, because that
+    /// is where the posture is known).
+    pub fn with_approval(mark_diffs: bool, approval: Option<ApprovalConfig>) -> Self {
+        Self {
+            mark_diffs,
+            approval,
+        }
     }
 }
 
@@ -47,6 +68,7 @@ impl RuntimeKitFactory for PaneKit {
         RuntimeKit {
             broadcaster: handle,
             sink: turn_emit_pipeline(broadcaster, self.mark_diffs),
+            approval: self.approval,
         }
     }
 }
