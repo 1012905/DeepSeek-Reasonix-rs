@@ -207,13 +207,13 @@ pipe-leading line must be a six-cell ledger row.
 | ACP-044 | ACP | availableCommands + slash resolution order | reasonix-acp | todo | M1: docs/contracts/acp.md §10.5 |
 | ACP-045 | ACP | Mode/approval drift reconciliation ordering | reasonix-acp | todo | M1: docs/contracts/acp.md §10.6 |
 | ACP-046 | ACP | Divergences/open decisions review | reasonix-acp | todo | M1: docs/contracts/acp.md §13 |
-| MCP-001 | MCP | internal/ext/plugin (namespacing mcp__) | reasonix-ext | todo | M1: docs/contracts/mcp.md §0 |
-| MCP-002 | MCP | protocol versions/eras | reasonix-ext | todo | M1: docs/contracts/mcp.md §1 |
-| MCP-003 | MCP | modern era negotiation + era codes | reasonix-ext | todo | M1: docs/contracts/mcp.md §1 |
-| MCP-004 | MCP | Spec/Host lifecycle | reasonix-ext | todo | M1: docs/contracts/mcp.md §2 |
-| MCP-005 | MCP | StartPolicy/start phases | reasonix-ext | todo | M1: docs/contracts/mcp.md §2 |
-| MCP-006 | MCP | tool naming/normalization | reasonix-ext | todo | M1: docs/contracts/mcp.md §3 |
-| MCP-007 | MCP | rpcRequest/response wire | reasonix-ext | todo | M1: docs/contracts/mcp.md §3 |
+| MCP-001 | MCP | internal/ext/plugin (namespacing mcp__) | reasonix-ext | done | crates/ext/tests/mcp_naming.rs::tool_prefix_and_connect_permission_name_byte_exact, model_tool_name_byte_exact_oracle_table (2026-11-22) |
+| MCP-002 | MCP | protocol versions/eras | reasonix-ext | done | crates/ext/tests/mcp_version.rs::supported_versions_are_newest_first, negotiated_version_reads_an_older_server, negotiated_version_refuses_a_future_revision_by_identity (2026-11-22) |
+| MCP-003 | MCP | modern era negotiation + era codes | reasonix-ext | done | crates/ext/tests/mcp_version.rs::pick_era_prefers_shared_modern_then_legacy_then_refuses, probe_result_classification_covers_every_go_branch, connect_era_never_speaks_modern_over_sse, client_meta_byte_shape_is_frozen (2026-11-22) |
+| MCP-004 | MCP | Spec/Host lifecycle | reasonix-ext | done | crates/ext/tests/mcp_lifecycle.rs::host_connect_is_duplicate_safe_and_phases_advance, host_remove_returns_namespace_prefix_and_bumps_generation, host_close_is_idempotent_and_refuses_connects (2026-11-22) |
+| MCP-005 | MCP | StartPolicy/start phases | reasonix-ext | done | crates/ext/tests/mcp_lifecycle.rs::start_policy_wrappers_match_go_semantics, effective_concurrency_caps_and_preserves_stable_order, start_phases_are_ordered_and_have_stable_names, defaults_match_go_constants (2026-11-22) |
+| MCP-006 | MCP | tool naming/normalization | reasonix-ext | done | crates/ext/tests/mcp_naming.rs::normalize_name_byte_exact_oracle_table, fnv32a_short_hash_byte_exact, normalization_avoids_sanitized_collisions, model_tool_name_stays_within_the_provider_limit, mcp_roots_projection_byte_exact (2026-11-22) |
+| MCP-007 | MCP | rpcRequest/response wire | reasonix-ext | done | crates/ext/tests/mcp_wire.rs::rpc_request_byte_shape_with_id_and_params, rpc_response_emits_both_result_and_error_like_go, rpc_error_diagnostic_never_renders_message_text (2026-11-22) |
 | MCP-008 | MCP | stdio transport | reasonix-ext | todo | M1: docs/contracts/mcp.md §4 |
 | MCP-009 | MCP | stdio env/PATH handling | reasonix-ext | todo | M1: docs/contracts/mcp.md §4 |
 | MCP-010 | MCP | streamable HTTP transport | reasonix-ext | todo | M1: docs/contracts/mcp.md §5 |
