@@ -69,13 +69,30 @@ pub struct BatchExecution {
 }
 
 /// What a dispatcher needs to run one batch. The gate seam rules before
-/// every execution; `None` means no gating (Go: a nil gate).
+/// every execution; `None` means no gating (Go: a nil gate). The asker rides
+/// along because the `ask` tool reaches it through the call context, the way
+/// Go carried it in `context.Context`.
 pub struct BatchInputs<'a> {
     pub registry: &'a reasonix_tools::Registry,
     pub sink: &'a dyn Sink,
     pub gate: Option<&'a dyn crate::seams::Gate>,
+    pub asker: Option<Arc<dyn crate::seams::Asker>>,
     pub stops: &'a CallStops,
     pub cancel: Option<&'a crate::cancel::CancelToken>,
+}
+
+/// The per-call context: the asker when the host installed one, nothing
+/// otherwise (a headless run's tool that asks gets the Go-nil semantics). The
+/// binding is the `Arc<dyn Asker>` itself, which is what
+/// [`reasonix_tools::asker_from`] downcasts back to.
+fn call_context(asker: Option<&Arc<dyn crate::seams::Asker>>) -> CallContext {
+    match asker {
+        Some(asker) => {
+            let bound: Arc<dyn crate::seams::Asker> = asker.clone();
+            CallContext::new().with_value(Arc::new(bound))
+        }
+        None => CallContext::new(),
+    }
 }
 
 /// Records the schema-proven envelope unwrap on each call before anything
@@ -112,11 +129,22 @@ pub fn execute_batch(calls: &mut [ToolCall], inputs: &BatchInputs<'_>) -> BatchE
     for call in calls.iter() {
         emit_dispatch(inputs.sink, call, inputs.registry);
     }
+    // The round ends at the first call whose result is a user decision (Go
+    // `scheduleUpToDecision` + `markDeferredAfterDecision`). Calls written
+    // after it were authored without the answer, read-only ones included, so
+    // running any of them would act on a question still open.
+    let scheduled = schedule_up_to_decision(inputs.registry, calls);
     let outcomes: Mutex<Vec<Option<ToolOutcome>>> =
         Mutex::new((0..calls.len()).map(|_| None).collect());
+    if scheduled < calls.len() {
+        let mut slots = outcomes.lock().expect("batch lock");
+        for slot in slots.iter_mut().skip(scheduled) {
+            *slot = Some(deferred_after_decision());
+        }
+    }
     let barrier = Mutex::new(false);
 
-    for segment in partition_tool_calls(inputs.registry, calls) {
+    for segment in partition_tool_calls(inputs.registry, &calls[..scheduled]) {
         if inputs.cancel.is_some_and(|c| c.is_cancelled()) {
             break;
         }
@@ -125,7 +153,7 @@ pub fn execute_batch(calls: &mut [ToolCall], inputs: &BatchInputs<'_>) -> BatchE
                 let prepared: Vec<PreparedCall> = (start..end)
                     .filter_map(|i| prepare(calls, inputs, &outcomes, i))
                     .collect();
-                run_parallel(prepared, &outcomes);
+                run_parallel(prepared, &outcomes, inputs.asker.as_ref());
             }
             Segment::Serial { index } => {
                 if prepare(calls, inputs, &outcomes, index).is_none() {
@@ -293,13 +321,17 @@ fn prepare(
 
 /// Runs one parallel read-only segment (Go: `runParallel`), collecting by
 /// index so result order stays provider-ordered.
-fn run_parallel(prepared: Vec<PreparedCall>, outcomes: &Mutex<Vec<Option<ToolOutcome>>>) {
+fn run_parallel(
+    prepared: Vec<PreparedCall>,
+    outcomes: &Mutex<Vec<Option<ToolOutcome>>>,
+    asker: Option<&Arc<dyn crate::seams::Asker>>,
+) {
     let handles: Vec<thread::JoinHandle<(usize, ToolOutcome)>> = prepared
         .into_iter()
         .take(MAX_PARALLEL)
         .map(|p| {
+            let ctx = call_context(asker);
             thread::spawn(move || {
-                let ctx = CallContext::new();
                 let outcome = match p.tool.execute(&ctx, &p.args) {
                     Ok(output) => {
                         let (body, raw, diff, added, removed) =
@@ -339,6 +371,36 @@ fn barrier_skip() -> ToolOutcome {
     }
 }
 
+/// The exclusive end of the calls that may run: everything up to and
+/// including the first decision barrier (Go `scheduleUpToDecision`'s
+/// returned index plus one), or the whole batch when the reply carries none.
+fn schedule_up_to_decision(registry: &reasonix_tools::Registry, calls: &[ToolCall]) -> usize {
+    for (index, call) in calls.iter().enumerate() {
+        let Some(tool) = resolve(registry, call) else {
+            continue;
+        };
+        if reasonix_tools::is_decision_barrier(tool.as_ref()) {
+            return index + 1;
+        }
+    }
+    calls.len()
+}
+
+/// The refusal a call past a decision barrier carries (Go
+/// `markDeferredAfterDecision`): it is not carried over, because the answer it
+/// would have reasoned from did not exist when the model wrote it.
+fn deferred_after_decision() -> ToolOutcome {
+    const MSG: &str = "not run: this round stopped at a question for the user. It was written before \
+                       their answer existed, so it is not carried over — read the answer, then decide \
+                       what to do next.";
+    ToolOutcome {
+        output: MSG.to_owned(),
+        blocked: true,
+        err_msg: "not run: stopped at a user decision".to_owned(),
+        ..ToolOutcome::default()
+    }
+}
+
 /// Executes one call end to end (Go: `executeOne` — the spine's stages:
 /// resolve, refuse the unknown, gate, parse, run, bound). `already_gated`
 /// is true when [`prepare`] admitted this call, so the answer is not
@@ -374,7 +436,7 @@ fn execute_one(call: &ToolCall, inputs: &BatchInputs<'_>, already_gated: bool) -
             );
         }
     }
-    let ctx = CallContext::new();
+    let ctx = call_context(inputs.asker.as_ref());
     match tool.execute(&ctx, &args) {
         Ok(output) => {
             let (body, raw, diff, added, removed) = bound_tool_output(&tool, &ctx, &args, &output);

@@ -38,7 +38,8 @@ pub use error::{StopCause, TurnError};
 pub use execute::ToolOutcome;
 pub use run::{Agent, TurnOutput};
 pub use seams::{
-    Asker, Compactor, Gate, GateVerdict, RequestComposer, SteerInbox, TranscriptSaver,
+    AskAnswer, AskOutcome, Asker, Compactor, Gate, GateVerdict, RequestComposer, SteerInbox,
+    TranscriptSaver,
 };
 pub use sink::{Discard, Sink};
 pub use stream::StreamedTurn;

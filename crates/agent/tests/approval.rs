@@ -203,9 +203,10 @@ fn answered_ask_carries_selections_and_a_stable_id() {
         }]
     ));
     let answers = handle.join().expect("ask thread");
-    assert_eq!(answers.len(), 1);
-    assert_eq!(answers[0].question_id, "q1");
-    assert_eq!(answers[0].selected, vec!["B"]);
+    assert_eq!(answers.answers.len(), 1);
+    assert_eq!(answers.answers[0].question_id, "q1");
+    assert_eq!(answers.answers[0].selected, vec!["B"]);
+    assert!(answers.timed_out.is_none(), "a person answered");
     let receipts = rec.events_of("notice");
     assert!(
         receipts.iter().any(|e| {

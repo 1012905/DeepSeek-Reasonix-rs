@@ -177,6 +177,12 @@ impl Agent {
         &self.session
     }
 
+    /// The tools this agent's turns may call (Go: `a.svc.tools`' registry,
+    /// read by hosts that report the surface a session offers).
+    pub fn registry(&self) -> &Arc<Registry> {
+        &self.registry
+    }
+
     /// Ends one running call without ending the turn (Go:
     /// `CancelToolCall`); reports whether the call was still pending.
     pub fn cancel_tool_call(&self, id: &str) -> bool {
@@ -710,11 +716,15 @@ impl Agent {
             return ToolRound::Err(TurnError::ContextToolLoop { tools: unavailable });
         }
 
-        let gate = self.seams.lock().expect("seams lock").gate.clone();
+        let (gate, asker) = {
+            let seams = self.seams.lock().expect("seams lock");
+            (seams.gate.clone(), seams.asker.clone())
+        };
         let inputs = BatchInputs {
             registry: &self.registry,
             sink: self.sink.as_ref(),
             gate: gate.as_deref(),
+            asker,
             stops: &self.stops,
             cancel: Some(&self.cancel),
         };

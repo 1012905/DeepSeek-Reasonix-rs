@@ -87,20 +87,20 @@ pub struct GateVerdict {
 }
 
 /// One answer to a structured question (Go: `event.AskAnswer`; host-side
-/// only — it never crosses the wire).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AskAnswer {
-    pub question_id: String,
-    pub selected: Vec<String>,
-    pub value: Option<serde_json::Value>,
-}
+/// only — it never crosses the wire). The tool that asks and the host that
+/// answers share the type, so an answer cannot lose its identity in transit.
+pub use reasonix_tools::ask::AskAnswer;
+
+/// What one ask resolved to (Go: the asker's two outcomes plus its timeout
+/// identity). `timed_out` is the host's own cause, never an empty answer.
+pub use reasonix_tools::ask::AskOutcome;
 
 /// Puts structured questions to the user and blocks for the answers (Go:
 /// `Asker`). `None` is a headless run: a tool reaching for the user gets an
-/// empty answer set and never an invented one.
-pub trait Asker: Send + Sync {
-    fn ask(&self, questions: &[reasonix_contract::eventwire::ask::AskQuestion]) -> Vec<AskAnswer>;
-}
+/// empty answer set and never an invented one. The ask tool's call context
+/// binds this same trait, so one installation serves both the seam and the
+/// tool.
+pub use reasonix_tools::ask::Asker;
 
 /// The context-maintenance seam (Go: `compact*.go`). Consulted between
 /// rounds, after tool results land; `Ok(false)` means nothing ran. The
