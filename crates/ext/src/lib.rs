@@ -12,6 +12,8 @@
 
 #![forbid(unsafe_code)]
 
+extern crate alloc;
+
 pub mod content;
 pub mod enums;
 pub mod error;
@@ -19,6 +21,7 @@ pub mod framing;
 pub mod intercept;
 pub mod lifecycle;
 pub mod limits;
+pub mod mcp;
 pub mod provider;
 pub mod rawjson;
 pub mod ui;
