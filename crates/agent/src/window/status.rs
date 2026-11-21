@@ -5,11 +5,11 @@
 
 use reasonix_state::sessionstore::compaction_state::ContextMaintenanceReceipt;
 
+use super::estimate;
 use super::{
     Window, estimated_visible_request_tokens, is_compaction_summary, model_visible_from_projection,
     projection_valid,
 };
-use super::estimate;
 
 /// Read-only view of the current provider-bound context (Go:
 /// `ContextMaintenanceSnapshot`).
@@ -38,23 +38,13 @@ impl Window {
             // Go answers the zero snapshot without a conversation; an empty
             // transcript has nothing to measure either way.
         }
-        let (compaction_state, checkpoint_state) = self.with_core(|core| {
-            (
-                core.compaction_state.clone(),
-                core.checkpoint_state.clone(),
-            )
-        });
+        let (compaction_state, checkpoint_state) =
+            self.with_core(|core| (core.compaction_state.clone(), core.checkpoint_state.clone()));
         let mut visible = canonical.clone();
         let key = self.prompt_cache_key();
-        let valid = projection_valid(
-            &compaction_state,
-            &canonical,
-            &key,
-            None,
-        );
+        let valid = projection_valid(&compaction_state, &canonical, &key, None);
         if valid {
-            let projected =
-                model_visible_from_projection(&compaction_state.projection, &canonical);
+            let projected = model_visible_from_projection(&compaction_state.projection, &canonical);
             if !projected.is_empty() {
                 visible = projected;
             }

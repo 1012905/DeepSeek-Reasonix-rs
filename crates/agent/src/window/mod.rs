@@ -40,7 +40,7 @@ pub mod usage;
 pub use budget::{ContextBudget, add_budget_tokens, budget_usage_tokens};
 pub use estimate::{RequestCalibrationShape, msg_chars};
 pub use maintenance::{
-    CompactionNoopReason, CompactVerdict, ContextPreparePolicy, PrepareError, PreparedContext,
+    CompactVerdict, CompactionNoopReason, ContextPreparePolicy, PrepareError, PreparedContext,
 };
 pub use status::ContextMaintenanceSnapshot;
 pub use trigger::ContextWindowProbe;
@@ -316,11 +316,7 @@ impl Window {
             let core = self.state.guard.lock().expect("window lock");
             (
                 core.compaction_state.clone(),
-                self.state
-                    .covered_hash
-                    .lock()
-                    .expect("window lock")
-                    .clone(),
+                self.state.covered_hash.lock().expect("window lock").clone(),
             )
         };
         let memo_slot = &self.state.covered_hash;
@@ -331,7 +327,8 @@ impl Window {
             {
                 return memo.hash.clone();
             }
-            let hash = reasonix_state::sessionstore::compaction_state::covered_prefix_hash(&msgs, n);
+            let hash =
+                reasonix_state::sessionstore::compaction_state::covered_prefix_hash(&msgs, n);
             *memo_slot.lock().expect("window lock") = Some(CoveredHashMemo {
                 rewrite_version,
                 n,
@@ -373,7 +370,10 @@ impl Window {
     }
 
     pub(crate) fn store_provider_schemas(&self, tools: &[reasonix_provider::ToolSchema]) {
-        self.output.lock().expect("window lock").last_provider_schemas = tools.to_vec();
+        self.output
+            .lock()
+            .expect("window lock")
+            .last_provider_schemas = tools.to_vec();
     }
 
     pub(crate) fn config(&self) -> &WindowConfig {
@@ -430,7 +430,10 @@ impl Window {
     /// `compact_commit.go` install — the state half this machine owns). The
     /// compaction wave's executor calls this from the fold seam; its CAS and
     /// persistence halves are the wave's.
-    pub fn install_projection(&self, projection: reasonix_state::sessionstore::compaction_state::ContextProjection) {
+    pub fn install_projection(
+        &self,
+        projection: reasonix_state::sessionstore::compaction_state::ContextProjection,
+    ) {
         let key = self.prompt_cache_key();
         let (_, transcript_version) = self.session.snapshot_messages_version();
         self.with_core(|core| {
@@ -502,13 +505,15 @@ impl Window {
             temperature: self.config.temperature,
             max_tokens: self.config.max_output_tokens,
         };
-        let req = self
-            .composer_or_default()
-            .compose(&self.config.system_prompt, &visible, &self.registry, &base)?;
+        let req = self.composer_or_default().compose(
+            &self.config.system_prompt,
+            &visible,
+            &self.registry,
+            &base,
+        )?;
         self.store_provider_schemas(&req.tools);
         Ok(req)
     }
-
 }
 
 /// Whether a saved projection can answer for the current transcript and
@@ -567,7 +572,8 @@ pub fn projection_covers_tail(st: &CompactionState, total: usize, prefix_hash: &
     if st.projection.messages.is_empty() || n <= 0 || n > total as i64 {
         return false;
     }
-    !st.projection.covered_prefix_hash.is_empty() && prefix_hash == st.projection.covered_prefix_hash
+    !st.projection.covered_prefix_hash.is_empty()
+        && prefix_hash == st.projection.covered_prefix_hash
 }
 
 /// Splices the projection with any messages appended after it was built
@@ -674,13 +680,15 @@ pub(crate) mod testing {
         )
     }
 
-    pub(crate) fn window_over(
-        config: WindowConfig,
-        msgs: Vec<Message>,
-    ) -> Window {
+    pub(crate) fn window_over(config: WindowConfig, msgs: Vec<Message>) -> Window {
         let session = Arc::new(reasonix_state::sessionstore::Session::new(""));
         session.replace(msgs);
-        Window::new(config, session, Arc::new(Registry::new()), Arc::new(Discard))
+        Window::new(
+            config,
+            session,
+            Arc::new(Registry::new()),
+            Arc::new(Discard),
+        )
     }
 
     pub(crate) fn system(content: &str) -> Message {

@@ -10,9 +10,12 @@ use reasonix_agent::error::TurnError;
 use reasonix_agent::seams::fold_executor::{FoldError, FoldExecutor, FoldRequest, FoldResult};
 use reasonix_agent::window::{SharedWindowPolicy, WindowConfig};
 use reasonix_contract::provider::Message;
-use reasonix_state::sessionstore::compaction_state::ContextProjection;
 use reasonix_state::sessionstore::Session;
-use support::{chunked_sse, fixture, registry_with_readers, serve_capturing, serve_responses, text_frame, usage_frame, Fixture};
+use reasonix_state::sessionstore::compaction_state::ContextProjection;
+use support::{
+    Fixture, chunked_sse, fixture, registry_with_readers, serve_capturing, serve_responses,
+    text_frame, usage_frame,
+};
 
 fn overflow_rejection_body() -> &'static str {
     r#"{"error":{"message":"this model's maximum context length is 32768 tokens","type":"invalid_request_error","code":"context_length_exceeded"}}"#
@@ -195,11 +198,7 @@ async fn an_overflow_rejection_folds_and_replays() {
 async fn with_nothing_to_fold_the_rejection_ends_the_turn() {
     let base = serve_responses(vec![http_rejection()]).await;
     let registry = registry_with_readers();
-    let Fixture {
-        agent,
-        session,
-        ..
-    } = fixture(&base, registry.clone()).await;
+    let Fixture { agent, session, .. } = fixture(&base, registry.clone()).await;
     preload(&session);
 
     let window = Arc::new(reasonix_agent::Window::new(
@@ -227,11 +226,7 @@ async fn with_nothing_to_fold_the_rejection_ends_the_turn() {
 async fn the_overflow_recovery_is_one_shot_per_round() {
     let base = serve_responses(vec![http_rejection(), http_rejection()]).await;
     let registry = registry_with_readers();
-    let Fixture {
-        agent,
-        session,
-        ..
-    } = fixture(&base, registry.clone()).await;
+    let Fixture { agent, session, .. } = fixture(&base, registry.clone()).await;
     preload(&session);
 
     let window = Arc::new(reasonix_agent::Window::new(

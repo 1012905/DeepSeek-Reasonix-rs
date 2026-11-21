@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use reasonix_contract::provider::Message;
 
-use super::estimate::{self, output_budget_reserve_for};
 use super::Window;
+use super::estimate::{self, output_budget_reserve_for};
 
 /// Capacity share of the window before maintenance (Go:
 /// `defaultCompactRatio`).

@@ -20,8 +20,8 @@ use crate::error::TurnError;
 use crate::seams::fold_executor::{FoldError, FoldRequest, FoldScope};
 
 use super::trigger_label;
-use super::{Window, estimated_visible_request_tokens, visible_request_shape};
 use super::usage;
+use super::{Window, estimated_visible_request_tokens, visible_request_shape};
 
 /// Identifies why an attempt folded nothing (Go: `CompactionNoopReason`).
 /// The code is the identity a frontend matches; the sentence is a
@@ -66,7 +66,10 @@ pub mod noop {
     pub fn transient_summary_failure(code: &str) -> bool {
         matches!(
             code,
-            SUMMARY_TRUNCATED | SUMMARY_TIMEOUT | SUMMARY_CEILING | SUMMARY_FAILED
+            SUMMARY_TRUNCATED
+                | SUMMARY_TIMEOUT
+                | SUMMARY_CEILING
+                | SUMMARY_FAILED
                 | SUMMARY_NOT_DIGEST
         )
     }
@@ -142,9 +145,7 @@ impl PrepareError {
     /// triggers degrade or become compaction-required inside the machine.
     pub fn into_turn_error(self) -> TurnError {
         match self {
-            PrepareError::CompactionRequired { reason } => {
-                TurnError::CompactionRequired { reason }
-            }
+            PrepareError::CompactionRequired { reason } => TurnError::CompactionRequired { reason },
             PrepareError::Cancelled => TurnError::Cancelled,
             // The spine only runs pressure and overflow triggers, whose
             // fold failures the machine itself resolves; a raw fold error
@@ -240,12 +241,8 @@ impl Window {
             prepared.input_tokens = est;
             pressure = est;
         } else {
-            pressure = usage::prompt_pressure(
-                self,
-                &visible_shape,
-                prepared.projection_version,
-                pressure,
-            );
+            pressure =
+                usage::prompt_pressure(self, &visible_shape, prepared.projection_version, pressure);
         }
         let input_hash = self.context_maintenance_input_hash(&visible);
         let manual = policy.trigger == trigger_label::MANUAL;
@@ -273,17 +270,16 @@ impl Window {
         // Only the last two, and an explicit force, waive what the fold has
         // to be worth; asking by hand waives only how much was added.
         let scope = FoldScope {
-            ignore_threshold: policy.ignore_threshold
-                || manual
-                || overflow
-                || est >= hard,
+            ignore_threshold: policy.ignore_threshold || manual || overflow || est >= hard,
             ignore_economics: policy.ignore_economics || overflow || est >= hard,
             ignore_amount: manual,
         };
         if pressure < fold && !scope.ignore_threshold {
             return Ok(prepared);
         }
-        self.fold_context(prepared, &policy, input_hash, est, own_est, fold, hard, scope)
+        self.fold_context(
+            prepared, &policy, input_hash, est, own_est, fold, hard, scope,
+        )
     }
 
     /// The fold transaction and its verdict matrix (Go: `foldContext`).
@@ -381,11 +377,7 @@ impl Window {
             {
                 // Saying so is the only record that the attempt happened;
                 // this path deliberately does not block the next one.
-                self.note_maintenance_noop(
-                    &policy.trigger,
-                    outcome.noop_reason.unwrap_or(""),
-                    est,
-                );
+                self.note_maintenance_noop(&policy.trigger, outcome.noop_reason.unwrap_or(""), est);
                 return Ok(prepared);
             }
             let reason = if manual {
@@ -479,9 +471,9 @@ impl Window {
     /// `contextMaintenanceInputHash`).
     pub fn context_maintenance_input_hash(&self, visible: &[Message]) -> String {
         let fingerprint =
-            reasonix_state::sessionstore::compaction_state::provider_visible_fingerprint(&model_visible_wire(
-                visible,
-            ));
+            reasonix_state::sessionstore::compaction_state::provider_visible_fingerprint(
+                &model_visible_wire(visible),
+            );
         let seed = format!("{}\n{}", self.prompt_cache_key(), fingerprint);
         let mut hasher = Sha256::new();
         hasher.update(seed.as_bytes());
@@ -492,11 +484,7 @@ impl Window {
     /// maintenance at this input size (Go: `blockedReceiptHolds`). A failure
     /// that growth releases, recorded without a size (older sidecars), is
     /// released once.
-    pub fn blocked_receipt_holds(
-        &self,
-        receipt: &ContextMaintenanceReceipt,
-        tokens: i64,
-    ) -> bool {
+    pub fn blocked_receipt_holds(&self, receipt: &ContextMaintenanceReceipt, tokens: i64) -> bool {
         if receipt.status != "blocked" && receipt.status != "failed" {
             return false;
         }
@@ -578,7 +566,9 @@ impl Window {
         code: CompactionNoopReason,
         reason: &str,
     ) {
-        self.record_context_maintenance_outcome(input_hash, trigger, action, "blocked", code, reason)
+        self.record_context_maintenance_outcome(
+            input_hash, trigger, action, "blocked", code, reason,
+        )
     }
 
     /// Records blocked or failed for the current generation (Go:
@@ -606,7 +596,11 @@ impl Window {
             trigger
         };
         let action = if action.is_empty() { "summary" } else { action };
-        let status = if status != "failed" { "blocked" } else { status };
+        let status = if status != "failed" {
+            "blocked"
+        } else {
+            status
+        };
         let visible = self.model_visible_messages();
         let input_tokens = estimated_visible_request_tokens(self, &visible);
         let (_, transcript_version) = self.session().snapshot_messages_version();
@@ -672,7 +666,11 @@ impl Window {
     /// `persistCompactionStateLocked`): a controller whose transcript save
     /// would be refused must not install a fold either. No path bound means
     /// nothing to publish — the receipts stay the in-memory generation's.
-    fn persist_compaction_state(&self, state: &reasonix_state::sessionstore::compaction_state::CompactionState) -> Result<(), reasonix_state::sessionstore::compaction_state::SaveSessionCompactionStateError> {
+    fn persist_compaction_state(
+        &self,
+        state: &reasonix_state::sessionstore::compaction_state::CompactionState,
+    ) -> Result<(), reasonix_state::sessionstore::compaction_state::SaveSessionCompactionStateError>
+    {
         let path = self.session_path();
         if path.is_empty() {
             return Ok(());
@@ -841,7 +839,6 @@ fn hex(bytes: &[u8]) -> String {
 fn now_created_at() -> reasonix_state::sessionstore::eventlog::CreatedAt {
     reasonix_state::sessionstore::eventlog::CreatedAt::default()
 }
-
 
 #[cfg(test)]
 #[path = "maintenance_tests.rs"]

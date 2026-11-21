@@ -47,7 +47,11 @@ pub fn store_active_shape(window: &Window, shape: RequestCalibrationShape) {
 /// Arms an anchor for the request about to be sent: shape and projection
 /// recorded, prompt size left zero until the provider reports one (Go: the
 /// `usageAnchor` store in `prepareSamplingRequest`).
-pub fn store_anchor_shape(window: &Window, shape: RequestCalibrationShape, projection_version: u64) {
+pub fn store_anchor_shape(
+    window: &Window,
+    shape: RequestCalibrationShape,
+    projection_version: u64,
+) {
     OutputEstimateState::lock(window.output_state()).usage_anchor = Some(UsageAnchor {
         prompt_tokens: 0,
         visible: shape,

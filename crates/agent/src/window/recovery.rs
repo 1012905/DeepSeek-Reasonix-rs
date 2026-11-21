@@ -64,10 +64,7 @@ fn fingerprint(msgs: &[reasonix_contract::provider::Message]) -> String {
 /// turn fails as it did before. Divergence: this lives in the provider
 /// crate in Go (`contract/provider`); the provider wave owns the move.
 pub fn is_context_overflow(err: &ProviderError) -> bool {
-    let ProviderError::Api {
-        status, body, ..
-    } = err
-    else {
+    let ProviderError::Api { status, body, .. } = err else {
         return false;
     };
     // A retryable status is a busy or broken server whatever code rides
@@ -105,9 +102,7 @@ impl Window {
         overflow_folded: &mut bool,
         err: &ProviderError,
     ) -> OverflowRecovery {
-        if *overflow_folded
-            || !(is_context_overflow(err)
-                || self.refused_over_window(frozen, err))
+        if *overflow_folded || !(is_context_overflow(err) || self.refused_over_window(frozen, err))
         {
             return OverflowRecovery::NotApplicable;
         }
@@ -147,15 +142,8 @@ impl Window {
     /// configured (not the clipped) completion and its margin is past the
     /// window (Go: `refusedOverWindow`). The wording is not read; a wrong
     /// call costs one bounded fold.
-    fn refused_over_window(
-        &self,
-        frozen: &ChatCompletionRequest,
-        err: &ProviderError,
-    ) -> bool {
-        let ProviderError::Api {
-            status, ..
-        } = err
-        else {
+    fn refused_over_window(&self, frozen: &ChatCompletionRequest, err: &ProviderError) -> bool {
+        let ProviderError::Api { status, .. } = err else {
             return false;
         };
         if *status != 400 && *status != 413 {

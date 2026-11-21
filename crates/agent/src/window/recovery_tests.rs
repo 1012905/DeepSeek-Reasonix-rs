@@ -73,7 +73,10 @@ impl FoldExecutor for InstallingExecutor {
         self.window.install_projection(ContextProjection {
             messages: vec![digest],
             covered_count: covered,
-            covered_prefix_hash: reasonix_state::sessionstore::compaction_state::covered_prefix_hash(&canonical, covered),
+            covered_prefix_hash:
+                reasonix_state::sessionstore::compaction_state::covered_prefix_hash(
+                    &canonical, covered,
+                ),
             projection_version: 3,
             ..ContextProjection::default()
         });
@@ -100,8 +103,12 @@ fn an_overflow_rejection_folds_and_replays() {
     assert!(refused_chars > 20_000, "fixture must be a real request");
 
     let mut one_shot = false;
-    let outcome = window.recover_context_overflow(&mut frozen, &mut one_shot, &overflow_rejection());
-    assert!(matches!(outcome, OverflowRecovery::Recovered), "{outcome:?}");
+    let outcome =
+        window.recover_context_overflow(&mut frozen, &mut one_shot, &overflow_rejection());
+    assert!(
+        matches!(outcome, OverflowRecovery::Recovered),
+        "{outcome:?}"
+    );
     let replayed_chars = request_chars(&frozen);
     assert!(
         replayed_chars < refused_chars,
@@ -127,8 +134,12 @@ fn an_undeclared_window_is_probed_by_the_refusal() {
     let mut frozen = frozen_request(&window);
     let refused_chars = request_chars(&frozen);
     let mut one_shot = false;
-    let outcome = window.recover_context_overflow(&mut frozen, &mut one_shot, &overflow_rejection());
-    assert!(matches!(outcome, OverflowRecovery::Recovered), "{outcome:?}");
+    let outcome =
+        window.recover_context_overflow(&mut frozen, &mut one_shot, &overflow_rejection());
+    assert!(
+        matches!(outcome, OverflowRecovery::Recovered),
+        "{outcome:?}"
+    );
     assert!(
         window.effective_context_window() > 0,
         "the refusal taught the agent nothing about the window"
@@ -149,7 +160,8 @@ fn nothing_to_fold_reports_a_failed_recovery() {
     let mut frozen = frozen_request(&window);
     let refused = request_chars(&frozen);
     let mut one_shot = false;
-    let outcome = window.recover_context_overflow(&mut frozen, &mut one_shot, &overflow_rejection());
+    let outcome =
+        window.recover_context_overflow(&mut frozen, &mut one_shot, &overflow_rejection());
     match outcome {
         OverflowRecovery::Failed { reason } => {
             assert!(!reason.is_empty());
@@ -200,8 +212,12 @@ fn a_codeless_rejection_past_the_window_with_its_completion_folds() {
         "fixture prompt {est} must sit between window-completion and window"
     );
     let mut one_shot = false;
-    let outcome = window.recover_context_overflow(&mut frozen, &mut one_shot, &codeless_rejection());
-    assert!(matches!(outcome, OverflowRecovery::Recovered), "{outcome:?}");
+    let outcome =
+        window.recover_context_overflow(&mut frozen, &mut one_shot, &codeless_rejection());
+    assert!(
+        matches!(outcome, OverflowRecovery::Recovered),
+        "{outcome:?}"
+    );
 }
 
 // Go: TestCodelessRejectionOnASharedWindowFoldsAndReplays — the refusal is
@@ -224,13 +240,16 @@ fn a_codeless_rejection_on_a_shared_window_judges_the_configured_budget() {
     let mut frozen = frozen_request(&window);
     let est = estimate::estimated_request_tokens(&window, &frozen);
     assert!(
-        est + 4_000 < 20_000
-            && est + 4_000 + estimate::output_budget_reserve_for(20_000) > 20_000,
+        est + 4_000 < 20_000 && est + 4_000 + estimate::output_budget_reserve_for(20_000) > 20_000,
         "fixture prompt {est} must fit the window with its completion but not with the margin too"
     );
     let mut one_shot = false;
-    let outcome = window.recover_context_overflow(&mut frozen, &mut one_shot, &codeless_rejection());
-    assert!(matches!(outcome, OverflowRecovery::Recovered), "{outcome:?}");
+    let outcome =
+        window.recover_context_overflow(&mut frozen, &mut one_shot, &codeless_rejection());
+    assert!(
+        matches!(outcome, OverflowRecovery::Recovered),
+        "{outcome:?}"
+    );
 }
 
 // Go: context_overflow.go — a retryable status is a busy server whatever
@@ -250,7 +269,8 @@ fn only_documented_codes_classify_as_overflow() {
     let prose = ProviderError::Api {
         provider: "mock".to_owned(),
         status: 400,
-        body: r#"{"error":{"message":"the context window exceeded somewhere in the docs"}}"#.to_owned(),
+        body: r#"{"error":{"message":"the context window exceeded somewhere in the docs"}}"#
+            .to_owned(),
         trace_id: String::new(),
         tool_context: String::new(),
     };

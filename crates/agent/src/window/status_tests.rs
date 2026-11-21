@@ -14,7 +14,9 @@ fn install_digest(window: &Window, digest_chars: usize, covered: i64) {
     window.install_projection(ContextProjection {
         messages: vec![digest],
         covered_count: covered,
-        covered_prefix_hash: reasonix_state::sessionstore::compaction_state::covered_prefix_hash(&canonical, covered),
+        covered_prefix_hash: reasonix_state::sessionstore::compaction_state::covered_prefix_hash(
+            &canonical, covered,
+        ),
         projection_version: 11,
         ..ContextProjection::default()
     });
