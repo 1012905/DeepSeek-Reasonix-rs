@@ -108,16 +108,9 @@ impl RequestComposer for DefaultComposer {
     }
 }
 
-/// The tag a fold digest opens with (Go: `SummaryTagOpen`).
-const SUMMARY_TAG_OPEN: &str = "<compaction-summary>";
-
-/// Go: `isCompactionSummary` — a user-role digest the fold installed.
-fn is_compaction_summary(m: &Message) -> bool {
-    m.role == Role::USER
-        && m.content
-            .trim_start_matches(['\n', ' '])
-            .starts_with(SUMMARY_TAG_OPEN)
-}
+/// The tag a fold digest opens with (Go: `SummaryTagOpen`); the rule lives
+/// in [`crate::window`], where the fold installs the digest.
+use crate::window::is_compaction_summary;
 
 /// Merges adjacent user messages into one run, in order (Go:
 /// `coalesceProjectionUserRuns`). A fold digest rides ahead of the run it

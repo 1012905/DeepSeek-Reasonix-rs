@@ -90,6 +90,10 @@ pub struct Agent {
     session: Arc<Session>,
     sink: Arc<dyn Sink>,
     seams: std::sync::Mutex<Seams>,
+    /// The context-window machine (Go: `a.window()` — built per entry there;
+    /// owned here and reached through it). `None` runs the spine exactly as
+    /// before: compaction off, no clip, no recovery.
+    window: Option<Arc<crate::window::Window>>,
 
     cache: SessionCache,
     stops: CallStops,
@@ -114,11 +118,24 @@ impl Agent {
             session,
             sink,
             seams: std::sync::Mutex::new(Seams::default()),
+            window: None,
             cache: SessionCache::default(),
             stops: CallStops::default(),
             cancel: CancelToken::default(),
             running: AtomicBool::new(false),
         }
+    }
+
+    /// Installs the context-window machine (Go: the `window()` entry the
+    /// loop reaches). Its Prepare pass, output clip and overflow recovery
+    /// join the request lifecycle from here.
+    pub fn set_window(&mut self, window: Arc<crate::window::Window>) {
+        self.window = Some(window);
+    }
+
+    /// The context window, when one is installed (Go: `a.window()`).
+    pub fn window(&self) -> Option<&Arc<crate::window::Window>> {
+        self.window.as_ref()
     }
 
     /// Installs the request-composition seam.
@@ -226,13 +243,13 @@ impl Agent {
             }
 
             let round_started = Instant::now();
-            let frozen = self.prepare_request()?;
+            let mut frozen = self.prepare_request()?;
             // One model round = one billable record: the merge spans this
             // round's body attempts only, never the whole turn (Go: the
             // billable local of streamWithSamplingRecovery).
             let mut billable: Option<Usage> = None;
             let streamed = self
-                .stream_with_sampling_recovery(&frozen, &mut billable)
+                .stream_with_sampling_recovery(&mut frozen, &mut billable)
                 .await;
             let usage = finalize_sampling_usage(billable.as_ref(), streamed.usage.as_ref());
             if let Some(u) = &usage {
@@ -361,11 +378,18 @@ impl Agent {
             ..Event::default()
         });
         self.emit_turn_phase(phase::WORKING);
+        let created_at = now_ms();
+        if let Some(window) = &self.window {
+            // The window reads this stamp to find the running turn's request
+            // and to scope per-turn no-fold reports (Go: the
+            // activeTurnCreatedAt write in beginRunTurn).
+            window.note_active_turn_created_at(created_at);
+        }
         self.session.add(Message {
             role: Role::USER,
             content: raw.to_owned(),
             raw_content: raw.to_owned(),
-            created_at: now_ms(),
+            created_at,
             ..Message::default()
         });
         let saver = self.seams.lock().expect("seams lock").saver.clone();
@@ -407,7 +431,9 @@ impl Agent {
 
     /// Builds the request once and freezes it for the whole attempt
     /// lifecycle — stream retries must not rewrite session history mid-round
-    /// (Go: `prepareSamplingRequest`).
+    /// (Go: `prepareSamplingRequest`). With a window installed, the machine
+    /// owns the pass: Prepare at the pressure trigger, the output-budget
+    /// clip, and the anchor the provider's report will complete.
     fn prepare_request(&self) -> Result<ChatCompletionRequest, TurnError> {
         let base = crate::seams::RequestBase {
             temperature: self.config.temperature,
@@ -420,6 +446,10 @@ impl Agent {
             .composer
             .clone()
             .unwrap_or_else(|| Arc::new(crate::compose::DefaultComposer::default()));
+        if let Some(window) = &self.window {
+            window.set_composer(composer.clone());
+            return window.prepare_request(composer);
+        }
         composer.compose(
             &self.config.system_prompt,
             &self.session.snapshot(),
@@ -431,13 +461,17 @@ impl Agent {
     /// Coordinates the replay lifecycle for one model round: prepare once,
     /// run up to [`MAX_SAMPLING_ATTEMPTS`] body attempts, and only commit
     /// after a clean terminal (Go: `streamWithSamplingRecovery`). An
-    /// interrupted attempt replays the exact frozen request; every other
-    /// failure is terminal.
+    /// interrupted attempt replays the exact frozen request; a context
+    /// overflow gets the window machine's one-shot fold-and-rebuild; every
+    /// other failure is terminal.
     async fn stream_with_sampling_recovery(
         &self,
-        frozen: &ChatCompletionRequest,
+        frozen: &mut ChatCompletionRequest,
         billable: &mut Option<Usage>,
     ) -> crate::stream::StreamedTurn {
+        // The one-shot latch travels with the frozen request (Go:
+        // `samplingRequest.overflowFolded`).
+        let mut overflow_folded = false;
         for attempt in 1..=MAX_SAMPLING_ATTEMPTS {
             let attempt_id = new_stream_attempt_id(attempt);
             self.emit_stream_attempt(&attempt_id, "begin", attempt, "");
@@ -465,6 +499,14 @@ impl Agent {
                     .fetch_add(u.cache_miss_tokens, Ordering::SeqCst);
             }
             *billable = merge_sampling_usage(billable.take(), result.usage.as_ref());
+            // lastUsage is the latest single-request shape, never the
+            // multi-attempt billable aggregate — that would inflate
+            // compaction decisions (Go: storeLatestRequestUsage).
+            if let Some(window) = &self.window
+                && let Some(u) = &result.usage
+            {
+                window.store_latest_request_usage(u);
+            }
             match &result.err {
                 None => {
                     self.emit_stream_attempt(&attempt_id, "commit", attempt, "");
@@ -476,6 +518,36 @@ impl Agent {
                     if attempt < MAX_SAMPLING_ATTEMPTS && err.is_stream_interrupted() {
                         self.stream_retry_sleep(attempt).await;
                         continue;
+                    }
+                    if attempt < MAX_SAMPLING_ATTEMPTS
+                        && !err.is_stream_interrupted()
+                        && let Some(window) = &self.window
+                    {
+                        match window.recover_context_overflow(frozen, &mut overflow_folded, err) {
+                            crate::window::recovery::OverflowRecovery::Recovered => {
+                                self.emit_stream_attempt(
+                                    &attempt_id,
+                                    "discard",
+                                    attempt,
+                                    "context overflow",
+                                );
+                                continue;
+                            }
+                            crate::window::recovery::OverflowRecovery::Failed { reason } => {
+                                // The person sees why the recovery that was
+                                // tried did not help (Go wraps the terminal
+                                // error; the typed provider failure keeps its
+                                // identity here, so the reason rides a
+                                // notice instead).
+                                self.notice(
+                                    level::WARN,
+                                    "",
+                                    "context overflow recovery did not help",
+                                    &reason,
+                                );
+                            }
+                            crate::window::recovery::OverflowRecovery::NotApplicable => {}
+                        }
                     }
                     return result;
                 }

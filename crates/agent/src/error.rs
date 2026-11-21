@@ -28,6 +28,11 @@ pub enum TurnError {
     /// instruction and offered no visible answer (Go: the
     /// handleToolRound repeated-unavailable terminal).
     ContextToolLoop { tools: Vec<String> },
+    /// The prompt exceeds the provider limit and compaction could not
+    /// produce a usable projection (Go: `ErrCompactionRequired`). `reason`
+    /// names what the machine settled on; the variant is the identity a
+    /// caller retries around.
+    CompactionRequired { reason: String },
 }
 
 impl std::fmt::Display for TurnError {
@@ -50,6 +55,10 @@ impl std::fmt::Display for TurnError {
                     tools.join(", ")
                 )
             }
+            TurnError::CompactionRequired { reason } => write!(
+                f,
+                "context exceeds provider limit and compaction failed: {reason}"
+            ),
         }
     }
 }
