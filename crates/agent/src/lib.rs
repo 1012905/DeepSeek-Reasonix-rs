@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod boundary;
 pub mod cancel;
 pub mod compose;
 pub mod config;
@@ -25,6 +26,7 @@ pub mod seams;
 pub mod sink;
 pub mod stream;
 pub mod usage;
+pub mod window;
 
 pub use cancel::CancelToken;
 pub use compose::DefaultComposer;
@@ -38,3 +40,4 @@ pub use seams::{Asker, Compactor, Gate, RequestComposer, SteerInbox, TranscriptS
 pub use sink::{Discard, Sink};
 pub use stream::StreamedTurn;
 pub use usage::{finalize_sampling_usage, merge_sampling_usage};
+pub use window::{ContextMaintenanceSnapshot, Window, WindowConfig};
