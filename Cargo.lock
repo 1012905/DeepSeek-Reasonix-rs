@@ -939,6 +939,7 @@ dependencies = [
  "reasonix-state",
  "reasonix-tools",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
 ]

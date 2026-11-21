@@ -49,6 +49,7 @@ pub mod kind {
     pub const NOTICE: &str = "notice";
     pub const TURN_PHASE: &str = "turn_phase";
     pub const STREAM_ATTEMPT: &str = "stream_attempt";
+    pub const CONTEXT_MAINTENANCE: &str = "context_maintenance";
 }
 
 /// Notice levels (Go `event.Level`; wire spelling `wireLevel`).
@@ -75,8 +76,11 @@ pub mod phase {
     pub const WORKING: &str = "working";
 }
 
-/// Notice codes the spine emits (Go `notice_codes.go`).
+/// Notice codes the spine and the window machine emit (Go
+/// `notice_codes.go`).
 pub mod notice_code {
     pub const EMPTY_FINAL: &str = "empty_final";
     pub const TOOL_BUDGET: &str = "tool_budget";
+    pub const COMPACT_HELD: &str = "compact_held";
+    pub const CONTEXT_COMPOSITION: &str = "context_composition";
 }
