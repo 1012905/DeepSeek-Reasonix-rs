@@ -124,6 +124,7 @@ impl Hub {
             workspace_root: root.clone(),
             session_dir,
             label: model,
+            approval: None,
         });
         // Go resumes into the named transcript; resume is a later wave, so
         // the fresh-pin half (Go `SetSessionPath`) pins the file the next

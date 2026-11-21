@@ -13,6 +13,7 @@ chrono = { workspace = true }
 reasonix-agent = { workspace = true }
 reasonix-contract = { workspace = true }
 reasonix-provider = { workspace = true }
+reasonix-safety = { workspace = true }
 reasonix-state = { workspace = true }
 reasonix-tools = { workspace = true }
 serde = { workspace = true }

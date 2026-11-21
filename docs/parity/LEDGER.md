@@ -152,14 +152,14 @@ pipe-leading line must be a six-cell ledger row.
 | SSE-011 | SSE | CostQuoteSink quoting rules + no_price fallback | reasonix-serve | wip | no_price fallback exact + display_currency rebind + guardian usage spelling done; the BuildQuote rate-card engine (money/catalog/peak windows) is the pricing wave (crates/serve/src/sink/costquote.rs: quote_without_a_rate_card_never_invents_one, emit_fills_missing_quotes_and_keeps_attached_ones, no_price_quote_carries_the_raw_usage_source) (2026-11-21) |
 | SSE-012 | SSE | NoticeLedger dedup across rebuilds | reasonix-serve | done | crates/serve/src/sink/notice_ledger.rs: windows_dedup_across_rebuilds, a_notice_that_disappears_and_returns_is_shown_again, post_close_runtime_emits_every_notice, reset_forgets_everything (2026-11-21) |
 | SSE-013 | SSE | MarkEmbeddedDiffs tagging rules | reasonix-serve | done | crates/serve/src/sink/markdiff.rs + crates/core/src/diff.rs (IsUnifiedDiff, 31-case Go corpus): tags_only_the_table_entries, disabled_is_a_pass_through, windowed_bound_still_tagged, recognizes_the_grammars_the_go_oracle_pins (2026-11-21) |
-| SSE-014 | SSE | Notice code registry (~100 codes) + localization fallback | reasonix-core | todo | M1: docs/contracts/sse.md §6 |
-| SSE-015 | SSE | Notice Detail payload schemas + DetailIsPayload set + decode guards | reasonix-core | todo | M1: docs/contracts/sse.md §7 |
-| SSE-016 | SSE | Tool wire struct incl. Bound, truncated compat, Profile, Execution | reasonix-core | todo | M1: docs/contracts/sse.md §8 |
-| SSE-017 | SSE | Usage wire struct + usage source constants + CostQuote aliases | reasonix-core | todo | M1: docs/contracts/sse.md §8 |
-| SSE-018 | SSE | Approval + Ask payloads (reasons, origin kinds, surfaces) | reasonix-core | todo | M1: docs/contracts/sse.md §8 |
-| SSE-019 | SSE | Extension surface payload (6 kinds, one sub-struct set) | reasonix-core | todo | M1: docs/contracts/sse.md §8 |
-| SSE-020 | SSE | CompletionSummary + CompletionReceipt + severities | reasonix-core | todo | M1: docs/contracts/sse.md §8 |
-| SSE-021 | SSE | Compaction + ContextMaintenance + TodoProgress + ProgressWatch + WorkspaceLease + Guardian + WorkspaceChanged + DecisionReceipt | reasonix-core | todo | M1: docs/contracts/sse.md §8 |
+| SSE-014 | SSE | Notice code registry (93 codes) + localization fallback | reasonix-contract | done | crates/contract/tests/sse_notice_codes.rs::registry_covers_every_go_code_without_repeats, localization_falls_back_to_the_kernel_text (2026-11-21) |
+| SSE-015 | SSE | Notice Detail payload schemas + DetailIsPayload set + decode guards | reasonix-contract | done | crates/contract/tests/sse_notice_codes.rs::detail_is_payload_matches_go_set, decode_guards_refuse_non_payloads_with_typed_identity; sse_wire_golden.rs::notice_payload_goldens_match_go_bytes (2026-11-21) |
+| SSE-016 | SSE | Tool wire struct incl. Bound, truncated compat, Profile, Execution | reasonix-contract | done | crates/contract/tests/sse_wire_golden.rs::tool_wire_matches_go_bytes, bound_wire_matches_go_bytes; sse_summary_judgments.rs::issuer_work_predicates_match_go (2026-11-21) |
+| SSE-017 | SSE | Usage wire struct + usage source constants + CostQuote aliases | reasonix-contract | done | crates/contract/tests/sse_wire_golden.rs::usage_wire_matches_go_bytes + eventwire_parity.rs (2026-11-21) |
+| SSE-018 | SSE | Approval + Ask payloads (reasons, origin kinds, surfaces) | reasonix-contract | done | crates/contract/tests/sse_wire_golden.rs::approval_and_ask_wires_match_go_bytes (2026-11-21) |
+| SSE-019 | SSE | Extension surface payload (6 kinds, one sub-struct set) | reasonix-contract | done | crates/contract/tests/sse_wire_golden.rs::extension_wire_matches_go_bytes (2026-11-21) |
+| SSE-020 | SSE | CompletionSummary + CompletionReceipt + severities | reasonix-contract | done | crates/contract/tests/sse_wire_golden.rs::summary_and_receipt_wires_match_go_bytes; sse_summary_judgments.rs (Go-oracle-verified) (2026-11-21) |
+| SSE-021 | SSE | Compaction + ContextMaintenance + TodoProgress + ProgressWatch + WorkspaceLease + Guardian + WorkspaceChanged + DecisionReceipt | reasonix-contract | done | crates/contract/tests/sse_wire_golden.rs::guardian_and_workspace_wires_match_go_bytes, maintenance_wires_match_go_bytes (2026-11-21) |
 | SSE-022 | SSE | Divergences: snake_case guardian, recovery_paused legacy, order guarantee | reasonix-core | todo | M1: docs/contracts/sse.md §9 |
 | ACP-001 | ACP | NDJSON framing + 32MiB line cap (server.go) | reasonix-acp | todo | M1: docs/contracts/acp.md §0 |
 | ACP-002 | ACP | Error code table + cancelled rewrite (server.go, protocol.go) | reasonix-acp | todo | M1: docs/contracts/acp.md §1 |
@@ -245,11 +245,11 @@ pipe-leading line must be a six-cell ledger row.
 | MCP-036 | MCP | composition guards | reasonix-ext | todo | M1: docs/contracts/mcp.md §31 |
 | MCP-037 | MCP | credential projection | reasonix-ext | todo | M1: docs/contracts/mcp.md §32 |
 | MCP-038 | MCP | divergences §33 | reasonix-ext | todo | M1: docs/contracts/mcp.md §33 |
-| EXT-001 | EXT | transport framing §1 | reasonix-ext | todo | M1: docs/contracts/ext.md §1 |
-| EXT-002 | EXT | lifecycle handshake §2 | reasonix-ext | todo | M1: docs/contracts/ext.md §2 |
-| EXT-003 | EXT | content references §3 | reasonix-ext | todo | M1: docs/contracts/ext.md §3 |
-| EXT-004 | EXT | interception contract §4 | reasonix-ext | todo | M1: docs/contracts/ext.md §4 |
-| EXT-005 | EXT | streaming providers §5 | reasonix-ext | todo | M1: docs/contracts/ext.md §5 |
+| EXT-001 | EXT | transport framing §1 | reasonix-ext | done | crates/ext/src/framing.rs + framing/tests.rs (10 framing tests); crates/ext/src/error.rs (20-reason frozen error table), limits.rs; cargo test -p reasonix-ext (2026-11-21) |
+| EXT-002 | EXT | lifecycle handshake §2 | reasonix-ext | done | crates/ext/src/lifecycle.rs (6 handshake tests: initialize→result→initialized→shutdown, manifest subset validation, version compare); error.rs::compare_version_oracle (2026-11-21) |
+| EXT-003 | EXT | content references §3 | reasonix-ext | done | crates/ext/src/content.rs (3 tests: externalization descriptors + paged reads with hash/size guards) (2026-11-21) |
+| EXT-004 | EXT | interception contract §4 | reasonix-ext | done | crates/ext/src/intercept.rs (5 tests: per-point decision guards + timeout families) (2026-11-21) |
+| EXT-005 | EXT | streaming providers §5 | reasonix-ext | done | crates/ext/src/provider.rs (6 tests: catalog/stream DTOs, null-array/tool-parameter/chunk/sequence guards) (2026-11-21) |
 | EXT-006 | EXT | structured UI §6 | reasonix-ext | todo | M1: docs/contracts/ext.md §6 |
 | EXT-007 | EXT | extension tools §7 | reasonix-ext | todo | M1: docs/contracts/ext.md §7 |
 | EXT-008 | EXT | error table §8 | reasonix-ext | todo | M1: docs/contracts/ext.md §8 |
@@ -553,6 +553,10 @@ pipe-leading line must be a six-cell ledger row.
 | SESS-099 | Session | History paging: historyReadIndex, ErrHistorySnapshotChanged/ErrHistoryPageRange, ReadHistoryToolOutput | reasonix-state | todo | M2: docs/contracts/session-format.md §20.7 |
 | SESS-100 | Session | Sessionstore misc: steer/marker constants, session tail (16MiB), unread, grants (256/512), TurnWorkMs, load-context, normalize, auto-archive | reasonix-state | todo | M2: docs/contracts/session-format.md §20.7 |
 | SESS-101 | Session | Hub runtime open/publish: RuntimeSpec construction (client/registry/prompt), publish under minted id, TurnController adoption, one-writer dedup, typed open refusals | reasonix-session | done | crates/session/tests/open.rs::open_builds_a_runtime_whose_submit_runs_end_to_end_through_the_hub, a_driven_session_refuses_a_second_open_with_the_holder, open_refusals_carry_the_real_failure_identities, the_request_model_overrides_the_spec_model, the_opened_registry_drives_the_write_family_in_the_workspace; crates/session/src/hub/open.rs::tests::ids_mint_in_publish_order (2026-11-21) |
+| SESS-102 | Session | Approval gate verdict matrix + typed refusal identity into transcript/SSE | reasonix-agent | done | crates/agent/tests/approval.rs::verdict_matrix_modes_and_read_only_posture; crates/session/tests/approval.rs::unanswered_gate_expires_into_a_typed_refusal (2026-11-21) |
+| SESS-103 | Session | Tool-approval ask/decide, session grants, decision-receipt identities (allow_once/session/persist/deny) | reasonix-session | done | crates/agent/tests/approval.rs::tool_decision_receipts_identity_is_allow_once_or_deny; crates/session/tests/approval.rs::gated_tool_call_is_asked_answered_then_executed (2026-11-21) |
+| SESS-104 | Session | Ask timeout/blocked identity + ask receipt (answered/timed_out) to transcript and SSE | reasonix-agent | done | crates/agent/tests/approval.rs::ask_timeout_reports_timed_out_identity_and_a_receipt, answered_ask_carries_selections_and_a_stable_id (2026-11-21) |
+| SESS-105 | Session | HTTP approve/answer IPC surface on the turn controller | reasonix-serve | done | crates/serve/src/commands.rs::runtime_approve, runtime_answer + tests::cancel_answers_204_and_new_and_approve_refuse_typed (2026-11-21) |
 | PMSG-001 | Provider | provider.Message wire shape (JSON keys, omitempty set) | reasonix-contract | done | crates/contract/tests/provider_message_wire.rs::message_full_field_order, message_omitempty_drops_zero_scalars_and_empty_slices, minimal_user_serializes_role_only, default_message_serializes_empty_role (2026-11-16) |
 | PMSG-002 | Provider | Message decode semantics (tolerant, type errors fail record) | reasonix-contract | done | crates/contract/tests/provider_message_wire.rs::decode_type_mismatch_fails, decode_ignores_unknown_fields_and_missing_keys, decode_null_tolerates_every_field_class, decode_null_slice_elements_become_zero_values, decode_null_struct_fields_become_defaults, responses_items_keep_raw_bytes (2026-11-16) |
 | PMSG-003 | Provider | Roles + local-only sentinel messages | reasonix-contract | done | crates/contract/tests/provider_message_wire.rs::role_const_partial_eq_and_roundtrip (2026-11-16) |
