@@ -211,12 +211,31 @@ pub struct OpenRuntimeRequest {
 }
 
 /// Typed refusal of a hub request (docs/contract.md §4.1: no machine, no
-/// fake success). Serve maps each variant to its own refusal envelope.
+/// fake success). The variant is the identity; the message is prose. Serve
+/// maps each variant to its own refusal envelope (Go: the open flow's
+/// `workspace.*` codes and the 500 catch-all).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HubRefusal {
-    /// The runtime open/publish machine is not migrated in this build.
+    /// No open machine is installed on this hub: the host never provided
+    /// the construction collaborators, or the binary predates the machine.
     UnsupportedInThisBuild,
+    /// A required construction field is missing (Go: boot's provider
+    /// config refusals). `field` names what the spec lacks.
+    MissingField { field: &'static str },
+    /// The resolved workspace does not exist or is not a directory
+    /// (Go `workspace.folder_missing`).
+    WorkspaceMissing { path: String },
+    /// No workspace can be resolved from the request, the installed spec,
+    /// or an open runtime (Go `workspace.none`).
+    NoWorkspace,
+    /// The session the request names is already driven by the named
+    /// runtime. Go focuses the holder; the pane-focus machine is not
+    /// ported, and the one-writer rule refuses instead of faking a focus.
+    AlreadyOpen { id: String },
+    /// The provider config the spec carries cannot build a client
+    /// (Go: the open catch-all for a pane the kernel could not build).
+    ProviderConfig { message: String },
 }
 
 impl fmt::Display for HubRefusal {
@@ -225,6 +244,17 @@ impl fmt::Display for HubRefusal {
             HubRefusal::UnsupportedInThisBuild => {
                 f.write_str("runtime open is not part of this build")
             }
+            HubRefusal::MissingField { field } => {
+                write!(f, "runtime open is missing {field}")
+            }
+            HubRefusal::WorkspaceMissing { path } => {
+                write!(f, "workspace {path} does not exist or is not a directory")
+            }
+            HubRefusal::NoWorkspace => f.write_str("no workspace to open in — add a folder first"),
+            HubRefusal::AlreadyOpen { id } => {
+                write!(f, "runtime {id} is already driving this session")
+            }
+            HubRefusal::ProviderConfig { message } => f.write_str(message),
         }
     }
 }
