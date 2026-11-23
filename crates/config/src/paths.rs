@@ -1,23 +1,19 @@
-//! Path resolution for this slice: the auto workspace directory and the
-//! environment/`${VAR}` expansion the reference applies to directory values.
+//! Environment and `${VAR}` expansion, plus the path helpers built on the root
+//! chain (paths.go / expand.go, docs/contracts/config.md §11).
+//!
+//! Everything here resolves against a [`DirEnv`] rather than the live process
+//! environment: Go reads `os.Getenv` live, and the tests that pin an isolated
+//! home need a snapshot (mutating process env is unsafe under edition 2024).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, MAIN_SEPARATOR_STR, Path, PathBuf};
 
 use crate::model::Config;
+use crate::roots::{RootEnv, RootId, join_root};
 
-/// Environment the root chain resolves against. Real callers snapshot the
-/// process environment (Go reads it live); tests inject a snapshot because
-/// mutating process env is unsafe under edition 2024 and tests run threaded.
-#[derive(Debug, Clone, Default)]
-struct RootEnv {
-    vars: BTreeMap<String, String>,
-    cwd: PathBuf,
-}
-
-/// Only the variables the root chain reads (storage_roots.go cleanEnvDir +
-/// the Go os.User*Dir probes).
+/// The variables the root chain reads (storage_roots.go cleanEnvDir plus the
+/// Go `os.User*Dir` probes).
 const ROOT_ENV_KEYS: [&str; 9] = [
     "REASONIX_HOME",
     "REASONIX_STATE_HOME",
@@ -30,8 +26,16 @@ const ROOT_ENV_KEYS: [&str; 9] = [
     "XDG_CACHE_HOME",
 ];
 
-impl RootEnv {
-    fn process() -> Self {
+/// An environment snapshot the root chain resolves against.
+#[derive(Debug, Clone, Default)]
+pub struct DirEnv {
+    vars: BTreeMap<String, String>,
+    cwd: PathBuf,
+}
+
+impl DirEnv {
+    /// A snapshot of the live process environment.
+    pub fn process() -> Self {
         let mut vars = BTreeMap::new();
         for key in ROOT_ENV_KEYS {
             if let Ok(value) = std::env::var(key) {
@@ -44,172 +48,148 @@ impl RootEnv {
         }
     }
 
-    fn var(&self, name: &str) -> &str {
+    /// A snapshot built from named variables, for tests and stated bindings.
+    pub fn with_vars(vars: BTreeMap<String, String>, cwd: PathBuf) -> Self {
+        Self { vars, cwd }
+    }
+
+    /// One variable's raw value, empty when unset.
+    pub fn var(&self, name: &str) -> &str {
         self.vars.get(name).map(String::as_str).unwrap_or_default()
     }
 
-    fn home(&self) -> Option<PathBuf> {
-        // Go os.UserHomeDir: USERPROFILE on Windows, HOME elsewhere; an empty
-        // value counts as unset.
-        let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-        let value = self.var(key);
+    /// One variable read as a directory value: expanded, absolutised, cleaned;
+    /// `None` when it is unset, empty, or expands to nothing.
+    pub fn var_clean(&self, name: &str) -> Option<String> {
+        let path = clean_env_dir_in(name, self);
+        if path.as_os_str().is_empty() {
+            return None;
+        }
+        Some(path.to_string_lossy().into_owned())
+    }
+
+    /// The user home: `USERPROFILE` on Windows, `HOME` elsewhere; an empty
+    /// value counts as unset (Go os.UserHomeDir).
+    pub fn home(&self) -> Option<PathBuf> {
+        user_home_dir_in(self)
+    }
+
+    /// Go `os.UserConfigDir`.
+    pub fn user_config_dir(&self) -> Option<PathBuf> {
+        user_config_dir_in(self)
+    }
+
+    /// Go `os.UserCacheDir`.
+    pub fn user_cache_dir(&self) -> Option<PathBuf> {
+        os_user_cache_dir_in(self)
+    }
+
+    /// The working directory this snapshot resolves relative paths against.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+}
+
+/// Go `os.UserHomeDir`: `%USERPROFILE%` on Windows, `$HOME` elsewhere; empty
+/// counts as unset.
+pub fn user_home_dir_in(env: &DirEnv) -> Option<PathBuf> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let value = env.var(key);
+    if value.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(value))
+    }
+}
+
+/// Go `os.UserConfigDir`.
+pub fn user_config_dir_in(env: &DirEnv) -> Option<PathBuf> {
+    if cfg!(windows) {
+        let value = env.var("APPDATA");
         if value.is_empty() {
             None
         } else {
             Some(PathBuf::from(value))
         }
-    }
-
-    fn user_config_dir(&self) -> Option<PathBuf> {
-        if cfg!(windows) {
-            let value = self.var("APPDATA");
-            if value.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(value))
-            }
-        } else if cfg!(target_os = "macos") {
-            Some(self.home()?.join("Library").join("Application Support"))
-        } else {
-            let xdg = self.var("XDG_CONFIG_HOME");
-            if !xdg.is_empty() {
-                return Some(PathBuf::from(xdg));
-            }
-            Some(self.home()?.join(".config"))
-        }
-    }
-
-    fn cwd(&self) -> &Path {
-        &self.cwd
-    }
-}
-
-/// The folder a first launch opens when nobody has chosen a project: a small
-/// one the app owns under the user state root, never the home directory
-/// (paths.go AutoWorkspaceDir). The caller creates it. Empty when the state
-/// root cannot be resolved.
-pub fn auto_workspace_dir(config: &Config) -> PathBuf {
-    auto_workspace_dir_in(&config.storage, &RootEnv::process())
-}
-
-fn auto_workspace_dir_in(storage: &BTreeMap<String, String>, env: &RootEnv) -> PathBuf {
-    // The state-root chain (storage_roots.go Dir): the REASONIX_STATE_HOME
-    // pin, then the [storage] relocation, then the home root.
-    let pinned = expand_dir_value_in(env.var("REASONIX_STATE_HOME"), env);
-    if !pinned.as_os_str().is_empty() {
-        return under_auto(pinned);
-    }
-    let home = home_root_in(env);
-    if home.as_os_str().is_empty() {
-        return PathBuf::new();
-    }
-    if let Some(configured) = configured_state_root(storage, env) {
-        return under_auto(configured);
-    }
-    under_auto(home)
-}
-
-fn under_auto(base: PathBuf) -> PathBuf {
-    base.join("workspaces").join("auto")
-}
-
-/// Go `config.ReasonixHomeDir()`: the data home the root chain resolves
-/// (the REASONIX_HOME pin, else the platform default). Empty when none can.
-pub fn reasonix_home_dir() -> PathBuf {
-    home_root_in(&RootEnv::process())
-}
-
-/// The user config file a load reads (paths.md §2.1 userConfigLoadPath): the
-/// primary `<home>/config.toml` when it exists, else the legacy OS-support
-/// copy, else the legacy XDG candidates. Empty when the home cannot resolve.
-pub fn user_config_path() -> PathBuf {
-    user_config_path_in(&RootEnv::process())
-}
-
-fn user_config_path_in(env: &RootEnv) -> PathBuf {
-    let home = home_root_in(env);
-    if home.as_os_str().is_empty() {
-        return PathBuf::new();
-    }
-    let primary = home.join("config.toml");
-    if primary.exists() {
-        return primary;
-    }
-    // The legacy dirs name the same tree as a pinned home, so only the
-    // primary counts there.
-    if env.var("REASONIX_HOME").trim().is_empty() {
-        if let Some(dir) = env.user_config_dir() {
-            let legacy = dir.join("reasonix").join("config.toml");
-            if legacy != primary && legacy.exists() {
-                return legacy;
-            }
-        }
-        if cfg!(unix) {
-            let xdg = env.var("XDG_CONFIG_HOME");
-            if !xdg.is_empty() {
-                let candidate = PathBuf::from(xdg).join("reasonix").join("config.toml");
-                if candidate.exists() {
-                    return candidate;
-                }
-            }
-            if let Some(home) = env.home() {
-                let candidate = home.join(".config").join("reasonix").join("config.toml");
-                if candidate.exists() {
-                    return candidate;
-                }
-            }
-        }
-    }
-    primary
-}
-
-fn home_root_in(env: &RootEnv) -> PathBuf {
-    let pinned = expand_dir_value_in(env.var("REASONIX_HOME"), env);
-    if !pinned.as_os_str().is_empty() {
-        return pinned;
-    }
-    default_home_dir_in(env)
-}
-
-fn configured_state_root(storage: &BTreeMap<String, String>, env: &RootEnv) -> Option<PathBuf> {
-    // readStorageDirs: only relocatable roots move, and a value expands the
-    // same way an environment pin does.
-    let dir = storage.get("state")?.trim();
-    if dir.is_empty() {
-        return None;
-    }
-    let expanded = expand_dir_value_in(dir, env);
-    if expanded.as_os_str().is_empty() {
-        None
+    } else if cfg!(target_os = "macos") {
+        Some(env.home()?.join("Library").join("Application Support"))
     } else {
-        Some(expanded)
+        let xdg = env.var("XDG_CONFIG_HOME");
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg));
+        }
+        Some(env.home()?.join(".config"))
     }
 }
 
-fn default_home_dir_in(env: &RootEnv) -> PathBuf {
+/// Go `os.UserCacheDir`: `%LOCALAPPDATA%` on Windows, `~/Library/Caches` on
+/// macOS, `$XDG_CACHE_HOME` or `~/.cache` elsewhere.
+pub fn os_user_cache_dir_in(env: &DirEnv) -> Option<PathBuf> {
     if cfg!(windows) {
-        if let Some(dir) = env.user_config_dir() {
+        let value = env.var("LOCALAPPDATA");
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    } else if cfg!(target_os = "macos") {
+        Some(env.home()?.join("Library").join("Caches"))
+    } else {
+        let xdg = env.var("XDG_CACHE_HOME");
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg));
+        }
+        Some(env.home()?.join(".cache"))
+    }
+}
+
+/// The OS cache location for this app (storage_roots.go osCacheBase). It reads
+/// no Reasonix variable on purpose: the locks root has to converge there even
+/// when two instances run under different profiles.
+pub fn os_cache_base_in(env: &DirEnv) -> PathBuf {
+    if let Some(dir) = os_user_cache_dir_in(env) {
+        return dir.join("reasonix");
+    }
+    if cfg!(windows)
+        && let Some(home) = env.home()
+    {
+        return home.join("AppData").join("Local").join("reasonix");
+    }
+    PathBuf::new()
+}
+
+/// Where configuration lands when REASONIX_HOME is unset: the roaming profile
+/// on Windows, a dotfile directory elsewhere (storage_roots.go defaultHomeDir).
+pub fn default_home_dir_in(env: &DirEnv) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(dir) = user_config_dir_in(env) {
             return dir.join("reasonix");
         }
-        match env.home() {
+        return match env.home() {
             Some(home) => home.join("AppData").join("Roaming").join("reasonix"),
             None => PathBuf::new(),
-        }
-    } else {
-        match env.home() {
-            Some(home) => home.join(".reasonix"),
-            None => match env.user_config_dir() {
-                Some(dir) => dir.join("reasonix"),
-                None => PathBuf::new(),
-            },
-        }
+        };
     }
+    if let Some(home) = env.home() {
+        return home.join(".reasonix");
+    }
+    match user_config_dir_in(env) {
+        Some(dir) => dir.join("reasonix"),
+        None => PathBuf::new(),
+    }
+}
+
+/// Go `config.cleanEnvDir`: a variable read as a directory value.
+pub fn clean_env_dir_in(name: &str, env: &DirEnv) -> PathBuf {
+    expand_dir_value_in(env.var(name), env)
 }
 
 /// Turns a directory someone wrote — in the environment or in config.toml —
 /// into an absolute path (paths.go expandDirValue): trim, `${VAR}` expansion,
 /// `~` into the user home, relative into absolute, then lexically cleaned.
-fn expand_dir_value_in(dir: &str, env: &RootEnv) -> PathBuf {
+/// Both layers of the root chain share it, so a location is spelled the same
+/// way wherever it is set.
+pub fn expand_dir_value_in(dir: &str, env: &DirEnv) -> PathBuf {
     let dir = dir.trim();
     if dir.is_empty() {
         return PathBuf::new();
@@ -225,7 +205,7 @@ fn expand_dir_value_in(dir: &str, env: &RootEnv) -> PathBuf {
     clean_path(&env.cwd().join(&path))
 }
 
-fn home_prefixed(expanded: &str, env: &RootEnv) -> Option<PathBuf> {
+fn home_prefixed(expanded: &str, env: &DirEnv) -> Option<PathBuf> {
     let home = env.home()?;
     if expanded == "~" {
         return Some(home);
@@ -236,15 +216,15 @@ fn home_prefixed(expanded: &str, env: &RootEnv) -> Option<PathBuf> {
         .map(|rest| home.join(rest))
 }
 
-/// filepath.IsAbs on Windows also accepts rooted paths ("\\foo"); plain Rust
+/// `filepath.IsAbs` on Windows also accepts rooted paths ("\\foo"); plain Rust
 /// `is_absolute` demands a volume prefix too.
 fn is_absolute_path(path: &Path) -> bool {
     path.is_absolute() || path.has_root()
 }
 
-/// filepath.Clean over components. Only called on absolutized paths, so a
+/// `filepath.Clean` over components. Only called on absolutized paths, so a
 /// volume-relative spelling never reaches the separator reconstruction.
-fn clean_path(path: &Path) -> PathBuf {
+pub fn clean_path(path: &Path) -> PathBuf {
     let mut parts: Vec<Component> = Vec::new();
     for component in path.components() {
         match component {
@@ -254,7 +234,7 @@ fn clean_path(path: &Path) -> PathBuf {
                     parts.pop();
                 }
                 // Leading and chained ".." survive; one directly after a root
-                // is dropped (filepath.Clean turns "/.." into "/").
+                // is dropped (`filepath.Clean` turns "/.." into "/").
                 Some(Component::ParentDir) | None => parts.push(component),
                 _ => {}
             },
@@ -294,8 +274,8 @@ fn ends_with_separator(value: &OsStr) -> bool {
 }
 
 /// Substitutes `${VAR}` / `${VAR:-default}` from the process environment
-/// (expand.go ExpandVars). An unset or empty variable with no default
-/// expands to "", so a missing value never leaks a literal `${TOKEN}`.
+/// (expand.go ExpandVars). An unset or empty variable with no default expands
+/// to "", so a missing value never leaks a literal `${TOKEN}`.
 pub fn expand_vars(input: &str) -> String {
     expand_vars_lookup(input, &|name| std::env::var(name).unwrap_or_default())
 }
@@ -329,10 +309,10 @@ fn expand_vars_lookup(input: &str, lookup: &dyn Fn(&str) -> String) -> String {
     out
 }
 
-/// Splits a reference at the start of `rest`: `${NAME}` or
-/// `${NAME:-default}` with NAME matching [A-Za-z_][A-Za-z0-9_]* (expand.go
-/// varRef); anything else is not a reference. Returns the name, the default,
-/// and the consumed byte count.
+/// Splits a reference at the start of `rest`: `${NAME}` or `${NAME:-default}`
+/// with NAME matching `[A-Za-z_][A-Za-z0-9_]*` (expand.go varRef); anything
+/// else is not a reference. Returns the name, the default, and the consumed
+/// byte count.
 fn var_ref(rest: &str) -> Option<(&str, &str, usize)> {
     let bytes = rest.as_bytes();
     // "${" + one name byte + "}" is the shortest well-formed reference.
@@ -366,27 +346,108 @@ fn is_name_byte(byte: u8) -> bool {
     byte == b'_' || byte.is_ascii_alphanumeric()
 }
 
+impl Config {
+    /// The root binding this configuration resolves against: the process
+    /// environment plus its own `[storage]` relocations.
+    pub fn root_env(&self) -> RootEnv {
+        RootEnv::process().with_storage(&self.storage)
+    }
+
+    /// One root's absolute directory, empty when it cannot be resolved.
+    pub fn root_dir(&self, id: RootId) -> PathBuf {
+        self.root_env().dir(id)
+    }
+
+    /// The folder a first launch opens when nobody has chosen a project: a
+    /// small one the app owns under the state root, never the home directory
+    /// (paths.go AutoWorkspaceDir). The caller creates it.
+    pub fn auto_workspace_dir(&self) -> PathBuf {
+        let base = self.root_dir(RootId::State);
+        if base.as_os_str().is_empty() {
+            return PathBuf::new();
+        }
+        base.join("workspaces").join("auto")
+    }
+}
+
+/// Go `config.AutoWorkspaceDir()`: the auto workspace under the state root the
+/// config resolves against.
+pub fn auto_workspace_dir(config: &Config) -> PathBuf {
+    config.auto_workspace_dir()
+}
+
+/// Go `config.ReasonixHomeDir()`: the data home the root chain resolves (the
+/// REASONIX_HOME pin, else the platform default). Empty when none can.
+pub fn reasonix_home_dir() -> PathBuf {
+    RootEnv::process().dir(RootId::Home)
+}
+
+/// The state root: REASONIX_STATE_HOME, else the home root.
+pub fn reasonix_state_dir() -> PathBuf {
+    RootEnv::process().dir(RootId::State)
+}
+
+/// The cache root: REASONIX_CACHE_HOME, else `<pinned home>/cache`, else the OS
+/// cache location.
+pub fn cache_dir() -> PathBuf {
+    RootEnv::process().dir(RootId::Cache)
+}
+
+/// The locks root. It converges on the OS cache even under an isolated home,
+/// so two runtimes find the same lock.
+pub fn locks_dir() -> PathBuf {
+    RootEnv::process().dir(RootId::Locks)
+}
+
+/// The delivery worktree root.
+pub fn delivery_worktree_dir() -> PathBuf {
+    RootEnv::process().dir(RootId::Worktrees)
+}
+
+/// Cross-process Delivery writer locks, outside user workspaces.
+pub fn workspace_lease_dir() -> PathBuf {
+    join_root(locks_dir(), "workspace-leases")
+}
+
+/// Target-path repair locks in the OS-user cache.
+pub fn repair_mutation_lock_dir() -> PathBuf {
+    join_root(locks_dir(), "repair-mutation-locks")
+}
+
+/// One mutation lock per memory store directory.
+pub fn memory_lock_dir() -> PathBuf {
+    join_root(locks_dir(), "memory-store-locks")
+}
+
+/// The user config file a load reads (paths.go userConfigLoadPath): the primary
+/// `<home>/config.toml` when it exists, else the legacy OS-support copy, else
+/// the legacy XDG candidates. Empty when the home cannot resolve.
+pub fn user_config_path() -> PathBuf {
+    RootEnv::process().user_config_load_path()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        RootEnv, auto_workspace_dir_in, clean_path, expand_dir_value_in, expand_vars_lookup,
-        user_config_path_in,
+        DirEnv, clean_path, expand_dir_value_in, expand_vars_lookup, os_cache_base_in,
+        user_config_dir_in,
     };
+    use crate::model::Config;
+    use crate::roots::{RootEnv, RootId};
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
-    fn env_with(vars: &[(&str, &str)]) -> RootEnv {
-        RootEnv {
-            vars: vars
-                .iter()
+    fn env_with(vars: &[(&str, &str)]) -> DirEnv {
+        DirEnv::with_vars(
+            vars.iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
-            cwd: PathBuf::from(if cfg!(windows) { "C:\\wd" } else { "/wd" }),
-        }
+            PathBuf::from(if cfg!(windows) { "C:\\wd" } else { "/wd" }),
+        )
     }
 
     // The selection chain touches the filesystem, so the tests root their
-    // homes under target/ — the system Temp is not writable under this
+    // homes under target/ — the system Temp is denied under this
     // environment's antivirus policy.
     fn home_dir(name: &str) -> PathBuf {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/userconfig");
@@ -396,12 +457,23 @@ mod tests {
         dir
     }
 
+    fn binding(env: DirEnv) -> RootEnv {
+        RootEnv {
+            env,
+            stated_home: PathBuf::new(),
+            configured: Vec::new(),
+        }
+    }
+
     #[test]
     fn the_primary_config_file_wins_when_it_exists() {
         let home = home_dir("primary");
         std::fs::write(home.join("config.toml"), "language = \"en\"\n").unwrap();
-        let got = user_config_path_in(&env_with(&[("REASONIX_HOME", &home.to_string_lossy())]));
-        assert_eq!(got, clean_path(&home.join("config.toml")));
+        let binding = binding(env_with(&[("REASONIX_HOME", &home.to_string_lossy())]));
+        assert_eq!(
+            binding.user_config_load_path(),
+            clean_path(&home.join("config.toml"))
+        );
     }
 
     #[test]
@@ -411,23 +483,18 @@ mod tests {
     #[cfg(unix)]
     fn a_missing_primary_falls_back_to_the_legacy_os_support_copy() {
         let support = home_dir("legacy-support");
-        // No pinned home: the pin turns the legacy chain off (the sibling
-        // test holds that; Go render_test.go's NoLegacyFallbackWhenIsolated
-        // says the same). On unix the default home is $HOME/.reasonix, so
-        // the OS-support copy under $HOME/.config is a distinct tree.
         let env = env_with(&[
             ("USERPROFILE", &support.to_string_lossy()),
             ("HOME", &support.to_string_lossy()),
             ("APPDATA", &support.to_string_lossy()),
         ]);
-        let legacy = env
-            .user_config_dir()
+        let legacy = user_config_dir_in(&env)
             .unwrap()
             .join("reasonix")
             .join("config.toml");
         std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         std::fs::write(&legacy, "language = \"en\"\n").unwrap();
-        assert_eq!(user_config_path_in(&env), legacy);
+        assert_eq!(binding(env).user_config_load_path(), legacy);
     }
 
     #[test]
@@ -440,8 +507,7 @@ mod tests {
             ("HOME", &support.to_string_lossy()),
             ("APPDATA", &support.to_string_lossy()),
         ]);
-        let legacy = env
-            .user_config_dir()
+        let legacy = user_config_dir_in(&env)
             .unwrap()
             .join("reasonix")
             .join("config.toml");
@@ -449,53 +515,31 @@ mod tests {
         std::fs::write(&legacy, "language = \"en\"\n").unwrap();
         // The legacy copy exists, but a pinned home makes it invisible: the
         // primary path is the answer even though nothing is there.
-        let got = user_config_path_in(&env);
+        let got = binding(env).user_config_load_path();
         assert_eq!(got, clean_path(&home.join("config.toml")));
         assert!(!got.exists());
     }
 
     #[test]
     fn with_no_home_at_all_the_path_is_empty() {
-        assert_eq!(user_config_path_in(&env_with(&[])), PathBuf::new());
+        assert_eq!(binding(env_with(&[])).user_config_path(), PathBuf::new());
+        assert_eq!(binding(env_with(&[])).dir(RootId::State), PathBuf::new());
     }
 
     #[test]
     fn expand_vars_substitutes_and_defaults() {
         // expand.go: unset/empty counts as unset; the default applies then.
         let env = env_with(&[("SET", "v"), ("EMPTY", "")]);
-        assert_eq!(
-            expand_vars_lookup("${SET}", &|n| env.var(n).to_owned()),
-            "v"
-        );
-        assert_eq!(
-            expand_vars_lookup("a${SET}b", &|n| env.var(n).to_owned()),
-            "avb"
-        );
-        assert_eq!(
-            expand_vars_lookup("${NOPE:-d}", &|n| env.var(n).to_owned()),
-            "d"
-        );
-        assert_eq!(
-            expand_vars_lookup("${EMPTY:-d}", &|n| env.var(n).to_owned()),
-            "d"
-        );
-        assert_eq!(
-            expand_vars_lookup("${NOPE}", &|n| env.var(n).to_owned()),
-            ""
-        );
+        let lookup = |n: &str| env.var(n).to_owned();
+        assert_eq!(expand_vars_lookup("${SET}", &lookup), "v");
+        assert_eq!(expand_vars_lookup("a${SET}b", &lookup), "avb");
+        assert_eq!(expand_vars_lookup("${NOPE:-d}", &lookup), "d");
+        assert_eq!(expand_vars_lookup("${EMPTY:-d}", &lookup), "d");
+        assert_eq!(expand_vars_lookup("${NOPE}", &lookup), "");
         // Non-references stay literal (varRef requires a valid NAME).
-        assert_eq!(
-            expand_vars_lookup("${1A}", &|n| env.var(n).to_owned()),
-            "${1A}"
-        );
-        assert_eq!(
-            expand_vars_lookup("${NOPE", &|n| env.var(n).to_owned()),
-            "${NOPE"
-        );
-        assert_eq!(
-            expand_vars_lookup("plain", &|n| env.var(n).to_owned()),
-            "plain"
-        );
+        assert_eq!(expand_vars_lookup("${1A}", &lookup), "${1A}");
+        assert_eq!(expand_vars_lookup("${NOPE", &lookup), "${NOPE");
+        assert_eq!(expand_vars_lookup("plain", &lookup), "plain");
     }
 
     #[test]
@@ -513,47 +557,44 @@ mod tests {
     }
 
     #[test]
-    fn auto_workspace_prefers_the_state_pin() {
-        let env = env_with(&[("REASONIX_STATE_HOME", "/state")]);
-        let expected = clean_path(Path::new("/state"))
-            .join("workspaces")
-            .join("auto");
-        assert_eq!(auto_workspace_dir_in(&BTreeMap::new(), &env), expected);
-    }
-
-    #[test]
-    fn auto_workspace_falls_to_the_configured_root_then_home() {
-        // storage_roots.go: env pin > [storage] state > home root.
-        let env = env_with(&[("HOME", "/h"), ("USERPROFILE", "C:\\Users\\x")]);
-        let mut storage = BTreeMap::new();
-        storage.insert("state".to_owned(), "~/relocated".to_owned());
-        let relocated = env.home().unwrap_or_default().join("relocated");
-        assert_eq!(
-            auto_workspace_dir_in(&storage, &env),
-            relocated.join("workspaces").join("auto")
-        );
-        let default_state_root = if cfg!(windows) {
-            PathBuf::from("C:\\Users\\x")
-                .join("AppData")
-                .join("Roaming")
-                .join("reasonix")
-        } else {
-            PathBuf::from("/h").join(".reasonix")
+    fn the_auto_workspace_is_empty_without_a_state_root() {
+        // No home and no pin: the reference answers "" and the caller degrades
+        // rather than joining a relative "workspaces/auto" into the cwd.
+        let mut config = Config::default();
+        config.storage.clear();
+        let empty = binding(env_with(&[]));
+        assert_eq!(empty.dir(RootId::State), PathBuf::new());
+        // A stated home always resolves one.
+        let stated = RootEnv {
+            env: env_with(&[]),
+            stated_home: PathBuf::from("/stated/home"),
+            configured: Vec::new(),
         };
         assert_eq!(
-            auto_workspace_dir_in(&BTreeMap::new(), &env),
-            default_state_root.join("workspaces").join("auto")
+            stated.dir(RootId::State).join("workspaces").join("auto"),
+            PathBuf::from("/stated/home/workspaces/auto")
         );
     }
 
     #[test]
-    fn auto_workspace_is_empty_when_the_state_root_cannot_resolve() {
-        // No home and no pin: the reference answers "" and the caller degrades.
-        let env = env_with(&[]);
-        assert_eq!(
-            auto_workspace_dir_in(&BTreeMap::new(), &env),
+    fn the_os_cache_base_reads_no_reasonix_variable() {
+        // storage_roots.go osCacheBase: locks converge on the OS user's cache,
+        // so a profile variable in the same snapshot changes nothing.
+        let env = env_with(&[
+            ("LOCALAPPDATA", "C:\\Users\\u\\AppData\\Local"),
+            ("XDG_CACHE_HOME", "/users/u/.cache"),
+            ("REASONIX_HOME", "/ignored"),
+            ("REASONIX_CACHE_HOME", "/ignored"),
+        ]);
+        let expected = if cfg!(windows) {
+            PathBuf::from("C:\\Users\\u\\AppData\\Local").join("reasonix")
+        } else if cfg!(target_os = "macos") {
+            // macOS reads ~/Library/Caches and the snapshot names no home.
             PathBuf::new()
-        );
+        } else {
+            PathBuf::from("/users/u/.cache").join("reasonix")
+        };
+        assert_eq!(os_cache_base_in(&env), expected);
     }
 
     #[test]
@@ -562,5 +603,24 @@ mod tests {
         assert_eq!(clean_path(Path::new("/..")), PathBuf::from("/"));
         assert_eq!(clean_path(Path::new("a/../../b")), PathBuf::from("../b"));
         assert_eq!(clean_path(Path::new(".")), PathBuf::from("."));
+    }
+
+    #[test]
+    fn the_env_snapshot_keeps_the_variables_the_root_chain_reads() {
+        // DirEnv reads one variable through the same directory-value rules a
+        // pin does, so a relative value lands absolute.
+        let vars: BTreeMap<String, String> = [("UNRELATED", "x")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let cwd = PathBuf::from(if cfg!(windows) { "C:\\wd" } else { "/wd" });
+        let env = DirEnv::with_vars(vars, cwd.clone());
+        assert_eq!(env.var("UNRELATED"), "x");
+        assert_eq!(env.var("REASONIX_HOME"), "");
+        assert_eq!(env.var_clean("REASONIX_HOME"), None);
+        assert_eq!(
+            env.var_clean("UNRELATED"),
+            Some(cwd.join("x").to_string_lossy().into_owned())
+        );
     }
 }
