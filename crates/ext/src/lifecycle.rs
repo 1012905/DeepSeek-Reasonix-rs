@@ -304,9 +304,10 @@ pub fn plugin_ref_owner(reference: &str) -> &str {
 }
 
 /// The ordered handshake sequence the host and sidecar must follow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HandshakePhase {
     /// Before `extension/initialize`.
+    #[default]
     New,
     /// `extension/initialize` sent; awaiting the declaration.
     Initializing,
