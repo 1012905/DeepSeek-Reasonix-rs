@@ -252,13 +252,13 @@ pipe-leading line must be a six-cell ledger row.
 | EXT-005 | EXT | streaming providers §5 | reasonix-ext | done | crates/ext/src/provider.rs (6 tests: catalog/stream DTOs, null-array/tool-parameter/chunk/sequence guards) (2026-11-21) |
 | EXT-006 | EXT | structured UI §6 | reasonix-ext | todo | M1: docs/contracts/ext.md §6 |
 | EXT-007 | EXT | extension tools §7 | reasonix-ext | todo | M1: docs/contracts/ext.md §7 |
-| EXT-008 | EXT | error table §8 | reasonix-ext | todo | M1: docs/contracts/ext.md §8 |
+| EXT-008 | EXT | error table §8 | reasonix-ext | done | crates/ext/src/error.rs (error::tests::error_table_has_twenty_frozen_reasons, error::tests::standard_code_mapping_matches_go, error::tests::protocol_error_data_round_trips_and_validates, error::tests::compare_version_oracle) (2026-11-23) |
 | EXT-009 | EXT | stability contract §9 | reasonix-ext | todo | M1: docs/contracts/ext.md §9 |
-| EXT-010 | EXT | security model §10 | reasonix-ext | todo | M1: docs/contracts/ext.md §10 |
+| EXT-010 | EXT | security model §10 | reasonix-ext | done | crates/ext/src/redact.rs (redact::tests six: prose_forms_and_bearer_tokens_are_masked, key_value_credentials_are_masked_but_the_sentence_survives, endpoint_userinfo_is_projected, ordinary_identifiers_survive, redaction_is_idempotent, empty_input_is_empty); manifest env cannot forge host identity (sidecar::process::tests::identity_variables_cannot_be_forged_by_manifest_env) (2026-11-23) |
 | EXT-011 | EXT | runtime v2 model §11 | reasonix-ext | todo | M1: docs/contracts/ext.md §11 |
-| EXT-012 | EXT | protocol package §12 | reasonix-ext | todo | M1: docs/contracts/ext.md §12 |
-| EXT-013 | EXT | rpcwire framing §13 | reasonix-ext | todo | M1: docs/contracts/ext.md §13 |
-| EXT-014 | EXT | sidecar lifecycle §14 | reasonix-ext | todo | M1: docs/contracts/ext.md §14 |
+| EXT-012 | EXT | protocol package §12 | reasonix-ext | done | crates/ext/src/rpcwire.rs (rpc_request_byte_shape_with_id_and_params, rpc_response_emits_both_result_and_error_like_go, rpc_error_byte_shape_and_data_omission, rpc_error_diagnostic_never_renders_message_text, decode_rpc_response_accepts_go_emitted_envelopes, server_request_replies_ping_roots_and_method_not_found, format_mcp_progress_byte_exact_table) (2026-11-23) |
+| EXT-013 | EXT | rpcwire framing §13 | reasonix-ext | done | crates/ext/src/rpcwire/gate.rs + writer.rs (rpc_request_wire_frame_appends_one_newline, rpc_request_notification_omits_id, notification_id_predicate_covers_empty_and_null, progress_token_key_accepts_strings_and_numbers_only, typed_input_errors_have_stable_identity) over the §1 frame codec (framing::tests nine) (2026-11-23) |
+| EXT-014 | EXT | sidecar lifecycle §14 | reasonix-ext | done | crates/ext/src/sidecar/ (manager::tests::required_failure_fails_the_batch_and_closes_optional_clients, manager::tests::concurrency_bound_is_the_smaller_of_workers_and_packages, manager::tests::an_expired_budget_starts_nothing; client::tests::exec_contract_failures_are_reported_before_any_spawn, missing_runtime_is_a_typed_refusal; installed::tests::only_enabled_runtime_packages_are_launch_candidates) plus crates/ext/tests/sidecar_lifecycle.rs::spawned_sidecar_handshakes_and_shuts_down_cleanly and startup_failure_records_phase_timing_and_stderr_summary (2026-11-23) |
 | EXT-015 | EXT | dispatch chain §15 | reasonix-ext | todo | M1: docs/contracts/ext.md §15 |
 | EXT-016 | EXT | providerext/providerconv §16 | reasonix-ext | todo | M1: docs/contracts/ext.md §16 |
 | EXT-017 | EXT | uihub §17 | reasonix-ext | todo | M1: docs/contracts/ext.md §17 |
