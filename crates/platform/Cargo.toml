@@ -1,6 +1,6 @@
 [package]
 name = "reasonix-platform"
-description = "OS surfaces: processes, sandboxing, keyring, notifications, crash reporting"
+description = "OS-facing platform primitives: process, signal, log, crash, app identity"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,3 +8,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+tempfile = { workspace = true }
