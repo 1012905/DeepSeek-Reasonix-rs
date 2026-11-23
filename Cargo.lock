@@ -1015,6 +1015,9 @@ dependencies = [
 [[package]]
 name = "reasonix-platform"
 version = "0.3.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "reasonix-provider"
