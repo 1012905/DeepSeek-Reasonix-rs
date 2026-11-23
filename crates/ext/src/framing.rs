@@ -328,6 +328,23 @@ impl<W: Write> FrameWriter<W> {
         Ok(bytes.len())
     }
 
+    /// Writes one already-encoded frame (trailing newline included).
+    ///
+    /// The byte budget was enforced by whichever encoder produced the bytes, so
+    /// a queued frame's size is not re-checked here; the caller owns it.
+    pub fn write_encoded(&self, bytes: &[u8]) -> Result<usize, WriteError> {
+        let mut state = self.inner.lock().expect("frame writer mutex poisoned");
+        if let Some(kind) = state.terminal_error {
+            return Err(WriteError::Io(io::Error::new(kind, "connection failed")));
+        }
+        state.writer.write_all(bytes).map_err(|e| {
+            state.terminal_error = Some(e.kind());
+            WriteError::Io(e)
+        })?;
+        state.writer.flush().map_err(WriteError::Io)?;
+        Ok(bytes.len())
+    }
+
     /// Enqueues a best-effort frame without blocking on the physical write.
     ///
     /// In this synchronous port the write still happens inline, but the

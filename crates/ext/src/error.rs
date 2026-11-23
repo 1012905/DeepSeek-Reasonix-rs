@@ -71,6 +71,105 @@ impl fmt::Display for OutboundQueueFullError {
 
 impl std::error::Error for OutboundQueueFullError {}
 
+/// An outbound write that made no progress within its bound.
+///
+/// A peer that holds the pipe open but stopped reading would otherwise block
+/// every later caller; this is transport-fatal, so the connection ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteStallError {
+    pub direction: Direction,
+    /// The bound that elapsed, in milliseconds.
+    pub stall_ms: u64,
+}
+
+impl fmt::Display for WriteStallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "rpcwire: {} write made no progress for {}ms",
+            match self.direction {
+                Direction::Inbound => "inbound",
+                Direction::Outbound => "outbound",
+            },
+            self.stall_ms
+        )
+    }
+}
+
+impl std::error::Error for WriteStallError {}
+
+/// Why a connection call failed.
+///
+/// The variants stay apart so a caller can tell a caller-side deadline from a
+/// transport that died, and a peer error object from a frame budget breach.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnError {
+    /// A frame violated `max_inbound_bytes` or `max_outbound_bytes`.
+    FrameTooLarge(FrameTooLargeError),
+    /// A best-effort write found the bounded queue full.
+    QueueFull(OutboundQueueFullError),
+    /// An outbound write stalled past `max_write_stall`.
+    WriteStall(WriteStallError),
+    /// The peer answered with a JSON-RPC error object.
+    Response(ResponseError),
+    /// The transport failed; the payload is the operating-system message.
+    Io(String),
+    /// The caller's own deadline elapsed; the connection stays usable.
+    TimedOut,
+    /// The connection already ended; every later call observes this.
+    Closed { name: String },
+}
+
+impl fmt::Display for ConnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FrameTooLarge(e) => fmt::Display::fmt(e, f),
+            Self::QueueFull(e) => fmt::Display::fmt(e, f),
+            Self::WriteStall(e) => fmt::Display::fmt(e, f),
+            Self::Response(e) => fmt::Display::fmt(e, f),
+            Self::Io(message) => write!(f, "rpcwire: {message}"),
+            Self::TimedOut => f.write_str("rpcwire: call deadline elapsed"),
+            Self::Closed { name } => write!(f, "{name}: connection closed"),
+        }
+    }
+}
+
+impl std::error::Error for ConnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::FrameTooLarge(e) => Some(e),
+            Self::QueueFull(e) => Some(e),
+            Self::WriteStall(e) => Some(e),
+            Self::Response(e) => Some(e),
+            Self::Io(_) | Self::TimedOut | Self::Closed { .. } => None,
+        }
+    }
+}
+
+impl From<FrameTooLargeError> for ConnError {
+    fn from(err: FrameTooLargeError) -> Self {
+        Self::FrameTooLarge(err)
+    }
+}
+
+impl From<OutboundQueueFullError> for ConnError {
+    fn from(err: OutboundQueueFullError) -> Self {
+        Self::QueueFull(err)
+    }
+}
+
+impl From<WriteStallError> for ConnError {
+    fn from(err: WriteStallError) -> Self {
+        Self::WriteStall(err)
+    }
+}
+
+impl From<ResponseError> for ConnError {
+    fn from(err: ResponseError) -> Self {
+        Self::Response(err)
+    }
+}
+
 /// An error returned by a `Conn::request` when the peer sends a JSON-RPC error.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResponseError {

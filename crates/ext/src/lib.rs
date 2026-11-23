@@ -24,4 +24,7 @@ pub mod limits;
 pub mod mcp;
 pub mod provider;
 pub mod rawjson;
+pub mod redact;
+pub mod rpcwire;
+pub mod sidecar;
 pub mod ui;
