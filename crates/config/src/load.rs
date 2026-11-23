@@ -2,17 +2,21 @@
 //! first (docs/contracts/config.md §0), with the reference's per-layer
 //! tolerance — missing files are skipped and a file that cannot be read or
 //! parsed is skipped with a load warning instead of failing the load.
+//!
+//! After the layers apply, the two list sections are re-merged by name across
+//! every source (load.go mergeTOMLPlugins / mergeTOMLProviders): TOML decoding
+//! replaces an array of tables wholesale, so without that merge a project file
+//! would drop the global config's MCP servers and providers. The per-file
+//! decode is isolated first (decode.go isolateDecodedProviders), because
+//! array-of-tables decoding is positional.
 
-use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
 use reasonix_core::fileencoding::read_file_utf8;
-use serde::Deserialize;
 
-use crate::desktop::DesktopSection;
+use crate::merge::{DeclaredLists, EntrySource, merge_plugins, merge_providers};
 use crate::model::Config;
-use crate::serve::{AuthMode, ServeSection};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -28,16 +32,12 @@ impl Config {
     /// Loads layered configuration files, lowest priority first: built-in
     /// defaults, then each file's declared keys over what came before. The
     /// first path is the user layer; later paths are project layers, which
-    /// the user-globals rule keeps away from [serve] and [storage]
-    /// (load_project.go). Missing files are skipped; a file that fails to
-    /// read or parse is skipped with a load warning — like the reference,
-    /// bad TOML never fails the load.
+    /// the user-globals rule keeps away from [serve], [storage], [secrets],
+    /// [telemetry], and the delegation limits (load_project.go).
     ///
-    /// Each file is parsed exactly once, straight into an all-Optional delta
-    /// and applied field-wise. The OPT-016 alternative (Value trees merged
-    /// before one final decode) measured slower: the parser builds every
-    /// unknown key the model ignores, while a delta decode skips them
-    /// (benches/load.rs holds both numbers).
+    /// Missing files are skipped; a file that fails to read or parse is
+    /// skipped with a load warning — like the reference, bad TOML never fails
+    /// the load.
     pub fn load<P: AsRef<Path>>(layered_paths: &[P]) -> Result<Config, ConfigError> {
         for path in layered_paths {
             if is_blank_path(path.as_ref()) {
@@ -45,22 +45,60 @@ impl Config {
             }
         }
         let mut config = Config::builtin_defaults();
+        let mut sources: Vec<(EntrySource, DeclaredLists)> = Vec::new();
         for (index, path) in layered_paths.iter().enumerate() {
             let path = path.as_ref();
-            match decode_layer(path) {
-                LayerOutcome::Missing => {}
+            let text = match decode_layer(path) {
+                LayerOutcome::Missing => continue,
                 LayerOutcome::Invalid(error) => {
                     config
                         .load_warnings
                         .push(invalid_layer_warning(index, path, &error));
+                    continue;
                 }
-                LayerOutcome::Decoded(delta) => {
-                    apply_layer(&mut config, delta, index > 0);
+                LayerOutcome::Decoded(text) => text,
+            };
+            // One parse per file. The delta carries the two list sections as
+            // options, so "declared empty" stays distinct from "not declared"
+            // and nothing is decoded onto an accumulated list — which is what
+            // keeps array-of-tables decoding from inheriting by position.
+            match toml::from_str::<crate::delta::LayerDelta>(&text) {
+                Ok(delta) => {
+                    delta.apply(&mut config, index > 0);
+                    sources.push((
+                        EntrySource::for_layer(index),
+                        DeclaredLists::from_delta(&delta),
+                    ));
+                }
+                Err(error) => {
+                    config.load_warnings.push(invalid_layer_warning(
+                        index,
+                        path,
+                        &error.to_string(),
+                    ));
                 }
             }
         }
+        apply_merged_lists(&mut config, &sources);
         Ok(config)
     }
+}
+
+/// Re-merges the list sections across sources by name (load.go).
+fn apply_merged_lists(config: &mut Config, sources: &[(EntrySource, DeclaredLists)]) {
+    let provider_sources: Vec<(EntrySource, Vec<crate::provider::ProviderEntry>)> = sources
+        .iter()
+        .filter(|(_, declared)| declared.providers_defined)
+        .map(|(source, declared)| (*source, declared.providers.clone()))
+        .collect();
+    if !provider_sources.is_empty() {
+        config.providers = merge_providers(&provider_sources).providers;
+    }
+    let plugin_sources: Vec<(EntrySource, Vec<crate::plugin::PluginEntry>)> = sources
+        .iter()
+        .map(|(source, declared)| (*source, declared.plugins.clone()))
+        .collect();
+    config.plugins = merge_plugins(&plugin_sources);
 }
 
 fn is_blank_path(path: &Path) -> bool {
@@ -73,7 +111,7 @@ fn is_blank_path(path: &Path) -> bool {
 enum LayerOutcome {
     Missing,
     Invalid(String),
-    Decoded(LayerDelta),
+    Decoded(String),
 }
 
 fn decode_layer(path: &Path) -> LayerOutcome {
@@ -83,12 +121,8 @@ fn decode_layer(path: &Path) -> LayerOutcome {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return LayerOutcome::Missing,
         Err(error) => return LayerOutcome::Invalid(error.to_string()),
     };
-    let text = match String::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(error) => return LayerOutcome::Invalid(error.to_string()),
-    };
-    match toml::from_str(&text) {
-        Ok(delta) => LayerOutcome::Decoded(delta),
+    match String::from_utf8(bytes) {
+        Ok(text) => LayerOutcome::Decoded(text),
         Err(error) => LayerOutcome::Invalid(error.to_string()),
     }
 }
@@ -108,109 +142,6 @@ fn invalid_layer_warning(index: usize, path: &Path, error: &str) -> String {
             path.display(),
             error
         )
-    }
-}
-
-/// One file's declared keys over the accumulated config. Every field is
-/// optional so "declared" and "built-in default" stay distinct — the direct
-/// translation of the reference decoding each file onto the live config.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct LayerDelta {
-    language: Option<String>,
-    serve: Option<PartialServe>,
-    desktop: Option<PartialDesktop>,
-    secrets: Option<PartialSecrets>,
-    storage: Option<BTreeMap<String, String>>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct PartialServe {
-    auth_mode: Option<String>,
-    token: Option<String>,
-    password_hash: Option<String>,
-    behind_proxy: Option<bool>,
-    share_port: Option<i64>,
-    remember_paired_devices: Option<bool>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct PartialSecrets {
-    protect_sensitive_files: Option<bool>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct PartialDesktop {
-    telemetry: Option<bool>,
-    metrics: Option<bool>,
-    tray: Option<String>,
-    default_tool_approval_mode: Option<String>,
-}
-
-fn apply_layer(config: &mut Config, delta: LayerDelta, project_scope: bool) {
-    // load_project.go userGlobals: a workspace file never gets to set these.
-    // The rest of the user-globals set is unmodeled in this slice.
-    if let Some(language) = delta.language {
-        config.language = language;
-    }
-    if !project_scope {
-        if let Some(serve) = delta.serve {
-            apply_serve(&mut config.serve, serve);
-        }
-        if let Some(secrets) = delta.secrets {
-            // A workspace file never arms or disarms the denylists
-            // (load_project.go userGlobals holds SecretsConfig).
-            if let Some(value) = secrets.protect_sensitive_files {
-                config.secrets.protect_sensitive_files = value;
-            }
-        }
-        if let Some(storage) = delta.storage {
-            config.storage = storage;
-        }
-    }
-    if let Some(desktop) = delta.desktop {
-        apply_desktop(&mut config.desktop, desktop, project_scope);
-    }
-}
-
-fn apply_serve(serve: &mut ServeSection, partial: PartialServe) {
-    if let Some(raw) = partial.auth_mode {
-        serve.auth_mode = AuthMode::normalize(&raw);
-    }
-    if let Some(value) = partial.token {
-        serve.token = value;
-    }
-    if let Some(value) = partial.password_hash {
-        serve.password_hash = value;
-    }
-    if let Some(value) = partial.behind_proxy {
-        serve.behind_proxy = value;
-    }
-    if let Some(value) = partial.share_port {
-        serve.share_port = value;
-    }
-    if let Some(value) = partial.remember_paired_devices {
-        serve.remember_paired_devices = value;
-    }
-}
-
-fn apply_desktop(desktop: &mut DesktopSection, partial: PartialDesktop, project_scope: bool) {
-    if let Some(value) = partial.telemetry {
-        desktop.telemetry = Some(value);
-    }
-    if let Some(value) = partial.metrics {
-        desktop.metrics = Some(value);
-    }
-    if let Some(value) = partial.tray {
-        desktop.tray = value;
-    }
-    // load_project.go's narrowPermissions keeps the approval posture
-    // user-scope: a workspace file never decides what runs in it unattended.
-    if !project_scope && let Some(value) = partial.default_tool_approval_mode {
-        desktop.default_tool_approval_mode = value;
     }
 }
 
@@ -234,6 +165,7 @@ mod tests {
             .tempdir_in(&base)
             .expect("create config test temp dir")
     }
+
     fn write(dir: &TempDir, name: &str, content: &str) -> PathBuf {
         let path = dir.path().join(name);
         fs::write(&path, content).expect("test fixture write");
@@ -286,6 +218,7 @@ compact_ratio = 0.85
         assert_eq!(loaded.language, "zh");
         assert_eq!(loaded.serve.auth_mode, AuthMode::Token);
         assert!(!loaded.desktop_telemetry());
+        assert_eq!(loaded.agent.compact_ratio, 0.85);
     }
 
     #[test]
@@ -607,10 +540,145 @@ cache = "C:/cache"
     }
 
     #[test]
-    fn desktop_section_shape() {
-        let section = DesktopSection::default();
-        assert!(section.telemetry.is_none());
-        assert!(section.metrics.is_none());
-        assert_eq!(section.tray, "");
+    fn providers_merge_by_name_across_the_layers() {
+        // The merge exists because a TOML array-of-tables replaces the list:
+        // without it, the project file would drop the user's providers.
+        let dir = temp_dir();
+        let user = write(
+            &dir,
+            "user.toml",
+            r#"
+[[providers]]
+name = "gateway"
+kind = "openai"
+base_url = "https://user.example.com/v1"
+models = ["m"]
+api_key_env = "GATEWAY_API_KEY"
+
+[[providers]]
+name = "second"
+kind = "openai"
+base_url = "https://second.example.com/v1"
+models = ["s"]
+"#,
+        );
+        let project = write(
+            &dir,
+            "project.toml",
+            r#"
+[[providers]]
+name = "gateway"
+kind = "openai"
+base_url = "https://project.example.com/v1"
+models = ["p"]
+
+[[providers]]
+name = "workspace"
+kind = "openai"
+base_url = "https://workspace.example.com/v1"
+models = ["w"]
+"#,
+        );
+        let loaded = Config::load(&[user, project]).expect("layered providers");
+        assert!(loaded.load_warnings.is_empty());
+        assert_eq!(
+            loaded
+                .providers
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gateway", "second", "workspace"]
+        );
+        // The user entry wins the name collision.
+        assert_eq!(
+            loaded
+                .provider("gateway")
+                .map(|entry| entry.base_url.as_str()),
+            Some("https://user.example.com/v1")
+        );
+        assert_eq!(
+            loaded
+                .provider("workspace")
+                .map(|entry| entry.base_url.as_str()),
+            Some("https://workspace.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn a_declared_provider_list_is_isolated_from_the_seeded_one() {
+        // provider_isolation_test.go: no field of a previously accumulated
+        // entry may survive onto a declared one.
+        let dir = temp_dir();
+        let user = write(
+            &dir,
+            "user.toml",
+            r#"
+[[providers]]
+name = "gateway"
+kind = "openai"
+base_url = "http://localhost:8021/v1"
+models = ["my-model"]
+api_key_env = "GATEWAY_API_KEY"
+"#,
+        );
+        let loaded = Config::load(&[user]).expect("provider load");
+        assert_eq!(loaded.providers.len(), 1);
+        let entry = &loaded.providers[0];
+        assert_eq!(entry.name, "gateway");
+        assert!(entry.balance_url.is_empty());
+        assert_eq!(entry.context_window, 0);
+        assert!(entry.price.is_none());
+        assert_eq!(entry.model, "");
+    }
+
+    #[test]
+    fn plugins_merge_by_name_across_the_layers() {
+        let dir = temp_dir();
+        let user = write(
+            &dir,
+            "user.toml",
+            r#"
+[[plugins]]
+name = "memory"
+command = "npx -y memory"
+disabled_tools = ["a"]
+"#,
+        );
+        let project = write(
+            &dir,
+            "project.toml",
+            r#"
+[[plugins]]
+name = "memory"
+command = "uvx memory"
+disabled_tools = ["b"]
+
+[[plugins]]
+name = "extra"
+command = "npx extra"
+"#,
+        );
+        let loaded = Config::load(&[user, project]).expect("layered plugins");
+        assert_eq!(
+            loaded
+                .plugins
+                .iter()
+                .map(|plugin| plugin.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["memory", "extra"]
+        );
+        assert_eq!(loaded.plugins[0].command, "uvx");
+        assert_eq!(
+            loaded.plugins[0].disabled_tools,
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_deepseek_default_providers_are_not_restated_here() {
+        // The reference ships them with their rates; the rates live in
+        // reasonix_contract::pricing, so this crate ships no rate table and
+        // therefore no built-in provider of its own.
+        assert!(Config::builtin_defaults().providers.is_empty());
     }
 }
