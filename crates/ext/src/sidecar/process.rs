@@ -523,6 +523,9 @@ mod tests {
         ] {
             assert_eq!(resolve_runtime_command(command, root), Err(want));
         }
+        // A Windows shell spelling is only absolute on Windows: elsewhere the
+        // drive-letter form answers NotAbsolute before the shell rule can see it.
+        #[cfg(windows)]
         assert!(matches!(
             resolve_runtime_command("C:\\Windows\\System32\\cmd.exe", root),
             Err(SpawnError::Shell { .. })
