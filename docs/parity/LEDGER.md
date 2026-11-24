@@ -24,23 +24,23 @@ pipe-leading line must be a six-cell ledger row.
 | CLI-001 | CLI | reasonix --version | apps/reasonix | done | apps/reasonix/tests/cli.rs::version_flag_prints_single_line (2026-11-13) |
 | CLI-002 | CLI | reasonix -v | apps/reasonix | done | apps/reasonix/tests/cli.rs::short_version_flag_matches (2026-11-13) |
 | CLI-003 | CLI | reasonix version | apps/reasonix | done | apps/reasonix/tests/cli.rs::version_subcommand_prints_single_line (2026-11-13) |
-| CLI-004 | CLI | reasonix version --verbose | reasonix-cli | todo | M1: verbose body needs usage() |
-| CLI-005 | CLI | reasonix version --json | reasonix-cli | todo | M1: go runtime field decision for BREAKS.md |
-| CLI-006 | CLI | reasonix version --help | reasonix-cli | todo | M1 |
-| CLI-007 | CLI | reasonix help and --help and -h | reasonix-cli | todo | M1: usage() body |
-| CLI-008 | CLI | Bare invocation outside TTY | reasonix-cli | todo | M1: depends on usage() |
-| CLI-009 | CLI | Full command and flag matrix | reasonix-cli | todo | M1: see docs/contracts/cli.md; details in CLI-010..CLI-050 |
-| CLI-010 | CLI | Bare invocation TTY rules + bareUsage exits (bare 0, session flags 2) + mintty hint | reasonix-cli | todo | M1: docs/contracts/cli.md §2 |
-| CLI-011 | CLI | --acp shortcut routes to acp command | reasonix-cli | todo | M1: docs/contracts/cli.md §2 |
-| CLI-012 | CLI | Leading session flags move into run when TUI+run parsers agree | reasonix-cli | todo | M1: docs/contracts/cli.md §2.1 |
-| CLI-013 | CLI | Leading -p/--print routes to run --print | reasonix-cli | todo | M1: docs/contracts/cli.md §2 |
-| CLI-014 | CLI | First-token interactive flag means bare TUI (isDefaultInteractiveFlag set) | reasonix-cli | todo | M1: docs/contracts/cli.md §2 |
-| CLI-015 | CLI | Unknown command: stderr message + usage + exit 2 | reasonix-cli | todo | M1: docs/contracts/cli.md §3 |
-| CLI-016 | CLI | Hidden schedule verbs with human-confirmation exits (77) | reasonix-cli | todo | M1: docs/contracts/cli.md §7.25 |
-| CLI-017 | CLI | Hidden sandbox list/revoke | reasonix-cli | todo | M1: docs/contracts/cli.md §7.24 |
-| CLI-018 | CLI | tui/chat/code aliases; TUI flag set incl. --inline and optional --resume; no --auto | reasonix-cli | todo | M1: docs/contracts/cli.md §7.2 |
-| CLI-019 | CLI | run flag set and exit-code map | reasonix-cli | todo | M1: docs/contracts/cli.md §7.1 |
-| CLI-020 | CLI | Permission-mode parsing matrix and error text | reasonix-cli | todo | M1: docs/contracts/cli.md §4.1 |
+| CLI-004 | CLI | reasonix version --verbose | reasonix-cli | done | crates/cli/src/build_info.rs, proven by crates/cli/tests/version.rs::version_verbose_lists_build_fields_in_order, version_verbose_short_alias (2026-11-24) |
+| CLI-005 | CLI | reasonix version --json | reasonix-cli | done | build_info.rs JSON payload, proven by crates/cli/tests/version.rs::version_json_payload_fields_and_omitempty, version_json_drops_unknown_metadata, version_json_verbose_mutex (2026-11-24) |
+| CLI-006 | CLI | reasonix version --help | reasonix-cli | done | crates/cli/tests/version.rs::version_help_usage_stdout_zero, version_unknown_flag_exit_two (2026-11-24) |
+| CLI-007 | CLI | reasonix help and --help and -h | reasonix-cli | done | crates/cli/src/text.rs usage body, proven by crates/cli/tests/bare.rs::help_forms_print_usage_to_stdout_zero, help_ignores_extra_positionals (2026-11-24) |
+| CLI-008 | CLI | Bare invocation outside TTY | reasonix-cli | done | crates/cli/tests/bare.rs::bare_outside_console_usage_exit_zero, standalone_console_hint_appended_after_usage (2026-11-24) |
+| CLI-009 | CLI | Full command and flag matrix | reasonix-cli | done | crates/cli/src/flags.rs flag matrix, proven by crates/cli/tests/dispatch.rs::dispatch_table_routes_known_verbs, hidden_verbs_are_not_unknown (2026-11-24) |
+| CLI-010 | CLI | Bare invocation TTY rules + bareUsage exits (bare 0, session flags 2) + mintty hint | reasonix-cli | done | crates/cli/tests/bare.rs::bare_tty_routes_to_tui, bare_session_flags_outside_console_exit_two, mintty_hint_exit_two_without_usage (2026-11-24) |
+| CLI-011 | CLI | --acp shortcut routes to acp command | reasonix-cli | done | crates/cli/tests/normalize.rs::acp_shortcut_routes_to_acp (2026-11-24) |
+| CLI-012 | CLI | Leading session flags move into run when TUI+run parsers agree | reasonix-cli | done | crates/cli/tests/normalize.rs::leading_flags_into_run_when_parsers_agree, agreed_lead_dispatches_to_run (2026-11-24) |
+| CLI-013 | CLI | Leading -p/--print routes to run --print | reasonix-cli | done | crates/cli/tests/normalize.rs::leading_print_routes_to_run_print, print_after_terminator_is_not_leading (2026-11-24) |
+| CLI-014 | CLI | First-token interactive flag means bare TUI (isDefaultInteractiveFlag set) | reasonix-cli | done | crates/cli/tests/normalize.rs::first_token_interactive_flag_bare_tui (2026-11-24) |
+| CLI-015 | CLI | Unknown command: stderr message + usage + exit 2 | reasonix-cli | done | crates/cli/tests/dispatch.rs::unknown_command_stderr_usage_exit_two and apps/reasonix/tests/cli.rs::unknown_command_exits_two (2026-11-24) |
+| CLI-016 | CLI | Hidden schedule verbs with human-confirmation exits (77) | reasonix-cli | done | crates/cli/tests/schedule.rs::schedule_human_verbs_exit_77_non_tty, schedule_agent_child_exit_77, schedule_pause_verbs_do_not_require_human, schedule_one_id_verb_requires_single_argument, schedule_list_routes_through_human_check, schedule_exec_routes_to_exec (2026-11-24) |
+| CLI-017 | CLI | Hidden sandbox list/revoke | reasonix-cli | done | crates/cli/tests/sandbox.rs::sandbox_list_and_revoke_are_routed, sandbox_other_arguments_usage_two (2026-11-24) |
+| CLI-018 | CLI | tui/chat/code aliases; TUI flag set incl. --inline and optional --resume; no --auto | reasonix-cli | done | crates/cli/tests/tui.rs::tui_aliases_route_to_tui, inline_flag_parses_under_tui, resume_is_optional_value, tui_rejects_auto_flag, tui_outside_console_refused, tui_unknown_flag_exit_two (2026-11-24) |
+| CLI-019 | CLI | run flag set and exit-code map | reasonix-cli | done | crates/cli/tests/run.rs::run_flag_set_parses_known_flags, run_clean_argv_routes_with_parsed_flags, run_approval_conflicts_exit_two, run_rejects_unknown_output_format, run_events_jsonl_conflicts_with_output_format, run_rejects_plan_mode, run_empty_prompt_usage_hint, run_unknown_flag_exit_two (2026-11-24) |
+| CLI-020 | CLI | Permission-mode parsing matrix and error text | reasonix-cli | done | crates/cli/src/permission.rs, proven by crates/cli/tests/permission_mode.rs::permission_mode_matrix_maps_accepted_values, acceptedits_allow_list_matches_reference, invalid_permission_mode_wrapped_by_run_exit_two (2026-11-24) |
 | CLI-021 | CLI | Preset/profile parsing matrix and error text | reasonix-cli | todo | M1: docs/contracts/cli.md §4.2 |
 | CLI-022 | CLI | Approval flag conflicts (--auto/--yolo/--permission-mode) | reasonix-cli | todo | M1: docs/contracts/cli.md §4.3 |
 | CLI-023 | CLI | Session query resolution: exact/partial/machine-id/ambiguous | reasonix-cli | todo | M1: docs/contracts/cli.md §4.4 |
