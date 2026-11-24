@@ -10,10 +10,15 @@
 
 use std::io::IsTerminal as _;
 
+pub(crate) mod interactive;
+pub(crate) mod machine;
+pub(crate) mod verbs_a;
+pub(crate) mod verbs_b;
+
 use crate::build_info::BuildInfo;
-use crate::flags::{self, ParsedFlags, normalize_optional_resume_arg, parse, run_specs, tui_specs};
-use crate::permission::parse_permission_mode;
+use crate::flags::{self, ParsedFlags};
 use crate::text::*;
+use machine::{MachineInterface, MachineOptions};
 
 /// Injectable process-environment facts the routing decision depends on.
 #[derive(Debug, Clone)]
@@ -107,6 +112,31 @@ pub enum Route {
     Schedule { verb: String },
     /// Hidden `sandbox` verb.
     Sandbox { verb: String },
+    /// `serve` / `web`.
+    Serve {
+        web: bool,
+        args: Vec<String>,
+        flags: ParsedFlags,
+    },
+    /// A generic subcommand whose verb and parsed flags travel together.
+    Verb {
+        command: String,
+        verb: String,
+        args: Vec<String>,
+        flags: ParsedFlags,
+    },
+    /// Machine interface: session / hook / task.
+    Machine {
+        interface: MachineInterface,
+        operation: String,
+        options: MachineOptions,
+    },
+    /// `sessions reindex|diagnose|cleanup`.
+    SessionsMaintenance { verb: String, flags: ParsedFlags },
+    /// `catalogs reindex <catalog>`.
+    Catalogs { catalog: String, args: Vec<String> },
+    /// `completion <shell>`.
+    Completion { shell: String },
     /// Command the dispatch table does not know.
     Unknown { command: String },
     /// Known command whose kernel handler has not been migrated yet.
@@ -123,7 +153,7 @@ pub struct CliOutcome {
 }
 
 impl CliOutcome {
-    fn new(stdout: String, stderr: String, code: i32, route: Route) -> Self {
+    pub(crate) fn new(stdout: String, stderr: String, code: i32, route: Route) -> Self {
         Self {
             stdout,
             stderr,
@@ -139,35 +169,38 @@ pub fn dispatch(args: &[String], info: &BuildInfo, env: &CliEnv) -> CliOutcome {
     if normalized.is_empty() || cmd.is_empty() {
         return bare_invocation(&normalized, env);
     }
+    let rest = &normalized[1..];
     match cmd.as_str() {
-        "run" => run_command(&normalized[1..], env),
-        "serve" => unmigrated("serve"),
-        "tui" | "chat" | "code" => tui_command(&normalized[1..], env),
-        "web" => unmigrated("web"),
-        "setup" => unmigrated("setup"),
-        "config" => unmigrated("config"),
+        "run" => interactive::run_command(rest, env),
+        "serve" => verbs_a::serve_command(false, rest),
+        "web" => verbs_a::serve_command(true, rest),
+        "tui" | "chat" | "code" => interactive::tui_command(rest, env),
+        "setup" => verbs_b::setup_command(rest),
+        "config" => verbs_b::config_command(rest),
         "init" => init_hint(),
-        "acp" => CliOutcome::new(String::new(), String::new(), 2, Route::Acp),
-        "mcp" => unmigrated("mcp"),
-        "login" | "whoami" | "logout" => unmigrated(&cmd),
-        "remote" => unmigrated("remote"),
-        "plugin" => unmigrated("plugin"),
-        "subagent" => unmigrated("subagent"),
-        "doctor" => unmigrated("doctor"),
-        "report" => unmigrated("report"),
-        "session" | "sessions" | "catalogs" => unmigrated(&cmd),
-        "hook" | "hooks" => unmigrated(&cmd),
-        "trust" => unmigrated("trust"),
-        "task" => unmigrated("task"),
-        "review" => unmigrated("review"),
-        "upgrade" | "update" => unmigrated(&cmd),
-        "version" => version_command(&normalized[1..], info, true),
+        "acp" => verbs_a::acp_command(rest),
+        "mcp" => verbs_a::mcp_command(rest),
+        "login" | "whoami" | "logout" => verbs_b::account_command(&cmd, rest),
+        "remote" => verbs_b::remote_command(rest, env),
+        "plugin" => verbs_a::plugin_command(rest),
+        "subagent" => verbs_a::subagent_command(rest),
+        "doctor" => verbs_a::doctor_command(rest),
+        "report" => verbs_b::report_command(rest),
+        "session" => machine::session_command(rest),
+        "sessions" => machine::sessions_command(rest),
+        "catalogs" => machine::catalogs_command(rest),
+        "hook" | "hooks" => machine::hook_command(rest),
+        "trust" => verbs_b::trust_command(rest),
+        "task" => machine::task_command(rest),
+        "review" => verbs_b::review_command(rest),
+        "upgrade" | "update" => verbs_b::upgrade_command(rest, &cmd),
+        "version" => version_command(rest, info, true),
         "--version" | "-v" => version_command(&[], info, false),
-        "completion" => unmigrated("completion"),
-        "docs-manifest" => unmigrated("docs-manifest"),
+        "completion" => verbs_b::completion_command(rest),
+        "docs-manifest" => verbs_b::docs_manifest_command(rest),
         "help" | "--help" | "-h" => help_command(),
-        "schedule" => schedule_command(&normalized[1..], env),
-        "sandbox" => sandbox_command(&normalized[1..]),
+        "schedule" => schedule_command(rest, env),
+        "sandbox" => sandbox_command(rest),
         other => unknown_command(other),
     }
 }
@@ -216,18 +249,7 @@ fn unknown_command(cmd: &str) -> CliOutcome {
     )
 }
 
-fn unmigrated(cmd: &str) -> CliOutcome {
-    CliOutcome::new(
-        String::new(),
-        unmigrated_notice(cmd),
-        2,
-        Route::Unmigrated {
-            command: cmd.to_owned(),
-        },
-    )
-}
-
-fn unmigrated_notice(cmd: &str) -> String {
+pub(crate) fn unmigrated_notice(cmd: &str) -> String {
     format!("reasonix: command not implemented in this build: {cmd}\n")
 }
 
@@ -281,113 +303,6 @@ fn version_command(rest: &[String], info: &BuildInfo, allow_flags: bool) -> CliO
         0,
         Route::Version,
     )
-}
-
-/// `reasonix tui|chat|code [flags]`. Flag parsing and the non-terminal guard
-/// are deterministic; the interactive session itself is the unmigrated body.
-fn tui_command(rest: &[String], env: &CliEnv) -> CliOutcome {
-    let normalized = normalize_optional_resume_arg(rest);
-    let flags = parse(&tui_specs(), &normalized, true);
-    let route = Route::Tui {
-        args: normalized.clone(),
-        flags: flags.clone(),
-    };
-    if flags.help {
-        return CliOutcome::new(String::new(), String::new(), 0, route);
-    }
-    if let Some(err) = &flags.error {
-        return CliOutcome::new(String::new(), format!("{ERROR_PREFIX} {err}\n"), 2, route);
-    }
-    if !(env.stdin_is_tty && env.stdout_is_tty) {
-        if env.mintty {
-            return CliOutcome::new(String::new(), MINTTY_CONSOLE_HINT.to_owned(), 2, route);
-        }
-        return CliOutcome::new(
-            String::new(),
-            format!("{ERROR_PREFIX} {TUI_NEEDS_TERMINAL}\n"),
-            2,
-            route,
-        );
-    }
-    CliOutcome::new(String::new(), unmigrated_notice("tui"), 2, route)
-}
-
-/// `reasonix run [flags] <task>`. The decidable pre-handler checks run here:
-/// flag parsing, approval conflicts, output format, events-jsonl combination,
-/// permission mode, plan refusal, and the empty-prompt hint. Session, lease,
-/// boot, and completion-classification outcomes belong to the unmigrated body.
-fn run_command(rest: &[String], env: &CliEnv) -> CliOutcome {
-    let flags = parse(&run_specs(), rest, true);
-    let route = Route::Run {
-        args: rest.to_vec(),
-        flags: flags.clone(),
-    };
-    if flags.help {
-        return CliOutcome::new(String::new(), String::new(), 0, route);
-    }
-    if let Some(err) = &flags.error {
-        return CliOutcome::new(String::new(), format!("{ERROR_PREFIX} {err}\n"), 2, route);
-    }
-
-    let auto = flags.bool("auto");
-    let yolo = flags.bool("yolo");
-    let mode_explicit = flags.changed("permission-mode");
-    let conflict = if auto && yolo {
-        Some(AUTO_YOLO_CONFLICT)
-    } else if auto && mode_explicit {
-        Some(AUTO_PERMISSION_CONFLICT)
-    } else if yolo && mode_explicit {
-        Some(YOLO_PERMISSION_CONFLICT)
-    } else {
-        None
-    };
-    if let Some(msg) = conflict {
-        return CliOutcome::new(String::new(), format!("{ERROR_PREFIX} {msg}\n"), 2, route);
-    }
-
-    let output_format = flags.value("output-format").unwrap_or("text");
-    if flags.changed("output-format") && !matches!(output_format, "text" | "json" | "stream-json") {
-        return CliOutcome::new(
-            String::new(),
-            format!(
-                "{ERROR_PREFIX} unknown output format {:?} (want text, json, or stream-json)\n",
-                output_format
-            ),
-            2,
-            route,
-        );
-    }
-
-    if flags.bool("events-jsonl") && flags.changed("output-format") {
-        return CliOutcome::new(
-            String::new(),
-            format!("{ERROR_PREFIX} {EVENTS_JSONL_CONFLICT}\n"),
-            2,
-            route,
-        );
-    }
-
-    let mode_raw = flags.value("permission-mode").unwrap_or("");
-    let mode = match parse_permission_mode(mode_raw) {
-        Ok(mode) => mode,
-        Err(err) => {
-            return CliOutcome::new(String::new(), format!("{ERROR_PREFIX} {err}\n"), 2, route);
-        }
-    };
-    if mode.plan {
-        return CliOutcome::new(
-            String::new(),
-            format!("{ERROR_PREFIX} {PLAN_REQUIRES_INTERACTIVE}\n"),
-            2,
-            route,
-        );
-    }
-
-    if flags.positionals.is_empty() && env.stdin_text.trim().is_empty() {
-        return CliOutcome::new(String::new(), format!("{USAGE_RUN_HINT}\n"), 2, route);
-    }
-
-    CliOutcome::new(String::new(), unmigrated_notice("run"), 2, route)
 }
 
 /// Hidden `reasonix schedule`. The human-guard decisions are deterministic and

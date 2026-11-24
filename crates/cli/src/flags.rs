@@ -1,11 +1,20 @@
-//! Declarative flag tables and a small pflag-compatible parser for the two
-//! session-facing sets: the terminal UI's and `run`'s.
+//! Declarative flag tables and a small pflag-compatible parser.
 //!
-//! The reference parses both with `spf13/pflag` (interspersed); this parser
-//! reproduces only the surface the routing and flag-matrix rows depend on:
-//! long and shorthand flags, `--name=value`, optional-value `--resume`, repeatable
-//! arrays, the `--` terminator, and help detection. Business validation
-//! (permission modes, output formats, ablation arms) lives with its command.
+//! The reference parses both session-facing sets with `spf13/pflag`
+//! (interspersed); this parser reproduces only the surface the routing and
+//! flag-matrix rows depend on: long and shorthand flags, `--name=value`,
+//! optional-value `--resume`, repeatable arrays, the `--` terminator, and help
+//! detection. Business validation (permission modes, output formats, ablation
+//! arms) lives with its command.
+//!
+//! Spec tables live in [`session`] (TUI/run) and [`serve`] (serve/web, ACP,
+//! upgrade, review, machine options) to keep this core under the line limit.
+
+pub(crate) mod serve;
+pub(crate) mod session;
+
+pub(crate) use serve::{acp_specs, review_specs, serve_specs};
+pub(crate) use session::{run_specs, session_specs, tui_specs, union_specs};
 
 /// Value-optional sentinel a bare TUI `--resume`/`-r` carries (pflag
 /// `NoOptDefVal`); the picker expands it later.
@@ -21,10 +30,10 @@ pub(crate) enum FlagKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FlagSpec {
-    name: &'static str,
-    short: Option<char>,
-    kind: FlagKind,
-    optional_value: bool,
+    pub(crate) name: &'static str,
+    pub(crate) short: Option<char>,
+    pub(crate) kind: FlagKind,
+    pub(crate) optional_value: bool,
 }
 
 /// `--continue` / `-c` registered through BoolP so the shorthand stays a
@@ -36,308 +45,9 @@ const CONTINUE: FlagSpec = FlagSpec {
     optional_value: false,
 };
 
-/// The terminal UI's flag set (reference `tui_flags.go:30-52`). The TUI has
-/// no `--auto`; approval there goes through `--yolo` /
-/// `--dangerously-skip-permissions`.
-pub(crate) fn tui_specs() -> Vec<FlagSpec> {
-    vec![
-        FlagSpec {
-            name: "model",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "preset",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "agent-composition",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "profile",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "dir",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "inline",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        CONTINUE,
-        FlagSpec {
-            name: "resume",
-            short: Some('r'),
-            kind: FlagKind::String,
-            optional_value: true,
-        },
-        FlagSpec {
-            name: "copy",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "effort",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "permission-mode",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "yolo",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "dangerously-skip-permissions",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "max-steps",
-            short: None,
-            kind: FlagKind::Int,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "add-dir",
-            short: None,
-            kind: FlagKind::StringArray,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "allowed-tools",
-            short: None,
-            kind: FlagKind::StringArray,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "allowedTools",
-            short: None,
-            kind: FlagKind::StringArray,
-            optional_value: false,
-        },
-    ]
-}
-
-/// `run`'s flag set (reference `run_flags.go:23-53`).
-pub(crate) fn run_specs() -> Vec<FlagSpec> {
-    vec![
-        FlagSpec {
-            name: "model",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "profile",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "preset",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "agent-composition",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "max-steps",
-            short: None,
-            kind: FlagKind::Int,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "show-thinking",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "debug",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: true,
-        },
-        FlagSpec {
-            name: "metrics",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "trajectory",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "ablate",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "fold-index",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "dir",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        CONTINUE,
-        FlagSpec {
-            name: "resume",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "takeover",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "copy",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "effort",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "permission-mode",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "auto",
-            short: Some('y'),
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "yolo",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "dangerously-skip-permissions",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "print",
-            short: Some('p'),
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "events-jsonl",
-            short: None,
-            kind: FlagKind::Bool,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "output-format",
-            short: None,
-            kind: FlagKind::String,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "add-dir",
-            short: None,
-            kind: FlagKind::StringArray,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "allowed-tools",
-            short: None,
-            kind: FlagKind::StringArray,
-            optional_value: false,
-        },
-        FlagSpec {
-            name: "allowedTools",
-            short: None,
-            kind: FlagKind::StringArray,
-            optional_value: false,
-        },
-    ]
-}
-
-/// The session set used when deciding whether leading flags travel into
-/// `run`: the TUI set plus `-y/--auto` and `-p/--print` (reference
-/// `leadingFlagsIntoRun`).
-fn session_specs() -> Vec<FlagSpec> {
-    let mut specs = tui_specs();
-    specs.push(FlagSpec {
-        name: "auto",
-        short: Some('y'),
-        kind: FlagKind::Bool,
-        optional_value: false,
-    });
-    specs.push(FlagSpec {
-        name: "print",
-        short: Some('p'),
-        kind: FlagKind::Bool,
-        optional_value: false,
-    });
-    specs
-}
-
-/// Union of the TUI and run sets, used to split leading flags from the verb.
-fn union_specs() -> Vec<FlagSpec> {
-    let mut specs = tui_specs();
-    for spec in run_specs() {
-        if !specs.iter().any(|s| s.name == spec.name) {
-            specs.push(spec);
-        }
-    }
-    specs
-}
-
 /// Parsed result: set flag values (`name=value`), remaining positionals, and
 /// the help/error signal a command boundary renders.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ParsedFlags {
     pub values: Vec<(String, String)>,
     pub positionals: Vec<String>,
@@ -378,6 +88,15 @@ impl ParsedFlags {
 
     pub fn changed(&self, name: &str) -> bool {
         self.values.iter().any(|(n, _)| n == name)
+    }
+
+    /// Repeatable string values for `name`, in order.
+    pub fn values(&self, name: &str) -> Vec<&str> {
+        self.values
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
     }
 }
 
@@ -760,7 +479,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            normalize_optional_resume_arg(&["-r".into(), "--copy".into()]),
+            normalize_optional_resume_arg(&["-r".into(), "--copy".to_owned()]),
             vec!["-r".to_owned(), "--copy".to_owned()]
         );
     }
