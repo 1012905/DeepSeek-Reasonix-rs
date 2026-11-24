@@ -11,6 +11,8 @@
 
 #![allow(dead_code)]
 
+pub mod http_peer;
+
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};

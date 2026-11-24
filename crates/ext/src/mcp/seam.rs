@@ -5,6 +5,7 @@
 //! declared process/transport kind. No I/O implementation lives in this slice.
 
 use alloc::string::String;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -19,6 +20,11 @@ pub enum TransportError {
     Cancelled,
     Rpc(RpcError),
     Io(String),
+    /// The connection ended before the request was written: that request never
+    /// reached the server, so a replacement connection can carry it without
+    /// repeating a side effect. A death mid-request is deliberately unmarked —
+    /// the server may already have run the call.
+    Gone,
 }
 
 impl core::fmt::Display for TransportError {
@@ -28,6 +34,7 @@ impl core::fmt::Display for TransportError {
             Self::Cancelled => f.write_str("transport call cancelled"),
             Self::Rpc(e) => core::fmt::Display::fmt(e, f),
             Self::Io(msg) => f.write_str(msg),
+            Self::Gone => f.write_str("mcp connection ended"),
         }
     }
 }
@@ -42,6 +49,35 @@ pub trait Transport {
     fn notify(&self, method: &str, params: Option<&Value>) -> Result<(), TransportError>;
     /// The negotiated era on this connection, if any.
     fn era(&self) -> &Era;
+}
+
+/// A transport the reconnecting wrapper owns, so it can shut the connection
+/// down when a replacement takes over or the handle closes.
+pub trait OwnedTransport: Transport {
+    /// Shuts the connection down; idempotent for the wrapper's callers.
+    fn close(&self);
+}
+
+/// Produces one fresh replacement connection. The budget bounds this dial;
+/// the replacement is handed over ready for the wrapper to rebind onto.
+pub trait Dialer {
+    /// Opens one replacement connection.
+    fn dial(
+        &self,
+        budget: Duration,
+    ) -> Result<Box<dyn OwnedTransport + Send + Sync>, TransportError>;
+}
+
+impl<F> Dialer for F
+where
+    F: Fn() -> Result<Box<dyn OwnedTransport + Send + Sync>, TransportError> + Send + Sync,
+{
+    fn dial(
+        &self,
+        _budget: Duration,
+    ) -> Result<Box<dyn OwnedTransport + Send + Sync>, TransportError> {
+        self()
+    }
 }
 
 /// A no-I/O transport used by wire and lifecycle tests. It records calls and

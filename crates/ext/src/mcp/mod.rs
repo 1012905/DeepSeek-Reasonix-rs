@@ -4,15 +4,29 @@
 //! the JSON-RPC wire, era negotiation, tool naming, and lifecycle state;
 //! subprocess and network transports arrive as a later slice.
 
+pub mod http;
+mod http_connector;
+pub mod http_headers;
+pub mod http_transport;
 pub mod lifecycle;
 pub mod naming;
+pub mod reconnect;
 pub mod seam;
+pub mod sse;
 pub mod stdio;
 pub mod stdio_resolve;
 pub mod types;
 pub mod version;
 pub mod wire;
 
+pub use http::{
+    EventStream, HttpClient, HttpClientConfig, HttpError, HttpReply, SseEvent, same_origin,
+};
+pub use http_headers::{
+    HeaderAnnotationError, ParamHeader, encode_header_value, header_scalar, modern_request_headers,
+    param_headers_for_args, tool_param_headers,
+};
+pub use http_transport::{StreamableHttpConfig, StreamableHttpTransport};
 pub use lifecycle::{
     DEFAULT_CALL_TIMEOUT_MS, DEFAULT_START_CONCURRENCY, DEFAULT_START_TIMEOUT_MS, Host,
     LifecycleError, McpProcessMode, Removal, START_PHASES, Spec, StartPhase, StartPlan,
@@ -25,7 +39,9 @@ pub use naming::{
     mcp_roots_from_absolute, model_tool_name, normalize_name, short_name_hash, tool_name,
     tool_prefix, validate_mcp_tool_names,
 };
-pub use seam::{Transport, TransportError};
+pub use reconnect::{CLOSE_WAIT_BUDGET_MS, DEFAULT_DIAL_BUDGET_MS, ReconnectingTransport};
+pub use seam::{Dialer, OwnedTransport, Transport, TransportError};
+pub use sse::{LegacySseConfig, LegacySseTransport, SSE_REPLY_QUEUE_BOUND};
 pub use types::{ContentBlock, McpRoot, McpTool, ToolCallResult};
 pub use version::{
     CODE_HEADER_MISMATCH, CODE_MISSING_CLIENT_CAPABILITY, CODE_UNSUPPORTED_PROTOCOL_VERSION,
