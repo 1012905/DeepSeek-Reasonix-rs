@@ -1,0 +1,9 @@
+# govulncheck allow-list: one "GO-ID  # reason — removal condition" per line.
+# Everything not listed here fails the job, so an entry has to be justified.
+
+# gorilla/websocket v1.5.3 is the newest published release, so there is no fixed
+# version to bump to. The affected call chains run only through the legacy Go
+# tree (internal/platform/remotecloud, tools/relayfake), which is deleted at the
+# Go cutover (B-017); re-check on every Go release and drop this line as soon as
+# upstream publishes a patch.
+GO-2026-6278  # gorilla/websocket v1.5.3; remove when a fixed release is published
