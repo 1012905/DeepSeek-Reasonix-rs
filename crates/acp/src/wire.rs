@@ -556,6 +556,37 @@ pub struct SessionSteerResult {
 pub const STEER_DISPOSITION_ACCEPTED: &str = "steer_accepted";
 /// Steer queued as a passive follow-up.
 pub const STEER_DISPOSITION_QUEUED: &str = "queued_followup";
+/// Inbox item entered its running turn (sessioninbox/types.go:58-67).
+pub const STEER_DISPOSITION_STARTED: &str = "started";
+/// Rejected: the session was busy when the item was admitted.
+pub const STEER_DISPOSITION_REJECTED_BUSY: &str = "rejected_busy";
+/// Rejected: the controller was rotating another runtime.
+pub const STEER_DISPOSITION_REJECTED_ROTATING: &str = "rejected_rotating";
+/// Rejected: the controller gate is closed.
+pub const STEER_DISPOSITION_REJECTED_CLOSED: &str = "rejected_closed";
+/// Rejected: the inbox hit its capacity ceiling.
+pub const STEER_DISPOSITION_REJECTED_CAPACITY: &str = "rejected_capacity";
+/// The same item was already admitted; no second steer was injected.
+pub const STEER_DISPOSITION_IDEMPOTENT_HIT: &str = "idempotent_hit";
+/// The item was deleted before admission.
+pub const STEER_DISPOSITION_DELETED: &str = "deleted";
+/// The item was cancelled before admission.
+pub const STEER_DISPOSITION_CANCELLED: &str = "cancelled";
+
+/// Full steer/inbox disposition vocabulary, in the reference declaration order
+/// (sessioninbox/types.go:58-67).
+pub const STEER_DISPOSITIONS: &[&str] = &[
+    STEER_DISPOSITION_STARTED,
+    STEER_DISPOSITION_ACCEPTED,
+    STEER_DISPOSITION_QUEUED,
+    STEER_DISPOSITION_REJECTED_BUSY,
+    STEER_DISPOSITION_REJECTED_ROTATING,
+    STEER_DISPOSITION_REJECTED_CLOSED,
+    STEER_DISPOSITION_REJECTED_CAPACITY,
+    STEER_DISPOSITION_IDEMPOTENT_HIT,
+    STEER_DISPOSITION_DELETED,
+    STEER_DISPOSITION_CANCELLED,
+];
 
 /// Why a turn ended (protocol.go:560-565). The reference only ever emits
 /// `end_turn` / `cancelled`.
