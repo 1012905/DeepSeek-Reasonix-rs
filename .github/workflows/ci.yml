@@ -566,4 +566,18 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
       - name: govulncheck
-        run: govulncheck ./...
+        # Still fails on any advisory; only entries in the allow-list file are
+        # tolerated, each carrying its reason and removal condition.
+        run: |
+          set -uo pipefail
+          govulncheck -json ./... > govulncheck.json || true
+          jq -r 'select(.finding != null) | .finding.osv' govulncheck.json | sort -u | awk 'NF' > found.txt
+          awk '!/^#/ && NF {print $1}' .github/govulncheck-allowlist.txt | sort -u > allowed.txt
+          comm -23 found.txt allowed.txt > blocked.txt
+          if [ -s blocked.txt ]; then
+            echo "::error::govulncheck found advisories that are not allow-listed:"
+            cat blocked.txt
+            govulncheck ./... || true
+            exit 1
+          fi
+          echo "govulncheck: no new advisories (found: $(tr '\n' ' ' < found.txt))"

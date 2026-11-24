@@ -187,7 +187,7 @@ impl TailBuffer {
         }
     }
 
-    fn push(&self, chunk: &[u8]) {
+    pub fn push(&self, chunk: &[u8]) {
         let mut buf = self.buf.lock().expect("tail buffer mutex");
         buf.extend_from_slice(chunk);
         if self.limit > 0 && buf.len() > self.limit {

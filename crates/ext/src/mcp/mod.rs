@@ -7,6 +7,8 @@
 pub mod lifecycle;
 pub mod naming;
 pub mod seam;
+pub mod stdio;
+pub mod stdio_resolve;
 pub mod types;
 pub mod version;
 pub mod wire;

@@ -5,6 +5,11 @@
 //! extension binary is needed and every test stays hermetic. Behavior is steered
 //! entirely through environment variables the fixture writes into a package
 //! manifest.
+//!
+//! Each test binary compiles this module separately and uses a different slice
+//! of it, so unused helpers are allowed per target.
+
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -36,6 +41,18 @@ pub fn helper_args() -> Vec<String> {
 /// The absolute path of this test binary.
 pub fn helper_exe() -> PathBuf {
     std::env::current_exe().expect("test binary path")
+}
+
+/// Installs the peer binary under `dst`, preferring a hard link.
+///
+/// A hard link leaves no write handle behind: Linux refuses to exec a file
+/// that is still open for writing (ETXTBSY), and a parallel test that forks
+/// while the copy handle exists makes that handle outlive the copy.
+pub fn install_peer(dst: &std::path::Path) {
+    if std::fs::hard_link(helper_exe(), dst).is_ok() {
+        return;
+    }
+    std::fs::copy(helper_exe(), dst).expect("copy peer binary");
 }
 
 /// Runs the peer when the helper marker is set; returns whether it did.
@@ -267,6 +284,41 @@ fn run_mcp(peer: &mut Peer, modes: &Modes) {
                 );
                 if modes.server_request {
                     peer.send(&json!({"jsonrpc": "2.0", "id": 7001, "method": "ping"}));
+                }
+            }
+            "tools/call" => {
+                let name = frame["params"]["name"].as_str().unwrap_or_default();
+                let arguments = frame["params"]["arguments"].clone();
+                match name {
+                    "echo" => peer.respond(
+                        &id,
+                        json!({
+                            "content": [{"type": "text", "text": serde_json::to_string(&arguments).unwrap_or_default()}],
+                            "structuredContent": {"arguments": arguments}
+                        }),
+                    ),
+                    "inspect_env" => {
+                        let mut env = BTreeMap::new();
+                        for (key, value) in std::env::vars() {
+                            if key == "REASONIX_AGENT_CHILD"
+                                || key == "PATH"
+                                || key.starts_with("REASONIX_TEST_")
+                            {
+                                env.insert(key, value);
+                            }
+                        }
+                        let cwd = std::env::current_dir()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_default();
+                        peer.respond(
+                            &id,
+                            json!({
+                                "content": [{"type": "text", "text": cwd}],
+                                "structuredContent": {"env": env, "cwd": cwd}
+                            }),
+                        );
+                    }
+                    other => peer.respond_error(&id, -32601, &format!("method not found: {other}")),
                 }
             }
             "ping" => {
