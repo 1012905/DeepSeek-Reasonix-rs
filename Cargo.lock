@@ -1008,6 +1008,7 @@ name = "reasonix-ext"
 version = "0.3.0"
 dependencies = [
  "bytes",
+ "chrono",
  "http-body",
  "hyper",
  "hyper-util",
@@ -1015,6 +1016,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
