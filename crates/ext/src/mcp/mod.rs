@@ -4,6 +4,7 @@
 //! the JSON-RPC wire, era negotiation, tool naming, and lifecycle state;
 //! subprocess and network transports arrive as a later slice.
 
+pub mod cache;
 pub mod http;
 mod http_connector;
 pub mod http_headers;
@@ -12,6 +13,7 @@ pub mod lifecycle;
 pub mod naming;
 pub mod reconnect;
 pub mod seam;
+pub mod session;
 pub mod sse;
 pub mod stdio;
 pub mod stdio_resolve;
@@ -19,6 +21,10 @@ pub mod types;
 pub mod version;
 pub mod wire;
 
+pub use cache::{
+    CachedSchema, CachedTool, legacy_schema_cache_key, load_cached_schema, load_cached_schema_any,
+    load_cached_schema_for_spec, save_cached_schema, schema_cache_key, slug,
+};
 pub use http::{
     EventStream, HttpClient, HttpClientConfig, HttpError, HttpReply, SseEvent, same_origin,
 };
@@ -41,6 +47,11 @@ pub use naming::{
 };
 pub use reconnect::{CLOSE_WAIT_BUDGET_MS, DEFAULT_DIAL_BUDGET_MS, ReconnectingTransport};
 pub use seam::{Dialer, OwnedTransport, Transport, TransportError};
+pub use session::{
+    CODE_SESSION_EXPIRED, FreshSessionProbe, ProgressSink, ProgressTransport, ProtocolVersioned,
+    RedialGate, Session, SessionError, SessionExpiredProbe, declares_tool_list_changed,
+    format_timeout, raw_tool_name, resolve_call_timeout,
+};
 pub use sse::{LegacySseConfig, LegacySseTransport, SSE_REPLY_QUEUE_BOUND};
 pub use types::{ContentBlock, McpRoot, McpTool, ToolCallResult};
 pub use version::{
