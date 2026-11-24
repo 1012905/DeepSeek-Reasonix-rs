@@ -929,6 +929,11 @@ dependencies = [
 [[package]]
 name = "reasonix-acp"
 version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "reasonix-agent"
