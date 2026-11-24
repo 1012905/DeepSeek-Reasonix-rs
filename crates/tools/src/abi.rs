@@ -170,6 +170,55 @@ pub fn is_decision_barrier(tool: &dyn Tool) -> bool {
         .is_some_and(|b| b.decision_barrier())
 }
 
+/// A tool whose result is the user's own answer, decided per call rather
+/// than for the whole tool (Go `DecisionCallBarrier`). The static
+/// [`DecisionBarrier`] still wins: a barrier tool ends the round on every
+/// call, whatever these arguments say.
+pub trait DecisionCallBarrier: Capability {
+    fn decision_barrier_call(&self, args: &Value) -> bool;
+}
+
+/// Whether this call ends its round: the static barrier first, then the
+/// per-arguments decision (Go `IsDecisionBarrierCall`).
+pub fn is_decision_barrier_call(tool: &dyn Tool, args: &Value) -> bool {
+    if is_decision_barrier(tool) {
+        return true;
+    }
+    tool.capabilities()
+        .get::<dyn DecisionCallBarrier>()
+        .is_some_and(|b| b.decision_barrier_call(args))
+}
+
+/// A tool that may run during the planning phase (Go `PlanModeSafe`).
+/// Deliberately distinct from [`Tool::read_only`]: a side-effect-free tool
+/// can still belong only to the post-approval execution phase. A missing
+/// declaration continues the ordinary permissions/sandbox path.
+pub trait PlanModeClassifier: Capability {
+    fn plan_mode_safe(&self) -> bool;
+}
+
+/// Whether the tool declares itself safe to run while planning.
+pub fn plan_mode_safe(tool: &dyn Tool) -> bool {
+    tool.capabilities()
+        .get::<dyn PlanModeClassifier>()
+        .is_some_and(|p| p.plan_mode_safe())
+}
+
+/// A target that is logically read-only but must first mutate host state to
+/// become executable (Go `ReadOnlyExecutionHostMutation`). Strict read-only
+/// agents reject these even when the eventual remote operation is trusted
+/// read-only.
+pub trait ReadOnlyHostMutation: Capability {
+    fn read_only_execution_host_mutation(&self) -> bool;
+}
+
+/// Whether the tool needs a host mutation before it can run.
+pub fn read_only_executes_host_mutation(tool: &dyn Tool) -> bool {
+    tool.capabilities()
+        .get::<dyn ReadOnlyHostMutation>()
+        .is_some_and(|m| m.read_only_execution_host_mutation())
+}
+
 /// Whether this call must run on its own. A tool without [`SequentialTool`]
 /// is ordered by read-only alone.
 pub fn runs_sequentially(tool: &dyn Tool, ctx: &CallContext, args: &Value) -> bool {

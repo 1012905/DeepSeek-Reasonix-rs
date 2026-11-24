@@ -23,15 +23,20 @@ pub mod fuzzyedit;
 pub mod gitignore;
 pub mod glob;
 pub mod globengine;
+pub mod goalreport;
 pub mod grep;
 pub mod listdir;
 pub mod movefile;
 pub mod multiedit;
 pub mod network;
 pub mod pathgo;
+pub mod peer;
+pub mod project;
 pub mod readfile;
+pub mod recall;
 pub mod receipt;
 pub mod secretpaths;
+pub mod settings;
 pub mod walk;
 pub mod writeatomic;
 pub mod writefile;
@@ -84,6 +89,10 @@ pub use fuzzyedit::{
 pub use glob::{
     GLOB_DEFAULT_TIMEOUT, GLOB_MAX_RESULTS, GLOB_MAX_TIMEOUT, GlobTool, glob_base, glob_walk_root,
 };
+pub use goalreport::{
+    GoalReport, GoalTurnRecorder, UPDATE_GOAL_DESCRIPTION, UPDATE_GOAL_TOOL_NAME, UpdateGoalTool,
+    completion_note, goal_recorder_from, schema_value as goal_schema_value, update_goal_tool,
+};
 pub use grep::{
     GREP_DEFAULT_TIMEOUT, GREP_MAX_MATCHES, GREP_MAX_TIMEOUT, GrepScope, GrepTool, confine_search,
     format_grep, grep_glob_matches, resolve_search, timeout as tool_timeout,
@@ -94,12 +103,33 @@ pub use multiedit::{EditStep, MultiEditTool};
 pub use network::{
     CODE_NETWORK_PATH_OUTSIDE_SCOPE, ResolvedPath, is_network_path, refuse_network_path,
 };
+pub use peer::{
+    CODE_DISPATCH_UNAVAILABLE, CODE_PEER_DISABLED, CODE_PEER_EMPTY, DISABLED_MESSAGE,
+    LIST_PEERS_DESCRIPTION, LIST_PEERS_NAME, ListPeersTool, PeerDirectory, PeerLink, PeerReceipt,
+    PeerView, PrefixedError, SEND_PEER_MESSAGE_DESCRIPTION, SEND_PEER_MESSAGE_NAME,
+    SendPeerMessageTool, peer_tools,
+};
+pub use project::{
+    DISPATCH_DESCRIPTION, DISPATCH_TO_PROJECT_NAME, DispatchReceipt, DispatchToProjectTool,
+    OPEN_PROJECTS_DESCRIPTION, OPEN_PROJECTS_NAME, OpenProjectsTool, OpenedProject,
+    ProjectDispatcher, ProjectOpener, dispatch_tool, open_projects_tool,
+};
 pub use readfile::{READ_FILE_DEFAULT_LIMIT, ReadFileTool};
+pub use recall::{
+    ContextRecaller, MAX_RECALL_POSITIONS, RECALL_DESCRIPTION_FULL, RECALL_DESCRIPTION_SEARCH_OFF,
+    RECALL_TOOL_NAME, RecallHit, RecallRequest, RecallResult, RecallTool, position_list,
+    recall_tool, recall_without_search, recaller_from, render_recall, render_recall_search,
+};
 pub use receipt::{
     MAX_CAPTURED_RECEIPT_SPAN_BYTES, MAX_POST_WRITE_RECEIPT_BYTES, POST_WRITE_RECEIPT_TRUNCATED,
     POST_WRITE_SPAN_TRUNCATED, with_actual_post_write_receipts,
 };
 pub use secretpaths::{protect_sensitive_files, set_protect_sensitive_files};
+pub use settings::{
+    CODE_SETTING_INVALID_VALUE, CODE_SETTING_UNAVAILABLE, SETTING_DESCRIPTION, SETTING_LIST_MAX,
+    SETTING_TOOL_NAME, SettingInfo, SettingReceipt, SettingTool, SettingsHost, SettingsLink,
+    list_settings, setting_tool,
+};
 pub use writefile::WriteFileTool;
 pub use writepaths::{
     ERR_WRITE_PATH_REQUIRED, SESSION_TEMP_ENV_KEYS, canonical_write_path, canonical_writer_path,
@@ -211,3 +241,33 @@ pub fn unconfined_bash_tool() -> Arc<dyn Tool> {
 pub fn turn_exit_tools() -> Vec<Arc<dyn Tool>> {
     vec![ask::ask_tool()]
 }
+
+// wave37-tools-b: TOOL-014/015/016/017 seams plus the compress and
+// context_budget built-ins. Visibility declarations only; the registry
+// wiring into the live session is added by the integration slice.
+pub mod contextbudget;
+pub mod ctxfold;
+pub mod elicit;
+pub mod managedconfig;
+pub mod paidsearch;
+
+pub use contextbudget::{
+    CONTEXT_BUDGET_DESCRIPTION, CONTEXT_BUDGET_TOOL_NAME, ContextBudget, ContextBudgetReporter,
+    ContextBudgetTool, STATUS_OK, STATUS_UNMEASURED, context_budget_tool, reporter_from,
+};
+pub use ctxfold::{
+    COMPRESS_DESCRIPTION, COMPRESS_TOOL_NAME, CompressRequest, CompressResult, CompressTool,
+    ContextCompressor, MAX_COMPRESS_ANCHOR_BYTES, MAX_COMPRESS_FOCUS_BYTES, compress_tool,
+    compressor_from,
+};
+pub use elicit::{ElicitField, ElicitReply, ElicitRequest, Elicitor, elicit_from};
+pub use managedconfig::{
+    CONFIG_WRITE_APPROVAL_TOOL, CONFIG_WRITE_DECLINED, CONFIG_WRITE_REASON,
+    CONFIG_WRITE_SUBJECT_PREFIX, ConfigWriteApprover, ConfigWriteRequest,
+    ConfigWriteSessionChecker, DECLINE_REASON_DEFAULT, ManagedConfigError, ManagedConfigPaths,
+    config_write_approver_from, config_write_subject,
+};
+pub use paidsearch::{
+    PAID_SEARCH_APPROVAL_TOOL, PAID_SERVICE_FETCH, PAID_SERVICE_SEARCH, PaidSearchApprover,
+    PaidSearchRequest, paid_search_approver_from,
+};

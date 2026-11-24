@@ -29,9 +29,11 @@ pub mod shell;
 pub mod withdrawn;
 
 pub use abi::{
-    CallContext, CapabilitySet, ContextualReasoner, ContextualTool, DecisionBarrier, PathWriter,
-    PreviewChange, Previewer, SequentialTool, Tool, ToolResult, ToolSchema, is_decision_barrier,
-    preview_change, runs_sequentially, writes_named_paths,
+    CallContext, CapabilitySet, ContextualReasoner, ContextualTool, DecisionBarrier,
+    DecisionCallBarrier, PathWriter, PlanModeClassifier, PreviewChange, Previewer,
+    ReadOnlyHostMutation, SequentialTool, Tool, ToolResult, ToolSchema, is_decision_barrier,
+    is_decision_barrier_call, plan_mode_safe, preview_change, read_only_executes_host_mutation,
+    runs_sequentially, writes_named_paths,
 };
 pub use arguments::{UniqueJsonError, parse_unique, unwrap_arguments};
 pub use ask::{AskAnswer, AskOutcome, Asker, asker_from};
@@ -45,11 +47,12 @@ pub use refusal::{
     remedy_string,
 };
 pub use registry::{
-    CODE_MCP_TOOL_DISABLED, CODE_MCP_TOOL_HELD, CODE_TOOL_DISABLED, CapabilityAliased,
-    ContractEntry, DisableConflict, FEATURE_DEFERRED_MCP, FEATURE_GOAL_MODE, FEATURE_PLAN_STEPS,
-    FEATURE_TURN_EXIT, HeldMcp, HeldMcpClass, HostRequired, MCP_NAME_PREFIX, McpBinding,
-    McpMetadata, Registry, ResolveCall, feature_label, held_mcp_refusal_for, is_connection_name,
-    mcp_binding_aliases, mcp_binding_for, portable_mcp_part, split_mcp_name,
+    APPROVAL_SCOPE_OPEN_PROJECTS, ApprovalScoper, CODE_MCP_TOOL_DISABLED, CODE_MCP_TOOL_HELD,
+    CODE_TOOL_DISABLED, CapabilityAliased, ContractEntry, DisableConflict, FEATURE_DEFERRED_MCP,
+    FEATURE_GOAL_MODE, FEATURE_PLAN_STEPS, FEATURE_TURN_EXIT, HeldMcp, HeldMcpClass, HostRequired,
+    MCP_NAME_PREFIX, McpBinding, McpMetadata, Registry, ResolveCall, approval_scope_of,
+    feature_label, held_mcp_refusal_for, is_connection_name, mcp_binding_aliases, mcp_binding_for,
+    portable_mcp_part, split_mcp_name,
 };
 pub use schema::canonicalize_schema;
 pub use shell::{
