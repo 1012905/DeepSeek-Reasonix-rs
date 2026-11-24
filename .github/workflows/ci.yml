@@ -571,7 +571,7 @@ jobs:
         run: |
           set -uo pipefail
           govulncheck -json ./... > govulncheck.json || true
-          jq -r 'select(.finding != null) | .finding.id' govulncheck.json | sort -u | awk 'NF' > found.txt
+          jq -r 'select(.finding != null) | .finding.osv' govulncheck.json | sort -u | awk 'NF' > found.txt
           awk '!/^#/ && NF {print $1}' .github/govulncheck-allowlist.txt | sort -u > allowed.txt
           comm -23 found.txt allowed.txt > blocked.txt
           if [ -s blocked.txt ]; then
