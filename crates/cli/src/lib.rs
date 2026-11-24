@@ -11,9 +11,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod approval;
 pub mod build_info;
+pub mod env;
 pub mod flags;
 pub mod permission;
+pub mod preset;
 pub mod route;
 pub mod text;
 
