@@ -12,8 +12,6 @@
 //! crate.
 
 use std::collections::BTreeMap;
-use std::future::Future;
-use std::io;
 use std::pin::Pin;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -21,19 +19,14 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body::{Body as HttpBody, Frame};
+use http_body::Body as HttpBody;
 use hyper::body::Incoming;
 use hyper::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, LOCATION};
-use hyper::rt::{Read as HyperRead, Write as HyperWrite};
 use hyper::{Method, Request, Uri};
 use hyper_util::client::legacy::Client;
-use hyper_util::client::legacy::connect::{Connected, Connection};
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use rustls::pki_types::ServerName;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpStream;
-use tower::Service;
+use hyper_util::rt::TokioExecutor;
 
+use super::http_connector::{Connector, OnceBody};
 use super::wire::RpcError;
 use crate::redact::redact_credentials;
 
@@ -177,11 +170,13 @@ enum JobReply {
 
 enum Job {
     Post {
+        url: Option<String>,
         body: Vec<u8>,
         headers: Vec<(String, String)>,
         tx: Sender<Result<JobReply, HttpError>>,
     },
     GetStream {
+        url: Option<String>,
         headers: Vec<(String, String)>,
         tx: Sender<Result<JobReply, HttpError>>,
     },
@@ -225,230 +220,6 @@ pub enum HttpError {
     TooManyRedirects,
     #[error("http transport: {0}")]
     Io(String),
-}
-
-/// Resolves, connects, and TLS-wraps one connection, mirroring the provider
-/// slice's hand-wired connector (AGENTS.md 3.3: rustls + ring, no native TLS).
-#[derive(Clone)]
-struct Connector {
-    tls: Arc<rustls::ClientConfig>,
-}
-
-impl Connector {
-    fn new() -> Result<Connector, HttpError> {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let config = rustls::ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-            .map_err(|err| HttpError::Io(redact_safe(&err.to_string())))?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        Ok(Connector {
-            tls: Arc::new(config),
-        })
-    }
-}
-
-impl Service<Uri> for Connector {
-    type Response = ConnIo;
-    type Error = io::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<ConnIo, io::Error>> + Send>>;
-
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, dst: Uri) -> Self::Future {
-        let tls = self.tls.clone();
-        Box::pin(async move {
-            let scheme = dst.scheme_str().unwrap_or("https");
-            let host = dst
-                .host()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no host"))?
-                .to_owned();
-            let port = dst
-                .port_u16()
-                .unwrap_or(if scheme == "https" { 443 } else { 80 });
-            let addr = tokio::net::lookup_host((host.as_str(), port))
-                .await?
-                .next()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no addresses"))?;
-            let tcp = TcpStream::connect(addr).await?;
-            tcp.set_nodelay(true).ok();
-            let conn = if scheme != "https" {
-                Conn::Plain(tcp)
-            } else {
-                let server_name = ServerName::try_from(host.clone()).map_err(|err| {
-                    io::Error::new(io::ErrorKind::InvalidInput, format!("dns name: {err}"))
-                })?;
-                let connector = tokio_rustls::TlsConnector::from(tls);
-                let session = connector.connect(server_name, tcp).await?;
-                Conn::Tls(Box::new(session))
-            };
-            Ok(ConnIo::new(conn))
-        })
-    }
-}
-
-/// One established connection: plain TCP or TLS-wrapped TCP.
-enum Conn {
-    Plain(TcpStream),
-    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
-}
-
-impl AsyncRead for Conn {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        match self.get_mut() {
-            Conn::Plain(s) => Pin::new(s).poll_read(cx, buf),
-            Conn::Tls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
-        }
-    }
-}
-
-impl AsyncWrite for Conn {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Conn::Plain(s) => Pin::new(s).poll_write(cx, buf),
-            Conn::Tls(s) => Pin::new(s.as_mut()).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        match self.get_mut() {
-            Conn::Plain(s) => Pin::new(s).poll_flush(cx),
-            Conn::Tls(s) => Pin::new(s.as_mut()).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        match self.get_mut() {
-            Conn::Plain(s) => Pin::new(s).poll_shutdown(cx),
-            Conn::Tls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
-        }
-    }
-}
-
-/// hyper's IO traits over the raw connection, with the ALPN fact kept for h2.
-struct ConnIo {
-    io: TokioIo<Conn>,
-    negotiated_h2: bool,
-}
-
-impl ConnIo {
-    fn new(conn: Conn) -> Self {
-        let negotiated_h2 = match &conn {
-            Conn::Plain(_) => false,
-            Conn::Tls(tls) => {
-                let (_, session) = tls.get_ref();
-                session.alpn_protocol() == Some(b"h2")
-            }
-        };
-        Self {
-            io: TokioIo::new(conn),
-            negotiated_h2,
-        }
-    }
-}
-
-impl HyperRead for ConnIo {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: hyper::rt::ReadBufCursor<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().io).poll_read(cx, buf)
-    }
-}
-
-impl HyperWrite for ConnIo {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().io).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().io).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().io).poll_shutdown(cx)
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.io.is_write_vectored()
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        bufs: &[io::IoSlice<'_>],
-    ) -> std::task::Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().io).poll_write_vectored(cx, bufs)
-    }
-}
-
-impl Connection for ConnIo {
-    fn connected(&self) -> Connected {
-        let connected = Connected::new();
-        if self.negotiated_h2 {
-            connected.negotiated_h2()
-        } else {
-            connected
-        }
-    }
-}
-
-/// One one-shot request body.
-struct OnceBody(Option<Bytes>);
-
-impl HttpBody for OnceBody {
-    type Data = Bytes;
-    type Error = io::Error;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        std::task::Poll::Ready(self.0.take().map(|data| Ok(Frame::data(data))))
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.0.is_none()
-    }
-
-    fn size_hint(&self) -> http_body::SizeHint {
-        match &self.0 {
-            Some(bytes) => http_body::SizeHint::with_exact(bytes.len() as u64),
-            None => http_body::SizeHint::with_exact(0),
-        }
-    }
 }
 
 /// Blocking MCP HTTP client. One runtime thread services every request; the
@@ -530,11 +301,36 @@ impl HttpClient {
         headers: &[(&str, &str)],
         timeout: Duration,
     ) -> Result<HttpReply, HttpError> {
+        self.post_to_inner(None, body, headers, timeout)
+    }
+
+    /// POSTs one JSON-RPC body to an explicit endpoint, overriding the client
+    /// base URL. The legacy SSE transport uses this for the POST endpoint the
+    /// server announces on the GET stream; same-origin checks are the caller's
+    /// responsibility before it hands an override URL over.
+    pub fn post_to(
+        &self,
+        url: &str,
+        body: &[u8],
+        headers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<HttpReply, HttpError> {
+        self.post_to_inner(Some(url.to_string()), body, headers, timeout)
+    }
+
+    fn post_to_inner(
+        &self,
+        url: Option<String>,
+        body: &[u8],
+        headers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<HttpReply, HttpError> {
         let (tx, rx) = mpsc::channel();
         self.jobs
             .lock()
             .expect("jobs mutex")
             .try_send(Job::Post {
+                url,
                 body: body.to_vec(),
                 headers: normalize_headers(headers),
                 tx,
@@ -555,11 +351,32 @@ impl HttpClient {
         headers: &[(&str, &str)],
         timeout: Duration,
     ) -> Result<EventStream, HttpError> {
+        self.get_stream_inner(None, headers, timeout)
+    }
+
+    /// Opens a long-lived GET SSE stream against an explicit URL, overriding
+    /// the client base URL.
+    pub fn get_event_stream_at(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<EventStream, HttpError> {
+        self.get_stream_inner(Some(url.to_string()), headers, timeout)
+    }
+
+    fn get_stream_inner(
+        &self,
+        url: Option<String>,
+        headers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<EventStream, HttpError> {
         let (tx, rx) = mpsc::channel();
         self.jobs
             .lock()
             .expect("jobs mutex")
             .try_send(Job::GetStream {
+                url,
                 headers: normalize_headers(headers),
                 tx,
             })
@@ -628,13 +445,17 @@ async fn worker_loop(
             Job::Delete { tx, .. } => tx.clone(),
         };
         let result = match job {
-            Job::Post { body, headers, .. } => {
-                run_post(&client, &session, &base_url, &static_headers, body, headers)
+            Job::Post {
+                url, body, headers, ..
+            } => {
+                let target = url.unwrap_or_else(|| base_url.clone());
+                run_post(&client, &session, &target, &static_headers, body, headers)
                     .await
                     .map(JobReply::Posted)
             }
-            Job::GetStream { headers, .. } => {
-                run_get_stream(&client, &session, &base_url, &static_headers, headers)
+            Job::GetStream { url, headers, .. } => {
+                let target = url.unwrap_or_else(|| base_url.clone());
+                run_get_stream(&client, &session, &target, &static_headers, headers)
                     .await
                     .map(JobReply::Streamed)
             }
@@ -652,15 +473,23 @@ fn base_uri(base_url: &str) -> Result<Uri, HttpError> {
     base_url.parse().map_err(|_| HttpError::InvalidUrl)
 }
 
+/// Resolves an endpoint reference the server announced on a GET stream against
+/// the GET response URL, returning the absolute target URL. Shared with the
+/// legacy SSE transport, which then enforces its own same-origin check.
+pub(crate) fn resolve_against(base: &str, reference: &str) -> Result<String, HttpError> {
+    let base_uri = base_uri(base)?;
+    Ok(resolve_url(&base_uri, reference)?.to_string())
+}
+
 async fn run_post(
     client: &Client<Connector, OnceBody>,
     session: &Arc<Mutex<Option<String>>>,
-    base_url: &str,
+    target_url: &str,
     static_headers: &BTreeMap<String, String>,
     body: Vec<u8>,
     headers: Vec<(String, String)>,
 ) -> Result<Posted, HttpError> {
-    let uri = base_uri(base_url)?;
+    let uri = base_uri(target_url)?;
     let resp = send(
         client,
         Method::POST,
@@ -698,11 +527,11 @@ async fn run_post(
 async fn run_get_stream(
     client: &Client<Connector, OnceBody>,
     session: &Arc<Mutex<Option<String>>>,
-    base_url: &str,
+    target_url: &str,
     static_headers: &BTreeMap<String, String>,
     headers: Vec<(String, String)>,
 ) -> Result<EventStream, HttpError> {
-    let uri = base_uri(base_url)?;
+    let uri = base_uri(target_url)?;
     let resp = send(
         client,
         Method::GET,
@@ -826,7 +655,7 @@ fn build_request(
         builder = builder.header(header_name, header_value);
     }
     builder
-        .body(OnceBody(body))
+        .body(OnceBody::new(body))
         .map_err(|err| HttpError::Io(redact_safe(&err.to_string())))
 }
 

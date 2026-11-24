@@ -96,6 +96,54 @@ impl SseWriter {
     }
 }
 
+/// One outbound SSE frame queued for a long-lived GET stream.
+#[derive(Clone, Debug)]
+pub struct SseFrame {
+    pub event: String,
+    pub data: String,
+}
+
+/// Shared frame queue between the GET connection handler and whatever produces
+/// later events (a POST handler answering a call, the test script). The GET
+/// handler drains it; producers push through the shared bus. Dropping every
+/// sender releases the waiting GET handler.
+pub struct SseBus {
+    tx: mpsc::Sender<SseFrame>,
+    rx: Mutex<mpsc::Receiver<SseFrame>>,
+}
+
+impl Default for SseBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SseBus {
+    /// Binds a fresh queue pair.
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            tx,
+            rx: Mutex::new(rx),
+        }
+    }
+
+    /// Queues one frame for the open GET stream.
+    pub fn push(&self, event: &str, data: &str) {
+        let _ = self.tx.send(SseFrame {
+            event: event.to_string(),
+            data: data.to_string(),
+        });
+    }
+
+    /// Blocks the GET handler until the next frame arrives; `None` once every
+    /// sender is gone.
+    pub fn drain_next(&self) -> Option<SseFrame> {
+        let rx = self.rx.lock().expect("sse bus mutex");
+        rx.recv().ok()
+    }
+}
+
 impl PeerConn {
     /// Answers with a fixed status and body; closes the connection after.
     pub fn respond(&mut self, status: u16, headers: &[(&str, &str)], body: &[u8]) {
