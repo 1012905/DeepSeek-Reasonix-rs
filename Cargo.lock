@@ -1007,11 +1007,20 @@ dependencies = [
 name = "reasonix-ext"
 version = "0.3.0"
 dependencies = [
+ "bytes",
+ "http-body",
+ "hyper",
+ "hyper-util",
  "reasonix-core",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tower",
+ "webpki-roots",
 ]
 
 [[package]]
