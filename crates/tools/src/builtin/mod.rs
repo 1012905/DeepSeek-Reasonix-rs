@@ -13,6 +13,7 @@ pub mod bash_env;
 pub mod bash_nul;
 pub mod bash_pipestatus;
 pub mod bashrun;
+pub mod codeindex;
 pub mod confine;
 pub mod editengine;
 pub mod editfile;
@@ -59,6 +60,7 @@ pub use bashrun::{
     COMBINED_OUTPUT_MAX_BYTES, COMBINED_OUTPUT_TAIL_BYTES, COMBINED_OUTPUT_TRUNCATED, CancelToken,
     RunError, go_duration_text, run_foreground,
 };
+pub use codeindex::CodeIndexTool;
 pub use confine::{
     CODE_READ_OUTSIDE_SCOPE, ManagedConfigHook, SessionDataGuardHook, SessionTempSource,
     WriteHooks, confine, confine_opened, confine_read, confine_resolved, confine_scope,
@@ -108,11 +110,11 @@ use std::sync::Arc;
 
 use crate::abi::Tool;
 
-/// confine.go `ConfineReaders` for the readers this slice migrated: the
-/// read/list/search built-ins bound to forbidRoots — directories the agent
-/// may not read or list. Empty forbidRoots yields unconfined readers. The
-/// fourth Go member, code_index, is not part of this slice and lands with
-/// its own ledger row.
+/// confine.go `ConfineReaders`: the read/list/search built-ins bound to
+/// forbidRoots — directories the agent may not read or list. Empty
+/// forbidRoots yields unconfined readers. grep is handled separately by
+/// [`confine_search`] so it can carry the sandbox spec for its ripgrep
+/// subprocess.
 pub fn confine_readers(forbid_roots: &[String]) -> Vec<Arc<dyn Tool>> {
     let rs = real_roots(forbid_roots);
     vec![
@@ -129,6 +131,12 @@ pub fn confine_readers(forbid_roots: &[String]) -> Vec<Arc<dyn Tool>> {
             read_roots: Vec::new(),
         }),
         Arc::new(GlobTool {
+            net_roots: Vec::new(),
+            work_dir: String::new(),
+            forbid_roots: rs.clone(),
+            read_roots: Vec::new(),
+        }),
+        Arc::new(CodeIndexTool {
             net_roots: Vec::new(),
             work_dir: String::new(),
             forbid_roots: rs.clone(),

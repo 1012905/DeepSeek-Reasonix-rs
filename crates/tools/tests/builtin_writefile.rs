@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use reasonix_core::fileencoding::{Kind, detect_and_decode};
 use reasonix_tools::abi::{CallContext, Tool};
 use reasonix_tools::builtin::{
-    CODE_OVERWRITE_READ_FORBIDDEN, CODE_OVERWRITE_READ_OUTSIDE_SCOPE, FileOverlay,
+    CODE_OVERWRITE_READ_FORBIDDEN, CODE_OVERWRITE_READ_OUTSIDE_SCOPE, FileOverlay, FileViewsHook,
     OVERWRITE_READ_ACCESS_DENIED_MESSAGE, WriteFileTool, encode,
 };
 use serde_json::json;
@@ -306,6 +307,102 @@ fn test_file_tools_keep_utf8_bom() {
     let mut want = vec![0xEF, 0xBB, 0xBF];
     want.extend_from_slice(after.as_bytes());
     assert_eq!(std::fs::read(&path).unwrap(), want);
+}
+
+/// fileviews.go checkOverwrite hook: the view last seen by the reader, kept
+/// per path; an overwrite whose on-disk current differs from that recorded
+/// view is refused as stale. The full hash/partial-record machine lands with
+/// the fileviews slice; this stub reproduces the call-site contract the
+/// write_file path enforces.
+#[derive(Default)]
+struct StaleViews {
+    seen: Mutex<HashMap<String, String>>,
+}
+
+impl FileViewsHook for StaleViews {
+    fn saw(&self, path: &str, content: &[u8]) {
+        self.seen.lock().unwrap().insert(
+            path.to_owned(),
+            String::from_utf8_lossy(content).into_owned(),
+        );
+    }
+
+    fn check_overwrite(
+        &self,
+        path: &str,
+        current: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let seen = self.seen.lock().unwrap();
+        let Some(prev) = seen.get(path) else {
+            return Ok(());
+        };
+        let current = String::from_utf8_lossy(current).into_owned();
+        if prev != &current {
+            return Err(Box::new(std::io::Error::other(
+                "stale view: file changed since it was last read",
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn test_write_file_refuses_overwrite_when_the_recorded_view_is_stale() {
+    let (_guard, dir) = testdir("writefile-stale-view");
+    let path = Path::new(&dir).join("notes.txt");
+    let views = Arc::new(StaleViews::default());
+    let probe = Arc::new(ProbeOverlay {
+        reads: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+    });
+    let w = WriteFileTool {
+        overlay: Some(probe.clone()),
+        views: Some(views.clone()),
+        ..WriteFileTool::default()
+    };
+
+    // First write establishes the recorded view ("v1").
+    run(&w, json!({"path": path, "content": "v1"})).unwrap();
+    let writes_after_first = probe.writes.load(Ordering::SeqCst);
+
+    // An outside change moves the disk to "v2" without refreshing the view.
+    std::fs::write(&path, "v2").unwrap();
+
+    // The model then writes "v3" from the stale v1 view: check_overwrite must
+    // refuse before anything reaches the overlay, and v2 on disk survives.
+    let err = run(&w, json!({"path": path, "content": "v3"})).unwrap_err();
+    assert!(err.to_string().contains("stale view"), "{err}");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"v2",
+        "a stale-view refusal must not overwrite the current content"
+    );
+    assert_eq!(
+        probe.writes.load(Ordering::SeqCst),
+        writes_after_first,
+        "refused overwrite reached the overlay"
+    );
+}
+
+#[test]
+fn test_write_file_accepts_overwrite_when_the_view_still_matches() {
+    let (_guard, dir) = testdir("writefile-fresh-view");
+    let path = Path::new(&dir).join("notes.txt");
+    let views = Arc::new(StaleViews::default());
+    let w = WriteFileTool {
+        views: Some(views.clone()),
+        ..WriteFileTool::default()
+    };
+    run(&w, json!({"path": path, "content": "v1"})).unwrap();
+    // No outside change: the recorded view still matches the disk, so the
+    // overwrite proceeds and the view refreshes to the new content.
+    run(&w, json!({"path": path, "content": "v2"})).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"v2");
+    let seen = views.seen.lock().unwrap();
+    assert_eq!(
+        seen.get(path.to_str().unwrap()).map(String::as_str),
+        Some("v2")
+    );
 }
 
 #[test]
