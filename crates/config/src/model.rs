@@ -227,6 +227,18 @@ protect_sensitive_files = true
     }
 
     #[test]
+    fn a_secrets_section_decodes_from_toml() {
+        // config.md §8: the carried key decodes; a key this slice does not
+        // model passes through without disturbing it.
+        let config: Config = toml::from_str("[secrets]\nprotect_sensitive_files = true\n")
+            .expect("secrets document decodes");
+        assert!(config.secrets.protect_sensitive_files);
+        let config: Config = toml::from_str("[secrets]\nfilter_subprocess_env = true\n")
+            .expect("unknown secrets key decodes");
+        assert!(!config.secrets.protect_sensitive_files);
+    }
+
+    #[test]
     fn a_table_where_an_array_of_tables_belongs_is_a_type_error() {
         // The reference surfaces the same refusal: `providers` is a slice, so
         // a table cannot decode onto it.

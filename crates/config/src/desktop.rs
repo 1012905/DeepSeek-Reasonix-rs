@@ -512,6 +512,16 @@ mod tests {
     }
 
     #[test]
+    fn desktop_section_shape() {
+        // config.md §3: the three host-startup keys decode as absent, and the
+        // raw tray value is empty so "anything but off is auto" reads it.
+        let section = DesktopSection::default();
+        assert!(section.telemetry.is_none());
+        assert!(section.metrics.is_none());
+        assert_eq!(section.tray, "");
+    }
+
+    #[test]
     fn the_status_bar_style_and_item_matrices() {
         // config.md §3: style icon|text default text; items preserve order,
         // drop unknown/dupes, and an empty list yields the default set.
