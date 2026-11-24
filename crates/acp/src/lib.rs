@@ -28,8 +28,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod agent_composition;
+pub mod available_commands;
 pub mod cancel;
 pub mod caps;
+pub mod dirs_vet;
 pub mod dispatch;
 pub mod elicitation;
 pub mod errors;
@@ -38,6 +41,7 @@ pub mod frame;
 pub mod fs_api;
 pub mod gating;
 pub mod goal;
+pub mod inbox;
 pub mod jsonrpc;
 pub mod lifecycle;
 pub mod mcp_control;
@@ -49,6 +53,7 @@ pub mod session_cancel;
 pub mod session_close;
 pub mod session_config_option;
 pub mod session_delete;
+pub mod session_id;
 pub mod session_info;
 pub mod session_list;
 pub mod session_mode;
@@ -61,6 +66,15 @@ pub mod session_steer;
 pub mod sidecar;
 pub mod status;
 pub mod terminal;
+pub mod tool_approval;
 pub mod update;
 pub mod usage;
 pub mod wire;
+
+// wave36-acp-b: ACP-038/040/041/043/045 modules, appended without touching the
+// existing module list above.
+pub mod authority;
+pub mod drift;
+pub mod mcp_spec;
+pub mod reload_extensions;
+pub mod warnings;
