@@ -18,6 +18,7 @@
 pub mod abi;
 pub mod arguments;
 pub mod ask;
+pub mod assembly;
 pub mod builtin;
 pub mod invoke;
 pub mod provenance;
@@ -26,6 +27,7 @@ pub mod registry;
 pub mod roots;
 pub mod schema;
 pub mod shell;
+pub mod usecap;
 pub mod withdrawn;
 
 pub use abi::{
