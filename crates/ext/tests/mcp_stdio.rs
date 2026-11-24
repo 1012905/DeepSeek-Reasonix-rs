@@ -227,6 +227,25 @@ fn stdio_approval_server_falls_back_to_workspace_cwd() {
     });
 }
 
+/// Spawns the peer, retrying while a parallel test's fork may still hold the
+/// install's write handle: Linux answers ETXTBSY until that handle closes.
+fn spawn_when_the_peer_is_executable(options: StdioOptions) -> StdioTransport {
+    let mut last = None;
+    for _ in 0..20 {
+        match StdioTransport::spawn(options.clone()) {
+            Ok(transport) => return transport,
+            Err(err) => {
+                last = Some(err);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    panic!(
+        "spawn peer via PATH lookup: {:?}",
+        last.expect("an attempt ran")
+    );
+}
+
 #[test]
 fn stdio_bare_command_resolves_through_path() {
     let root = tempfile::tempdir().expect("temp workspace");
@@ -239,7 +258,7 @@ fn stdio_bare_command_resolves_through_path() {
         "mcp-peer-bin"
     };
     let copied = bin_dir.join(exe_name);
-    std::fs::copy(helper_exe(), &copied).expect("copy peer binary");
+    support::install_peer(&copied);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -260,7 +279,7 @@ fn stdio_bare_command_resolves_through_path() {
     );
     options.command = "mcp-peer-bin".into();
 
-    let transport = StdioTransport::spawn(options).expect("spawn peer via PATH lookup");
+    let transport = spawn_when_the_peer_is_executable(options);
     transport
         .connect()
         .expect("handshake over PATH-resolved peer");

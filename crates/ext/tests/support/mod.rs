@@ -43,6 +43,18 @@ pub fn helper_exe() -> PathBuf {
     std::env::current_exe().expect("test binary path")
 }
 
+/// Installs the peer binary under `dst`, preferring a hard link.
+///
+/// A hard link leaves no write handle behind: Linux refuses to exec a file
+/// that is still open for writing (ETXTBSY), and a parallel test that forks
+/// while the copy handle exists makes that handle outlive the copy.
+pub fn install_peer(dst: &std::path::Path) {
+    if std::fs::hard_link(helper_exe(), dst).is_ok() {
+        return;
+    }
+    std::fs::copy(helper_exe(), dst).expect("copy peer binary");
+}
+
 /// Runs the peer when the helper marker is set; returns whether it did.
 ///
 /// Every test binary in this crate calls this from one `#[test]` named
