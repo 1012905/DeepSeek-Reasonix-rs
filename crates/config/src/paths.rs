@@ -362,11 +362,7 @@ impl Config {
     /// small one the app owns under the state root, never the home directory
     /// (paths.go AutoWorkspaceDir). The caller creates it.
     pub fn auto_workspace_dir(&self) -> PathBuf {
-        let base = self.root_dir(RootId::State);
-        if base.as_os_str().is_empty() {
-            return PathBuf::new();
-        }
-        base.join("workspaces").join("auto")
+        self.root_env().auto_workspace_dir()
     }
 }
 
@@ -571,8 +567,54 @@ mod tests {
             configured: Vec::new(),
         };
         assert_eq!(
-            stated.dir(RootId::State).join("workspaces").join("auto"),
+            stated.auto_workspace_dir(),
             PathBuf::from("/stated/home/workspaces/auto")
+        );
+    }
+
+    #[test]
+    fn auto_workspace_prefers_the_state_pin() {
+        // storage_roots.go: the environment pin outranks the configuration and
+        // the root's own default, so the auto workspace follows it.
+        let env = env_with(&[("REASONIX_STATE_HOME", "/state")]);
+        let pinned = binding(env).with_storage(&BTreeMap::new());
+        assert_eq!(
+            pinned.auto_workspace_dir(),
+            clean_path(Path::new("/state"))
+                .join("workspaces")
+                .join("auto")
+        );
+    }
+
+    #[test]
+    fn auto_workspace_falls_to_the_configured_root_then_home() {
+        // storage_roots.go: with no pin, [storage] state moves the workspace;
+        // with neither, the home root's own default holds it.
+        let env = env_with(&[("HOME", "/h"), ("USERPROFILE", "C:\\Users\\x")]);
+        let mut storage = BTreeMap::new();
+        storage.insert("state".to_owned(), "~/relocated".to_owned());
+        let relocated = binding(env.clone()).with_storage(&storage);
+        assert_eq!(
+            relocated.auto_workspace_dir(),
+            env.home()
+                .unwrap_or_default()
+                .join("relocated")
+                .join("workspaces")
+                .join("auto")
+        );
+        let default_state_root = if cfg!(windows) {
+            PathBuf::from("C:\\Users\\x")
+                .join("AppData")
+                .join("Roaming")
+                .join("reasonix")
+        } else {
+            PathBuf::from("/h").join(".reasonix")
+        };
+        assert_eq!(
+            binding(env)
+                .with_storage(&BTreeMap::new())
+                .auto_workspace_dir(),
+            default_state_root.join("workspaces").join("auto")
         );
     }
 

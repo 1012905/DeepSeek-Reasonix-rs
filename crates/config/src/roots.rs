@@ -242,6 +242,17 @@ impl RootEnv {
         self.default_dir(root)
     }
 
+    /// The folder a first launch opens when nobody has chosen a project: a
+    /// small one under the state root, empty when that root cannot resolve
+    /// (paths.go AutoWorkspaceDir). The caller creates it.
+    pub fn auto_workspace_dir(&self) -> PathBuf {
+        let base = self.dir(RootId::State);
+        if base.as_os_str().is_empty() {
+            return PathBuf::new();
+        }
+        base.join("workspaces").join("auto")
+    }
+
     /// What holds a root in place before the configuration is read.
     fn pinned_root_dir(&self, root: &StorageRoot) -> PathBuf {
         if root.id == RootId::Home && !self.stated_home.as_os_str().is_empty() {
