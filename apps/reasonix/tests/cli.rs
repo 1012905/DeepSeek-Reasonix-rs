@@ -47,12 +47,19 @@ fn version_subcommand_prints_single_line() {
     assert_eq!(code, Some(0));
 }
 
-/// Unknown commands exit 2 with a diagnostic on stderr; the exact reference
-/// text lands with the CLI matrix slice (ledger CLI-009).
+/// Unknown commands exit 2: the command name lands on stderr and the usage
+/// body on stdout, matching the reference `unknownCommand` path (ledger
+/// CLI-015).
 #[test]
 fn unknown_command_exits_two() {
     let (stdout, stderr, code) = run(&["definitely-not-a-command"]);
-    assert!(stdout.is_empty(), "stdout should stay quiet: {stdout}");
-    assert!(!stderr.is_empty(), "expected a diagnostic on stderr");
+    assert!(
+        stderr.starts_with("unknown command \"definitely-not-a-command\""),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stdout.starts_with("reasonix — "),
+        "stdout should carry the usage body: {stdout}"
+    );
     assert_eq!(code, Some(2));
 }
