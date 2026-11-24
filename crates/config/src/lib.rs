@@ -26,14 +26,19 @@ pub mod language;
 pub mod load;
 pub mod merge;
 pub mod model;
+pub mod mutator;
 pub mod paths;
 pub mod plugin;
 pub mod provider;
+pub mod render_scope;
 pub mod resolve;
 pub mod roots;
 pub mod sandbox;
 pub mod secrets;
 pub mod serve;
+pub mod surgery;
+pub mod toml_doc;
+pub mod toml_lex;
 pub mod tools;
 pub mod ui;
 pub mod write;
@@ -53,6 +58,7 @@ pub use merge::{
     merge_plugins, merge_providers,
 };
 pub use model::{BillingSection, Config, FRESH_CONFIG_VERSION};
+pub use mutator::MutatorError;
 pub use paths::{
     auto_workspace_dir, cache_dir, delivery_worktree_dir, expand_vars, locks_dir, memory_lock_dir,
     reasonix_home_dir, reasonix_state_dir, repair_mutation_lock_dir, user_config_path,
@@ -60,6 +66,7 @@ pub use paths::{
 };
 pub use plugin::{PluginEntry, normalize_plugin_command_line};
 pub use provider::{ProviderEntry, ProviderModelOverride, is_valid_credential_key};
+pub use render_scope::RenderScope;
 pub use resolve::{ModelError, ResolvedModel, unconfigured_entry, unconfigured_ref};
 pub use roots::{
     LOCK_DIRS, ROOT_TABLE, RootEnv, RootId, STATE_ROOT_ENTRIES, StorageError, StorageRoot,
@@ -68,6 +75,7 @@ pub use roots::{
 pub use sandbox::{PermissionsSection, SandboxSection};
 pub use secrets::SecretsSection;
 pub use serve::{AuthMode, ServeSection, host_serve_section};
+pub use toml_doc::parse_toml_doc;
 pub use tools::ToolsSection;
 pub use ui::UiSection;
 pub use write::{WriteError, config_file_perm, resolve_config_write_path, write_config_file};

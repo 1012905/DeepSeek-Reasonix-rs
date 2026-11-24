@@ -293,6 +293,7 @@ impl<'a> P<'a> {
                         cur.background = true;
                         cur.join = Join::Sequence;
                         parsed.stmts.push(std::mem::take(&mut cur));
+                        self.pos += 1;
                     }
                 },
                 b'|' => {

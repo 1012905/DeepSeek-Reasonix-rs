@@ -12,7 +12,12 @@ pub mod bash_cmdline;
 pub mod bash_env;
 pub mod bash_nul;
 pub mod bash_pipestatus;
+// wave38-a2: TOOL-025 bash decision satellite and TOOL-026 background-job
+// tools. Visibility declarations only; registry wiring into the live session
+// is added by the integration slice.
+pub mod bash_tool;
 pub mod bashrun;
+pub mod bgjobs;
 pub mod codeindex;
 pub mod confine;
 pub mod editengine;
@@ -271,3 +276,13 @@ pub use paidsearch::{
     PAID_SEARCH_APPROVAL_TOOL, PAID_SERVICE_FETCH, PAID_SERVICE_SEARCH, PaidSearchApprover,
     PaidSearchRequest, paid_search_approver_from,
 };
+
+// wave38-a1: TOOL-024 catalog snapshot and TOOL-045 shared shellrun slice.
+// Visibility declarations only; registry wiring is added by the integration slice.
+pub mod catalog;
+pub mod shellrun;
+
+// wave38-a3: TOOL-046/047/048 background jobs manager slice. Visibility
+// declarations only; the bash_output/kill_shell/wait wrapper registration is
+// added by the integration slice.
+pub mod jobs;
