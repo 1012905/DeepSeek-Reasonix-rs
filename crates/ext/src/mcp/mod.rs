@@ -4,6 +4,9 @@
 //! the JSON-RPC wire, era negotiation, tool naming, and lifecycle state;
 //! subprocess and network transports arrive as a later slice.
 
+pub mod http;
+pub mod http_headers;
+pub mod http_transport;
 pub mod lifecycle;
 pub mod naming;
 pub mod seam;
@@ -13,6 +16,14 @@ pub mod types;
 pub mod version;
 pub mod wire;
 
+pub use http::{
+    EventStream, HttpClient, HttpClientConfig, HttpError, HttpReply, SseEvent, same_origin,
+};
+pub use http_headers::{
+    HeaderAnnotationError, ParamHeader, encode_header_value, header_scalar, modern_request_headers,
+    param_headers_for_args, tool_param_headers,
+};
+pub use http_transport::{StreamableHttpConfig, StreamableHttpTransport};
 pub use lifecycle::{
     DEFAULT_CALL_TIMEOUT_MS, DEFAULT_START_CONCURRENCY, DEFAULT_START_TIMEOUT_MS, Host,
     LifecycleError, McpProcessMode, Removal, START_PHASES, Spec, StartPhase, StartPlan,
