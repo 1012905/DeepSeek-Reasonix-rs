@@ -242,14 +242,15 @@ pub fn unsupported_config_option(config_id: &str) -> RpcError {
 }
 
 /// Normalizes legacy config-option aliases onto the current axis id
-/// (session_config.go:559-572).
-pub fn normalize_config_id(raw: &str) -> &str {
-    match raw {
-        "models" => "model",
-        "reasoning_effort" | "thought_level" => "effort",
-        "profile" | "runtime_profile" | "token_mode" => "work_mode",
-        "approval" | "approval_mode" | "tool_approval_mode" => "tool_approval",
-        other => other,
+/// (session_config.go:559-572). The lookup and the fallback both trim
+/// surrounding whitespace first.
+pub fn normalize_config_id(raw: &str) -> String {
+    match raw.trim() {
+        "models" => "model".to_owned(),
+        "reasoning_effort" | "thought_level" => "effort".to_owned(),
+        "profile" | "runtime_profile" | "token_mode" => "work_mode".to_owned(),
+        "approval" | "approval_mode" | "tool_approval_mode" => "tool_approval".to_owned(),
+        other => other.to_owned(),
     }
 }
 
