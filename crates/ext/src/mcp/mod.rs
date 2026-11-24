@@ -9,6 +9,7 @@ pub mod http_headers;
 pub mod http_transport;
 pub mod lifecycle;
 pub mod naming;
+pub mod reconnect;
 pub mod seam;
 pub mod stdio;
 pub mod stdio_resolve;
@@ -36,7 +37,8 @@ pub use naming::{
     mcp_roots_from_absolute, model_tool_name, normalize_name, short_name_hash, tool_name,
     tool_prefix, validate_mcp_tool_names,
 };
-pub use seam::{Transport, TransportError};
+pub use reconnect::{CLOSE_WAIT_BUDGET_MS, DEFAULT_DIAL_BUDGET_MS, ReconnectingTransport};
+pub use seam::{Dialer, OwnedTransport, Transport, TransportError};
 pub use types::{ContentBlock, McpRoot, McpTool, ToolCallResult};
 pub use version::{
     CODE_HEADER_MISMATCH, CODE_MISSING_CLIENT_CAPABILITY, CODE_UNSUPPORTED_PROTOCOL_VERSION,
