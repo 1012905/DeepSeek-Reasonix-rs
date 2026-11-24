@@ -308,11 +308,12 @@ fn additional_dirs_vet_rejects_too_many_before_factory() {
     let dirs: Vec<String> = (0..33).map(|i| format!("/dir/{i}")).collect();
     let err = reasonix_acp::session_new::vet_additional_dirs(&dirs).unwrap_err();
     assert_eq!(err.data_code, "acp.additional_directories.too_many");
-    assert!(err.message.contains("at most 32"));
+    assert_eq!(err.message, "too many additional directories");
 
     let long = vec!["x".repeat(4097)];
     let err = reasonix_acp::session_new::vet_additional_dirs(&long).unwrap_err();
-    assert_eq!(err.data_code, "acp.additional_directories.path_too_long");
+    assert_eq!(err.data_code, "workspace_roots.not_directory");
+    assert_eq!(err.message, "additional directory path is too long");
 }
 
 #[test]

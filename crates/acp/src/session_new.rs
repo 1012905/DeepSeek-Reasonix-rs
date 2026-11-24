@@ -28,7 +28,9 @@ pub struct NewSessionRequest {
 
 /// Additional-directory rejection data.code (additional_dirs.go:16-19, 38-67).
 pub const DIRS_TOO_MANY: &str = "acp.additional_directories.too_many";
-pub const DIRS_PATH_TOO_LONG: &str = "acp.additional_directories.path_too_long";
+/// An over-long folder reuses the not-directory root code
+/// (`additional_dirs.go:51-53`; `workspace_roots.go:24`).
+pub const DIRS_PATH_TOO_LONG: &str = "workspace_roots.not_directory";
 pub const DIRS_DISABLED: &str = "acp.additional_directories.disabled";
 
 /// At most thirty-two additional directories per session.
@@ -50,14 +52,14 @@ pub fn vet_additional_dirs(dirs: &[String]) -> Result<(), DirVetError> {
     if dirs.len() > MAX_ADDITIONAL_DIRS {
         return Err(DirVetError {
             data_code: DIRS_TOO_MANY,
-            message: format!("session/new: at most {MAX_ADDITIONAL_DIRS} additional directories"),
+            message: "too many additional directories".to_owned(),
         });
     }
     for dir in dirs {
         if dir.chars().count() > MAX_ADDITIONAL_DIR_LEN {
             return Err(DirVetError {
                 data_code: DIRS_PATH_TOO_LONG,
-                message: format!("session/new: additional directory path too long: {dir}"),
+                message: "additional directory path is too long".to_owned(),
             });
         }
     }

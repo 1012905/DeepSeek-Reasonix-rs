@@ -22,7 +22,7 @@ pub fn validate_session_id(method: &str, session_id: &str) -> Result<(), RpcErro
             "{method}: missing sessionId"
         )));
     }
-    if trimmed == "." || trimmed == ".." {
+    if trimmed != session_id || trimmed == "." || trimmed == ".." {
         return Err(RpcError::invalid_params(format!(
             "{method}: invalid sessionId"
         )));
@@ -272,6 +272,9 @@ mod tests {
 
         let bad = validate_session_id("session/load", "has space").unwrap_err();
         assert_eq!(bad.message, "session/load: invalid sessionId");
+
+        let padded = validate_session_id("session/close", " s1 ").unwrap_err();
+        assert_eq!(padded.message, "session/close: invalid sessionId");
     }
 
     #[test]
