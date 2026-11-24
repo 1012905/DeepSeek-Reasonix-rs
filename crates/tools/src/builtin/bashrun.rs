@@ -727,19 +727,32 @@ mod tests {
 
     #[test]
     fn run_foreground_times_out_at_the_deadline() {
-        let sh = if cfg!(windows) { "cmd" } else { "sh" };
+        let sh = if cfg!(windows) {
+            // Resolving "cmd" through PATH fails when the harness that started
+            // cargo was itself launched with a trimmed PATH; COMSPEC is always
+            // set on Windows and names the same interpreter.
+            std::env::var("COMSPEC").unwrap_or_else(|_| String::from("cmd.exe"))
+        } else {
+            String::from("sh")
+        };
         let sleep = if cfg!(windows) {
-            // `timeout` needs a console and exits instantly without one, which
-            // would turn a timed-out expectation into a plain failure.
-            String::from("ping -n 6 127.0.0.1 >nul")
+            // `timeout` needs a console and exits instantly without one, and a
+            // bare `ping` lookup fails for the same PATH reason as above, which
+            // would turn a timed-out expectation into an exit-1 failure. The
+            // variable expansion keeps the path free of the quotes `cmd /c`
+            // would otherwise hand to the interpreter verbatim.
+            String::from("%SystemRoot%\\System32\\PING.EXE -n 6 127.0.0.1 >nul")
         } else {
             String::from("sleep 5")
         };
         let start = Instant::now();
         let out = run_foreground(
             Request {
-                argv: vec![sh.to_owned(), flag_for(sh), sleep],
-                timeout: Duration::from_millis(150),
+                argv: vec![sh.clone(), flag_for(&sh), sleep],
+                // A deadline under the spawn cost of a loaded machine turns
+                // this into a launch race rather than a timeout test: the
+                // child never gets to run and the result comes back Failed.
+                timeout: Duration::from_secs(1),
                 // The child kill is instant; a short reader bound keeps a
                 // lingering grandchild on the pipe from stretching the test
                 // on slower CI runners (the production default is longer).
@@ -748,9 +761,9 @@ mod tests {
             },
             None,
         );
-        assert_eq!(out.state, ShellState::TimedOut);
+        assert_eq!(out.state, ShellState::TimedOut, "err: {:?}", out.err);
         assert!(start.elapsed() < Duration::from_secs(10), "returned slowly");
-        assert_eq!(out.timeout_text, "150ms");
+        assert_eq!(out.timeout_text, "1s");
         assert!(matches!(out.err, Some(RunError::Timeout { .. })));
     }
 
@@ -811,7 +824,14 @@ mod tests {
     }
 
     fn flag_for(sh: &str) -> String {
-        if sh == "cmd" {
+        // Compare on the file stem so an absolute COMSPEC path still selects
+        // the switch this interpreter expects; a path compared verbatim would
+        // fall into the POSIX branch and cmd would exit on the unknown flag.
+        let stem = std::path::Path::new(sh)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(sh);
+        if stem.eq_ignore_ascii_case("cmd") {
             String::from("/c")
         } else {
             String::from("-c")
