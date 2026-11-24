@@ -632,10 +632,8 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        const SCOPE: &str = " Ignored paths are searched only when nothing else matched; such matches say so, so an empty answer means absent rather than filtered.";
-        const RG: &str = "Search for a regular expression in a file, or recursively under a directory — ripgrep-backed, so it honors .gitignore. Returns matching lines as path:line:text, capped at 200 matches.";
-        const NATIVE: &str = "Search for a regular expression in a file, or recursively under a directory (skips hidden files and files matched by .gitignore). Returns matching lines as path:line:text, capped at 200 matches.";
-        let _ = SCOPE;
+        const RG: &str = "Search for a regular expression in a file, or recursively under a directory — ripgrep-backed, so it honors .gitignore. Returns matching lines as path:line:text, capped at 200 matches. Ignored paths are searched only when nothing else matched; such matches say so, so an empty answer means absent rather than filtered.";
+        const NATIVE: &str = "Search for a regular expression in a file, or recursively under a directory (skips hidden files and files matched by .gitignore). Returns matching lines as path:line:text, capped at 200 matches. Ignored paths are searched only when nothing else matched; such matches say so, so an empty answer means absent rather than filtered.";
         if !self.rg.is_empty() {
             return RG;
         }

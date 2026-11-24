@@ -390,13 +390,26 @@ fn test_read_outside_scope_refusal_shape() {
     drop(root_g);
 }
 
+#[cfg(windows)]
+#[test]
+fn test_confine_refuses_unc_network_path_by_spelling() {
+    // network_scope.go: a UNC target is refused on its spelling before any
+    // lookup; the verdict applies only where Windows path rules hold.
+    let (_g, dir) = testdir("confine-unc");
+    let err = confine(std::slice::from_ref(&dir), r"\\server\share\file.txt").unwrap_err();
+    assert!(
+        err.is_network(),
+        "UNC target must answer the network refusal: {err}"
+    );
+}
+
 #[test]
 fn confine_readers_binds_the_four_readers() {
     let forbid = vec![String::from(if cfg!(windows) { "C:\\x" } else { "/x" })];
     let readers = reasonix_tools::builtin::confine_readers(&forbid);
-    assert_eq!(readers.len(), 3, "code_index lands with its own slice");
+    assert_eq!(readers.len(), 4);
     let names: Vec<&str> = readers.iter().map(|t| Tool::name(t.as_ref())).collect();
-    assert_eq!(names, ["read_file", "ls", "glob"]);
+    assert_eq!(names, ["read_file", "ls", "glob", "code_index"]);
     for r in &readers {
         assert!(r.read_only());
     }

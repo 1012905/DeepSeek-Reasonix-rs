@@ -729,7 +729,9 @@ mod tests {
     fn run_foreground_times_out_at_the_deadline() {
         let sh = if cfg!(windows) { "cmd" } else { "sh" };
         let sleep = if cfg!(windows) {
-            String::from("timeout /t 5 /nobreak >nul")
+            // `timeout` needs a console and exits instantly without one, which
+            // would turn a timed-out expectation into a plain failure.
+            String::from("ping -n 6 127.0.0.1 >nul")
         } else {
             String::from("sleep 5")
         };
@@ -784,7 +786,9 @@ mod tests {
     fn cancel_token_stops_a_long_child() {
         let sh = if cfg!(windows) { "cmd" } else { "sh" };
         let sleep = if cfg!(windows) {
-            String::from("timeout /t 5 /nobreak >nul")
+            // `timeout` needs a console and exits instantly without one, which
+            // would turn a timed-out expectation into a plain failure.
+            String::from("ping -n 6 127.0.0.1 >nul")
         } else {
             String::from("sleep 5")
         };

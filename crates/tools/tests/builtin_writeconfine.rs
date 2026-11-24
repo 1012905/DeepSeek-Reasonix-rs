@@ -11,10 +11,11 @@ use std::sync::Arc;
 
 use reasonix_tools::abi::Tool as _;
 use reasonix_tools::builtin::{
-    ConfineError, SessionDataGuardHook, SessionTempSource, WriteFileTool, confine, confine_write,
-    under_session_temp,
+    ConfineError, ManagedConfigHook, SessionDataGuardHook, SessionTempSource, WriteFileTool,
+    confine, confine_write, under_session_temp,
 };
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn testdir(label: &str) -> (tempfile::TempDir, String) {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-tmp");
@@ -183,6 +184,111 @@ fn test_refused_scratch_write_names_the_temp_alternative() {
             "; scratch files may also go under $TMPDIR ({temp})"
         )),
         "the refusal must name the one writable place outside the roots: {text}"
+    );
+}
+
+/// ManagedConfigPaths stub: names whether the target is a Reasonix-owned
+/// config file, and records how often the approver was asked.
+struct ManagedStub {
+    matches: bool,
+    approve_ok: bool,
+    asked: AtomicUsize,
+}
+
+impl ManagedConfigHook for ManagedStub {
+    fn matches(&self, _target: &str) -> bool {
+        self.matches
+    }
+
+    fn approve(&self, target: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        if self.approve_ok {
+            Ok(())
+        } else {
+            Err(Box::new(std::io::Error::other(format!(
+                "approver declined {target}"
+            ))))
+        }
+    }
+}
+
+fn managed_hooks(
+    managed: Option<Arc<dyn ManagedConfigHook>>,
+) -> reasonix_tools::builtin::WriteHooks {
+    reasonix_tools::builtin::WriteHooks {
+        guard: None,
+        managed,
+        session_temp: None,
+    }
+}
+
+#[test]
+fn test_confine_write_approved_managed_config_passes_outside_the_roots() {
+    let (_g, dir) = testdir("confine-write-managed-root");
+    let (_g2, other) = testdir("confine-write-managed-target");
+    let target = Path::new(&other).join("reasonix.toml");
+    let managed = Arc::new(ManagedStub {
+        matches: true,
+        approve_ok: true,
+        asked: AtomicUsize::new(0),
+    });
+    confine_write(
+        std::slice::from_ref(&dir),
+        &managed_hooks(Some(managed.clone())),
+        &target.to_string_lossy(),
+    )
+    .unwrap();
+    assert_eq!(
+        managed.asked.load(Ordering::SeqCst),
+        1,
+        "approver asked once per write"
+    );
+}
+
+#[test]
+fn test_confine_write_declined_managed_config_surfaces_the_reason() {
+    let (_g, dir) = testdir("confine-write-managed-decline");
+    let (_g2, other) = testdir("confine-write-managed-decline-target");
+    let target = Path::new(&other).join("reasonix.toml");
+    let managed = Arc::new(ManagedStub {
+        matches: true,
+        approve_ok: false,
+        asked: AtomicUsize::new(0),
+    });
+    let err = confine_write(
+        std::slice::from_ref(&dir),
+        &managed_hooks(Some(managed.clone())),
+        &target.to_string_lossy(),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("approver declined"), "{err}");
+    assert_eq!(managed.asked.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_confine_write_non_managed_outside_target_never_reaches_the_approver() {
+    let (_g, dir) = testdir("confine-write-managed-skip");
+    let (_g2, other) = testdir("confine-write-managed-skip-target");
+    let target = Path::new(&other).join("notes.txt");
+    let managed = Arc::new(ManagedStub {
+        matches: false,
+        approve_ok: true,
+        asked: AtomicUsize::new(0),
+    });
+    let err = confine_write(
+        std::slice::from_ref(&dir),
+        &managed_hooks(Some(managed.clone())),
+        &target.to_string_lossy(),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("workspace.write_outside_scope"),
+        "{err}"
+    );
+    assert_eq!(
+        managed.asked.load(Ordering::SeqCst),
+        0,
+        "non-managed target must not reach the approver"
     );
 }
 

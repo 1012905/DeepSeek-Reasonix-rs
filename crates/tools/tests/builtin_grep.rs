@@ -358,6 +358,38 @@ fn test_grep_glob_matcher_rules_directly() {
     ));
 }
 
+#[test]
+fn test_grep_description_ripgrep_variant_matches_go_byte_for_byte() {
+    // grep.go: the rg != "" branch description, verbatim.
+    let t = GrepTool {
+        net_roots: Vec::new(),
+        work_dir: String::new(),
+        rg: String::from("rg"),
+        forbid_roots: Vec::new(),
+        read_roots: Vec::new(),
+    };
+    assert_eq!(
+        t.description(),
+        "Search for a regular expression in a file, or recursively under a directory — ripgrep-backed, so it honors .gitignore. Returns matching lines as path:line:text, capped at 200 matches. Ignored paths are searched only when nothing else matched; such matches say so, so an empty answer means absent rather than filtered."
+    );
+}
+
+#[test]
+fn test_grep_description_native_variant_matches_go_byte_for_byte() {
+    // grep.go: the rg == "" native fallback description, verbatim.
+    let t = GrepTool {
+        net_roots: Vec::new(),
+        work_dir: String::new(),
+        rg: String::new(),
+        forbid_roots: Vec::new(),
+        read_roots: Vec::new(),
+    };
+    assert_eq!(
+        t.description(),
+        "Search for a regular expression in a file, or recursively under a directory (skips hidden files and files matched by .gitignore). Returns matching lines as path:line:text, capped at 200 matches. Ignored paths are searched only when nothing else matched; such matches say so, so an empty answer means absent rather than filtered."
+    );
+}
+
 fn sep() -> String {
     reasonix_tools::builtin::pathgo::separator().to_string()
 }
