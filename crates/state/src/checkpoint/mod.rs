@@ -9,6 +9,7 @@ mod rewind;
 mod secure_path;
 mod store;
 mod transaction;
+mod transaction_checkpoint_restore;
 mod transaction_compensate;
 mod transaction_prepare;
 mod transaction_publish;

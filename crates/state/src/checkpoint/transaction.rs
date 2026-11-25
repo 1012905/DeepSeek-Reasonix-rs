@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -53,6 +54,12 @@ pub enum ConversationError {
     #[error("injected conversation failure at {0:?}")]
     Injected(ConversationPhase),
     #[error("conversation {phase:?}: {source}")]
+    External {
+        phase: ConversationPhase,
+        #[source]
+        source: Box<dyn Error + Send + Sync>,
+    },
+    #[error("conversation {phase:?}: {source}")]
     Operation {
         phase: ConversationPhase,
         #[source]
@@ -65,10 +72,20 @@ impl ConversationError {
         Self::Injected(phase)
     }
 
+    pub fn external(
+        phase: ConversationPhase,
+        source: impl Into<Box<dyn Error + Send + Sync>>,
+    ) -> Self {
+        Self::External {
+            phase,
+            source: source.into(),
+        }
+    }
+
     pub fn phase(&self) -> ConversationPhase {
         match self {
             Self::Injected(phase) => *phase,
-            Self::Operation { phase, .. } => *phase,
+            Self::External { phase, .. } | Self::Operation { phase, .. } => *phase,
         }
     }
 
@@ -80,7 +97,7 @@ impl ConversationError {
 
     fn collect_phases(&self, phases: &mut Vec<ConversationPhase>) {
         match self {
-            Self::Injected(phase) => phases.push(*phase),
+            Self::Injected(phase) | Self::External { phase, .. } => phases.push(*phase),
             Self::Operation { phase, source } => {
                 phases.push(*phase);
                 source.collect_phases(phases);
@@ -223,8 +240,6 @@ pub enum TransactionError {
     WorkspaceTokenMismatch { expected: String, actual: String },
     #[error("rewind precheck found conflicts")]
     PrecheckConflicts(Vec<RewindConflict>),
-    #[error("conversation rewind requires a conversation applier")]
-    MissingConversationApplier,
     #[error("missing restore payload for {path}")]
     MissingPayload { path: String, reference: String },
     #[error("transaction backup already exists for {path}")]
@@ -425,9 +440,6 @@ impl Store {
             matches!(plan.scope, RewindScope::Conversation | RewindScope::Both);
         if (wants_files && !plan.can_files) || (wants_conversation && !plan.can_conversation) {
             return Err(TransactionError::PlanDisabled);
-        }
-        if wants_conversation && applier.is_none() {
-            return Err(TransactionError::MissingConversationApplier);
         }
 
         let _permit = self

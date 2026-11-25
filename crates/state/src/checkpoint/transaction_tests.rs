@@ -28,6 +28,7 @@ fn commit_rewind_modify_add_delete_persists_progress_and_cleans_staging() {
     let result = commit(&fixture, &plan_id, b"conversation-forward").unwrap();
 
     assert!(result.ok);
+    assert!(!result.undo_available);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
     assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");
     assert!(!fixture.root.path().join("b.txt").exists());
@@ -174,6 +175,76 @@ fn publish_failure_compensates_published_files_and_aborts() {
             .filter_map(|target| (!target.backup_path.is_empty()).then_some(&target.backup_path))
             .any(|path| Path::new(path).exists())
     );
+}
+
+#[test]
+fn compensation_retains_forward_and_backup_read_errors() {
+    let fixture = fixture();
+    write(fixture.root.path(), "a.txt", "after");
+    let forward_blob = fixture.store.blobs().unwrap().put(b"forward").unwrap();
+    fixture
+        .store
+        .blobs()
+        .unwrap()
+        .remove(&forward_blob)
+        .unwrap();
+    let target = TransactionTarget {
+        path: "a.txt".to_owned(),
+        abs_path: fixture
+            .root
+            .path()
+            .join("a.txt")
+            .to_string_lossy()
+            .into_owned(),
+        restore_existed: true,
+        restore_mode: live_mode(),
+        restore_sha: digest(b"before"),
+        forward_existed: true,
+        forward_mode: live_mode(),
+        forward_sha: digest(b"forward"),
+        forward_blob,
+        backup_path: fixture
+            .root
+            .path()
+            .join("missing.bak")
+            .to_string_lossy()
+            .into_owned(),
+        published: true,
+        action: "write".to_owned(),
+        ..TransactionTarget::default()
+    };
+
+    let error = transaction_compensate::compensate(
+        &fixture.store,
+        std::slice::from_ref(&target),
+        &mut Vec::new(),
+        None,
+    )
+    .unwrap_err();
+    let TransactionError::Compensation(errors) = error else {
+        panic!("expected compensation read errors");
+    };
+    assert_eq!(errors.len(), 1);
+    let TransactionError::Compensation(errors) = &errors[0] else {
+        panic!("expected both compensation read errors");
+    };
+    assert_eq!(errors.len(), 2);
+    assert!(matches!(
+        &errors[0],
+        TransactionError::Operation {
+            phase: TransactionPhase::CompensateFile,
+            source,
+            ..
+        } if matches!(source.as_ref(), TransactionError::Blob(BlobError::Io { .. }))
+    ));
+    assert!(matches!(
+        &errors[1],
+        TransactionError::Operation {
+            phase: TransactionPhase::CompensateFile,
+            source,
+            ..
+        } if matches!(source.as_ref(), TransactionError::Secure(SecureError::Io { .. }))
+    ));
 }
 
 #[test]

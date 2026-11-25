@@ -5,7 +5,8 @@ use crate::sessionstore::eventlog::record::CreatedAt;
 use super::secure_path;
 use super::store::Store;
 use super::transaction::{
-    ConversationApplier, TransactionError, TransactionInjection, TransactionPhase,
+    ConversationApplier, ConversationError, ConversationPhase, TransactionError,
+    TransactionInjection, TransactionPhase,
 };
 use super::transaction_compensate;
 use super::transaction_prepare::persist_manifest;
@@ -149,14 +150,15 @@ pub(super) fn commit(
             let cause = TransactionError::injected(TransactionPhase::BeforeConversation);
             return fail(store, transaction, stages, cause, applier, false, injection);
         }
-        if transaction.has_boundary {
-            let applier = applier.ok_or(TransactionError::MissingConversationApplier)?;
+        if transaction.has_boundary
+            && let Some(applier) = applier
+        {
             if let Err(source) = applier.apply_conversation_truncate(
                 transaction.boundary_index,
                 &transaction.conversation_forward,
             ) {
                 let cause = TransactionError::Conversation {
-                    phase: super::transaction::ConversationPhase::ApplyConversationTruncate,
+                    phase: ConversationPhase::ApplyConversationTruncate,
                     source,
                 };
                 return fail(
@@ -175,21 +177,28 @@ pub(super) fn commit(
             let cause = TransactionError::injected(TransactionPhase::BeforeCheckpointTruncate);
             return fail(store, transaction, stages, cause, applier, true, injection);
         }
-        let applier = applier.ok_or(TransactionError::MissingConversationApplier)?;
-        if let Err(source) = applier.truncate_checkpoints(transaction.truncate_from) {
+        if let Some(applier) = applier {
+            if let Err(source) = applier.truncate_checkpoints(transaction.truncate_from) {
+                let cause = TransactionError::Conversation {
+                    phase: ConversationPhase::TruncateCheckpoints,
+                    source,
+                };
+                return fail(
+                    store,
+                    transaction,
+                    stages,
+                    cause,
+                    Some(applier),
+                    true,
+                    injection,
+                );
+            }
+        } else if let Err(source) = store.truncate_from(transaction.truncate_from) {
             let cause = TransactionError::Conversation {
-                phase: super::transaction::ConversationPhase::TruncateCheckpoints,
-                source,
+                phase: ConversationPhase::TruncateCheckpoints,
+                source: ConversationError::external(ConversationPhase::TruncateCheckpoints, source),
             };
-            return fail(
-                store,
-                transaction,
-                stages,
-                cause,
-                Some(applier),
-                true,
-                injection,
-            );
+            return fail(store, transaction, stages, cause, None, true, injection);
         }
     }
 
@@ -216,7 +225,6 @@ pub(super) fn commit(
     transaction.state = TransactionState::Committed;
     transaction.updated_at = CreatedAt::now();
     result.ok = true;
-    result.undo_available = true;
     if injection.is_some_and(|value| value.fails(TransactionPhase::PersistCommitted)) {
         let cause = TransactionError::injected(TransactionPhase::PersistCommitted);
         return fail(store, transaction, stages, cause, applier, true, injection);

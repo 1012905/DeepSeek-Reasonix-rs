@@ -78,8 +78,18 @@ fn compensate_published(store: &Store, target: &TransactionTarget) -> Result<(),
         let forward = match load_forward(store, target) {
             Ok(data) => data,
             Err(error) if !target.backup_path.is_empty() => {
-                secure_path::read_file(&store.root, Path::new(&target.backup_path))
-                    .map_err(|_| TransactionError::at(TransactionPhase::CompensateFile, error))?
+                match secure_path::read_file(&store.root, Path::new(&target.backup_path)) {
+                    Ok(data) => data,
+                    Err(backup_error) => {
+                        return Err(TransactionError::Compensation(vec![
+                            error,
+                            TransactionError::at(
+                                TransactionPhase::CompensateFile,
+                                backup_error.into(),
+                            ),
+                        ]));
+                    }
+                }
             }
             Err(error) => {
                 return Err(TransactionError::at(
@@ -283,6 +293,7 @@ fn mark_stage(
 }
 
 pub(super) fn restore_conversation(
+    store: &Store,
     transaction: &TransactionManifest,
     applier: Option<&dyn ConversationApplier>,
 ) -> Result<(), TransactionError> {
@@ -293,7 +304,19 @@ pub(super) fn restore_conversation(
         return Ok(());
     }
     let Some(applier) = applier else {
-        return Err(TransactionError::MissingConversationApplier);
+        if transaction.checkpoint_backup.is_empty() {
+            return Ok(());
+        }
+        return super::transaction_checkpoint_restore::restore(
+            store,
+            &transaction.checkpoint_backup,
+        )
+        .map_err(|source| {
+            conversation_error(
+                ConversationPhase::RestoreCheckpoints,
+                ConversationError::external(ConversationPhase::RestoreCheckpoints, source),
+            )
+        });
     };
     let mut errors = Vec::new();
     if !transaction.conversation_forward.is_empty()
@@ -337,7 +360,7 @@ pub(super) fn fail(
     injection: Option<&TransactionInjection>,
 ) -> Result<(), TransactionError> {
     let mut compensation_errors = Vec::new();
-    if restore_state && let Err(error) = restore_conversation(transaction, applier) {
+    if restore_state && let Err(error) = restore_conversation(store, transaction, applier) {
         compensation_errors.push(error);
     }
     if let Err(error) = compensate(store, &transaction.targets, &mut stages, injection) {

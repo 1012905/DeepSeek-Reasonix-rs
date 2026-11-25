@@ -27,6 +27,7 @@ fn conversation_applier_truncates_then_truncates_checkpoints() {
         .unwrap();
 
     assert!(result.ok);
+    assert!(!result.undo_available);
     assert!(result.conversation_ok);
     assert_eq!(
         *applier.calls.lock().unwrap(),
@@ -131,20 +132,158 @@ fn conversation_restore_failure_keeps_manifest_committing_with_attribution() {
     );
 }
 
+fn assert_checkpoints_truncated(fixture: &Fixture) {
+    assert!(fixture.store.list().is_empty());
+    assert!(!turn_path(&fixture.dir, 0, false).exists());
+    assert!(!turn_path(&fixture.dir, 0, true).exists());
+    assert!(
+        Store::new(Some(&fixture.dir), fixture.root.path())
+            .list()
+            .is_empty()
+    );
+}
+
 #[test]
-fn conversation_commit_requires_applier() {
+fn conversation_commit_without_applier_truncates_store_checkpoints() {
     let fixture = modify_add_delete_fixture();
     let plan = conversation_plan(&fixture, RewindScope::Conversation);
-    let error = fixture
+    let result = fixture
         .store
         .commit_rewind(&plan.plan_id, 7, b"forward", None, None)
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        TransactionError::MissingConversationApplier
-    ));
-    assert_no_manifest(&fixture.dir);
+        .unwrap();
+
+    assert!(result.ok);
+    assert!(!result.undo_available);
+    assert_checkpoints_truncated(&fixture);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Committed
+    );
+}
+
+#[test]
+fn both_commit_without_applier_truncates_store_checkpoints() {
+    let fixture = modify_add_delete_fixture();
+    let plan = conversation_plan(&fixture, RewindScope::Both);
+    assert!(plan.can_files);
+    let result = fixture
+        .store
+        .commit_rewind(&plan.plan_id, 7, b"forward", None, None)
+        .unwrap();
+
+    assert!(result.ok);
+    assert!(!result.undo_available);
+    assert_checkpoints_truncated(&fixture);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");
+    assert!(!fixture.root.path().join("b.txt").exists());
+}
+
+#[test]
+fn conversation_compensation_without_applier_restores_checkpoint_backup() {
+    let mut fixture = fixture();
+    write(fixture.root.path(), "a.txt", "a-after");
+    write(fixture.root.path(), "b.txt", "b-created");
+    let checkpoints = [checkpoint(
+        0,
+        vec![
+            owned_file(
+                "a.txt",
+                Some("a-before"),
+                Some(true),
+                &digest(b"a-after"),
+                live_mode(),
+            ),
+            owned_file(
+                "b.txt",
+                None,
+                Some(true),
+                &digest(b"b-created"),
+                live_mode(),
+            ),
+            owned_file("c.txt", Some("c-before"), Some(false), "", 0),
+        ],
+    )];
+    fixture.store = load(fixture.root.path(), &fixture.dir, &checkpoints);
+    let mut expired = checkpoint(1, Vec::new());
+    expired.expired_file_payload = true;
+    expired
+        .coverage_gaps
+        .push(CoverageGap::new(GAP_EXPIRED_PAYLOAD, EXPIRED_DETAIL));
+    expired.recompute_coverage();
+    write_json_atomic(&turn_path(&fixture.dir, 1, true), &expired).unwrap();
+    fixture.store = Store::new(Some(&fixture.dir), fixture.root.path());
+    let plan = conversation_plan(&fixture, RewindScope::Conversation);
+    let injection = TransactionInjection::fail(TransactionPhase::SyncRestoredOwnership);
+
+    let error = fixture
+        .store
+        .commit_rewind(&plan.plan_id, 7, b"forward", None, Some(&injection))
+        .unwrap_err();
+
+    assert!(
+        error
+            .phases()
+            .contains(&TransactionPhase::SyncRestoredOwnership)
+    );
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Aborted
+    );
+    assert_eq!(
+        fixture
+            .store
+            .list()
+            .iter()
+            .map(|meta| meta.turn)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(
+        read_json_file::<Checkpoint>(&turn_path(&fixture.dir, 0, false)).unwrap(),
+        checkpoints[0]
+    );
+    assert_eq!(
+        read_json_file::<Checkpoint>(&turn_path(&fixture.dir, 1, true)).unwrap(),
+        expired
+    );
+    assert!(!turn_path(&fixture.dir, 1, false).exists());
+    assert_eq!(
+        Store::new(Some(&fixture.dir), fixture.root.path()).list(),
+        fixture.store.list()
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
+}
+
+#[test]
+fn conversation_external_error_preserves_phase_and_source() {
+    let dependency = std::io::Error::new(std::io::ErrorKind::NotConnected, "dependency offline");
+    let error = ConversationError::external(ConversationPhase::RestoreCheckpoints, dependency);
+
+    assert_eq!(error.phase(), ConversationPhase::RestoreCheckpoints);
+    assert_eq!(error.phases(), vec![ConversationPhase::RestoreCheckpoints]);
+    let source = std::error::Error::source(&error).expect("external source");
+    assert_eq!(
+        source
+            .downcast_ref::<std::io::Error>()
+            .expect("dependency error")
+            .kind(),
+        std::io::ErrorKind::NotConnected
+    );
+
+    let nested = ConversationError::Operation {
+        phase: ConversationPhase::ApplyConversationTruncate,
+        source: Box::new(error),
+    };
+    assert_eq!(
+        nested.phases(),
+        vec![
+            ConversationPhase::ApplyConversationTruncate,
+            ConversationPhase::RestoreCheckpoints,
+        ]
+    );
 }
 
 #[test]
