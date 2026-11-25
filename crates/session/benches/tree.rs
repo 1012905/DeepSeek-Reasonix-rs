@@ -157,7 +157,7 @@ fn literal_snapshot(inputs: &TreeInputs) -> WorkspaceTreeSnapshot {
         let listed = reasonix_session::listing::list_native_sessions(&dir).unwrap_or_default();
         let mut rows = Vec::new();
         for listed in &listed {
-            let path = Path::new(&listed.info.path);
+            let path = Path::new(&listed.path);
             let base = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -168,17 +168,17 @@ fn literal_snapshot(inputs: &TreeInputs) -> WorkspaceTreeSnapshot {
             let title = reasonix_session::title::session_title(
                 &titles,
                 &base,
-                &listed.info.preview,
+                &listed.preview,
                 modified.unix_nanos(),
-                &listed.info.custom_title,
+                &listed.custom_title,
             );
             rows.push(reasonix_session::model::SessionRow {
                 name: base.strip_suffix(".jsonl").unwrap_or(&base).to_string(),
-                path: listed.info.path.clone(),
+                path: listed.path.clone(),
                 title,
-                turns: listed.info.turns,
+                turns: listed.turns,
                 current: false,
-                unread: listed.info.unread,
+                unread: listed.unread,
                 modified,
             });
         }

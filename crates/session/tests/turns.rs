@@ -114,6 +114,40 @@ impl Sink for Recorder {
     }
 }
 
+#[derive(Default)]
+struct RunningAtDone {
+    controller: Mutex<Option<Arc<TurnController>>>,
+    running: Mutex<Option<bool>>,
+}
+
+impl Sink for RunningAtDone {
+    fn emit(&self, e: Event) {
+        if e.kind == reasonix_session::turns::TURN_DONE {
+            let controller = self.controller.lock().expect("controller lock");
+            let running = controller.as_ref().expect("bound controller").running();
+            *self.running.lock().expect("running lock") = Some(running);
+        }
+    }
+}
+
+#[derive(Default)]
+struct CancelAtDone {
+    controller: Mutex<Option<Arc<TurnController>>>,
+    cancel_requested: Mutex<Option<bool>>,
+}
+
+impl Sink for CancelAtDone {
+    fn emit(&self, e: Event) {
+        if e.kind == reasonix_session::turns::TURN_DONE {
+            let controller = self.controller.lock().expect("controller lock");
+            let controller = controller.as_ref().expect("bound controller");
+            controller.cancel();
+            *self.cancel_requested.lock().expect("cancel lock") =
+                Some(controller.cancel_requested());
+        }
+    }
+}
+
 /// One controller over the canned endpoint with the standard fixtures.
 async fn controller(base: &str, sink: Arc<dyn Sink>) -> Arc<TurnController> {
     let mut cfg = ClientConfig::new("relay", base, "m");
@@ -180,6 +214,48 @@ async fn submit_runs_a_turn_and_lands_the_answer_on_the_sink() {
 }
 
 #[tokio::test]
+async fn admission_stays_closed_until_the_completion_event_is_emitted() {
+    let sink = Arc::new(RunningAtDone::default());
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("done"),
+        &usage_frame(1, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let ctrl = controller(&base, sink.clone()).await;
+    *sink.controller.lock().expect("controller lock") = Some(ctrl.clone());
+
+    ctrl.submit("hello").await.expect("turn admitted");
+
+    assert_eq!(*sink.running.lock().expect("running lock"), Some(true));
+    assert!(!ctrl.running());
+}
+
+#[tokio::test]
+async fn cancel_during_completion_does_not_mark_the_finished_turn() {
+    let sink = Arc::new(CancelAtDone::default());
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("done"),
+        &usage_frame(1, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let ctrl = controller(&base, sink.clone()).await;
+    *sink.controller.lock().expect("controller lock") = Some(ctrl.clone());
+
+    let receipt = ctrl.submit("hello").await.expect("turn admitted");
+
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert!(!receipt.cancelled);
+    assert_eq!(
+        *sink.cancel_requested.lock().expect("cancel lock"),
+        Some(false)
+    );
+    assert!(!ctrl.cancel_requested());
+    assert!(!ctrl.running());
+}
+
+#[tokio::test]
 async fn the_admitted_prompt_is_durable_before_the_answer() {
     let dir = tempfile::tempdir().expect("tmp");
     let recorder = Recorder::shared();
@@ -210,6 +286,60 @@ async fn the_admitted_prompt_is_durable_before_the_answer() {
     let done = recorder.events_of(reasonix_session::turns::TURN_DONE);
     assert_eq!(done.len(), 1);
     assert!(!done[0].err.is_empty(), "the failure reaches the wire");
+}
+
+#[tokio::test]
+async fn cancel_while_idle_does_not_cancel_the_next_turn() {
+    let recorder = Recorder::shared();
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("not cancelled"),
+        &usage_frame(1, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let ctrl = controller(&base, recorder).await;
+
+    ctrl.cancel();
+    assert!(!ctrl.cancel_requested());
+    let receipt = ctrl.submit("next turn").await.expect("turn admitted");
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert!(!receipt.cancelled);
+}
+
+#[tokio::test]
+async fn cancel_between_admission_and_run_is_not_lost_or_carried_into_the_next_turn() {
+    let recorder = Recorder::shared();
+    let base = serve_responses(vec![
+        chunked_sse(&[
+            &text_frame("next turn"),
+            &usage_frame(1, 1, "stop"),
+            "[DONE]",
+        ]),
+        chunked_sse(&[
+            &text_frame("another turn"),
+            &usage_frame(1, 1, "stop"),
+            "[DONE]",
+        ]),
+    ])
+    .await;
+    let ctrl = controller(&base, recorder).await;
+
+    assert!(ctrl.try_admit());
+    ctrl.cancel();
+    let receipt = ctrl.run_admitted("cancel before run").await;
+    assert!(receipt.cancelled, "{receipt:?}");
+    assert!(matches!(
+        receipt.error,
+        Some(reasonix_agent::TurnError::Cancelled)
+            | Some(reasonix_agent::TurnError::Provider(
+                reasonix_provider::ProviderError::Cancelled
+            ))
+    ));
+    assert!(!ctrl.cancel_requested());
+
+    let receipt = ctrl.submit("after cancellation").await.expect("next turn");
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert!(!receipt.cancelled);
 }
 
 #[tokio::test]

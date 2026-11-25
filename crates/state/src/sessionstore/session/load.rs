@@ -11,7 +11,6 @@
 
 use std::borrow::Cow;
 use std::fs;
-use std::io;
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -23,14 +22,14 @@ use super::save::LoadError;
 use super::storage_eq::{messages_have_prefix, messages_have_prefix_with_compatible_system};
 use super::{Session, SessionState};
 use crate::sessionstore::branch::load_branch_meta_retry;
+use crate::sessionstore::dag::load_session_dag_messages;
 use crate::sessionstore::eventlog::{
     SessionEventReplay, holds_any_image, is_data_url, probe_session_event_log,
     replay_session_event_log, session_image_key, write_session_image_blob,
 };
 use crate::sessionstore::preview::migrate_legacy_provider_content;
-use crate::store::naming::{
-    session_blobs_dir, session_cleanup_pending, session_event_log, session_v4_removed_marker,
-};
+use crate::sessionstore::v4_import::prepare_session_path as prepare_v4_import;
+use crate::store::naming::{session_blobs_dir, session_cleanup_pending, session_event_log};
 
 /// Loads a session under the save-path lock (Go: LoadSession).
 ///
@@ -44,27 +43,11 @@ pub fn load_session(path: &str) -> Result<Session, LoadError> {
 /// Makes a listed path openable (Go session_v4_import.go
 /// `PrepareSessionPath`).
 ///
-/// The 1.x v4 import (SESS-036..038) is the only work this step does, and this
-/// build cannot produce a v4 source, so the import arm is a typed seam. The
-/// tombstone arm is real: a v4-imported session whose removal was recorded
-/// reports not-exist even though its artifacts may still be on disk, which is
-/// how a deleted conversation stays deleted.
+/// A removed v4 import stays removed even while its native artifacts remain;
+/// otherwise an unchanged import is completed or a source continued by 1.x is
+/// refreshed before the native load chain opens it.
 pub fn prepare_session_path(session_path: &Path) -> Result<(), LoadError> {
-    let path_text = session_path.to_string_lossy();
-    if !session_v4_removed_marker(session_path)
-        .as_os_str()
-        .is_empty()
-        && !is_visible_session(&path_text)
-    {
-        return Err(LoadError::Probe(io::Error::new(
-            io::ErrorKind::NotFound,
-            "session was removed from the 1.x store",
-        )));
-    }
-    // Seam: when a v4 source exists for this path, Go imports it here (or
-    // refreshes a copy 1.x continued). Nothing in this build writes a v4
-    // store, so there is never a source to consult.
-    Ok(())
+    prepare_v4_import(session_path).map_err(|err| LoadError::V4Import(Box::new(err)))
 }
 
 /// Loads a session without taking the file locks (Go:
@@ -130,9 +113,12 @@ pub fn load_session_unlocked(session_path: &Path) -> Result<Session, LoadError> 
 /// replay was damaged.
 pub fn load_session_messages(session_path: &Path) -> Result<(Vec<Message>, bool, bool), LoadError> {
     let probe = probe_session_event_log(session_path)?;
-    if probe.future_schema || probe.dag {
-        // The 1.x DAG reader (SESS-023) is not available in this build.
+    if probe.future_schema {
         return Err(LoadError::UnownedEventLog);
+    }
+    if probe.dag {
+        let (msgs, damaged) = load_session_dag_messages(session_path)?;
+        return Ok((msgs, false, damaged));
     }
     if probe.native && probe.size > 0 {
         let replay = replay_session_event_log(&session_event_log(session_path))?;
@@ -290,11 +276,7 @@ pub fn is_cleanup_pending(session_path: &str) -> bool {
 /// The marker path itself is the whole rule; only a `v4-<id>.jsonl` name in a
 /// sessions folder has one.
 fn is_v4_session_removed(session_path: &str) -> bool {
-    let marker = session_v4_removed_marker(Path::new(session_path));
-    if marker.as_os_str().is_empty() {
-        return false;
-    }
-    marker.exists()
+    crate::sessionstore::v4_import::is_v4_session_removed(Path::new(session_path))
 }
 
 /// Go save.go `IsVisibleSession`: whether a persisted session should
@@ -391,6 +373,73 @@ mod tests {
         assert!(!crate::store::is_v4_session_id("zzzzzzzzzzzzzzzz"));
     }
 
+    fn write_dag(session: &Path, records: &[String], torn: bool) {
+        fs::write(session, b"").expect("write checkpoint");
+        let mut body = records.join("\n");
+        body.push('\n');
+        if torn {
+            body.push_str("{\"schema_version\":2,\"type\":");
+        }
+        fs::write(session_event_log(session), body).expect("write DAG");
+    }
+
+    fn dag_message(id: &str, parent: &str, head: &str, role: &str, content: &str) -> String {
+        format!(
+            "{{\"schema_version\":2,\"at\":\"2026-09-25T13:00:00Z\",\"type\":\"message\",\"id\":\"{id}\",\"parent\":\"{parent}\",\"head\":\"{head}\",\"msgs\":[{{\"role\":\"{role}\",\"content\":{}}}]}}",
+            serde_json::to_string(content).expect("content JSON")
+        )
+    }
+
+    #[test]
+    fn load_session_reads_the_selected_foreign_dag_and_marks_a_torn_tail() {
+        let dir = tempdir();
+        let path = dir.path().join("foreign.jsonl");
+        write_dag(
+            &path,
+            &[
+                dag_message("u", "", "main", "user", "hello from 1.x"),
+                dag_message("a", "u", "main", "assistant", "answer from 1.x"),
+            ],
+            true,
+        );
+
+        let session = load_session(&path.to_string_lossy()).expect("load foreign DAG");
+        let messages = session.snapshot();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "hello from 1.x");
+        assert_eq!(messages[1].content, "answer from 1.x");
+        assert!(session.read().event_log_damaged);
+    }
+
+    #[test]
+    fn load_session_imports_a_v4_source_through_prepare_path() {
+        use crate::sessionstore::sessionv4::test_support::{End, Fixture, ID, message};
+
+        let mut fixture = Fixture::new(ID);
+        fixture.batch(
+            vec![
+                message("u", "user", "imported question"),
+                message("a", "assistant", "imported answer"),
+            ],
+            End::Ended,
+        );
+        let path = crate::sessionstore::v4_import::v4_import_path(&fixture.sessions(), ID);
+
+        let session = load_session(&path.to_string_lossy()).expect("prepare and load v4 import");
+        let messages = session.snapshot();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "imported question");
+        assert_eq!(messages[1].content, "imported answer");
+        assert!(session_event_log(&path).exists());
+        let meta = crate::sessionstore::branch::load_branch_meta(&path)
+            .expect("branch meta")
+            .expect("imported branch meta");
+        assert_eq!(
+            meta.imported_from.expect("import source").line,
+            "1.x sessions-v4"
+        );
+    }
+
     #[test]
     fn cleanup_pending_hides_a_session() {
         let dir = tempdir();
@@ -413,5 +462,71 @@ mod tests {
         std::fs::remove_file(&marker).expect("remove cleanup marker");
         assert!(!is_cleanup_pending(&path_str));
         assert!(is_visible_session(&path_str));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_v4_tombstone_symlink_does_not_hide_session() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions");
+        fs::create_dir_all(dir.path().join("sessions-v4")).expect("v4 root");
+        let path = sessions.join("v4-0123456789abcdef0123456789abcdef.jsonl");
+        let target = dir.path().join("outside-tombstone");
+        fs::write(&target, b"{}").expect("outside tombstone");
+        symlink(&target, crate::store::session_v4_removed_marker(&path)).expect("symlink");
+
+        assert!(is_visible_session(&path.to_string_lossy()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_v4_tombstone_symlink_still_hides_session() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions");
+        fs::create_dir_all(dir.path().join("sessions-v4")).expect("v4 root");
+        let path = sessions.join("v4-0123456789abcdef0123456789abcdef.jsonl");
+        let target = sessions.join("tombstone");
+        fs::write(&target, b"{}").expect("tombstone");
+        symlink(
+            Path::new("tombstone"),
+            crate::store::session_v4_removed_marker(&path),
+        )
+        .expect("symlink");
+
+        assert!(!is_visible_session(&path.to_string_lossy()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_v4_tombstone_junction_does_not_hide_session() {
+        let dir = tempdir();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions");
+        fs::create_dir_all(dir.path().join("sessions-v4")).expect("v4 root");
+        let path = sessions.join("v4-0123456789abcdef0123456789abcdef.jsonl");
+        let target = dir.path().join("outside-tombstone");
+        fs::create_dir(&target).expect("outside tombstone");
+        let marker = crate::store::session_v4_removed_marker(&path);
+        let marker = marker
+            .parent()
+            .expect("marker parent")
+            .canonicalize()
+            .expect("canonical parent")
+            .join(marker.file_name().expect("marker name"));
+        let status = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(marker)
+            .arg(target.canonicalize().expect("canonical target"))
+            .status()
+            .expect("create junction");
+        assert!(status.success());
+
+        assert!(is_visible_session(&path.to_string_lossy()));
     }
 }

@@ -11,12 +11,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use reasonix_state::sessionstore::listing::list_sessions;
 use reasonix_state::sessionstore::session::canonical_session_path;
 use reasonix_state::store::naming::is_subagent_transcript_name;
 
 use crate::listing::{
-    ListedSession, compare_sessions, hidden_recovery_copy, list_native_sessions,
-    session_content_mod_time,
+    SessionInfo, compare_sessions, hidden_recovery_copy, session_content_mod_time,
 };
 use crate::model::{SessionRow, WorkspaceNode, WorkspaceTreeSnapshot};
 use crate::paths::{delivery_worktree_dir, root_name, session_dir_for};
@@ -217,15 +217,15 @@ pub fn snapshot(inputs: &TreeInputs) -> WorkspaceTreeSnapshot {
 
 /// Every listed session across the group's directories, most recent first
 /// (Go `projectPage`'s listing pass, deduplicated by directory).
-fn group_sessions(inputs: &TreeInputs, group: &WorkspaceGroup) -> Vec<ListedSession> {
-    let mut listed: Vec<ListedSession> = Vec::new();
+fn group_sessions(inputs: &TreeInputs, group: &WorkspaceGroup) -> Vec<SessionInfo> {
+    let mut listed: Vec<SessionInfo> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for root in &group.roots {
         let dir = session_dir_for(&inputs.state_root, root);
         if !seen.insert(dir.to_string_lossy().into_owned()) {
             continue;
         }
-        match list_native_sessions(&dir) {
+        match list_sessions(&dir) {
             Ok(rows) => listed.extend(rows),
             Err(err) => {
                 // One unreadable directory costs its own rows, not the
@@ -235,13 +235,13 @@ fn group_sessions(inputs: &TreeInputs, group: &WorkspaceGroup) -> Vec<ListedSess
         }
     }
     // One sort, once, over the merged rows (OPT-014).
-    listed.sort_by(|a, b| compare_sessions(&a.info, &b.info));
+    listed.sort_by(compare_sessions);
     listed
 }
 
 /// Rows, counts, and the said flag for one group (Go `projectPage`'s row
 /// pass, the no-window slice).
-fn page_rows(listed: &[ListedSession]) -> (Vec<SessionRow>, i64, i64, bool) {
+fn page_rows(listed: &[SessionInfo]) -> (Vec<SessionRow>, i64, i64, bool) {
     let mut rows: Vec<SessionRow> = Vec::with_capacity(listed.len());
     let mut total: i64 = 0;
     let mut archived: i64 = 0;
@@ -250,8 +250,7 @@ fn page_rows(listed: &[ListedSession]) -> (Vec<SessionRow>, i64, i64, bool) {
     // + one `snapshot()` outside the row loop): titles are file-name
     // keyed and unique only within a project.
     let mut titles_by_dir: std::collections::HashMap<String, TitleSnapshot> = Default::default();
-    for listed in listed {
-        let info = &listed.info;
+    for info in listed {
         let base = file_name(&info.path);
         // A subagent transcript only means anything through the session
         // that spawned it.
@@ -454,6 +453,44 @@ mod tests {
         let tree = snapshot(&inputs);
         assert_eq!(tree.0[0].total, 0);
         assert!(tree.0[0].sessions.is_empty());
+    }
+
+    #[test]
+    fn tree_includes_foreign_sessions_and_omits_empty_ones() {
+        let tmp = crate::test_support::tempdir();
+        let inputs = inputs(tmp.path());
+        let root = tmp.path().join("demo");
+        fs::create_dir_all(&root).unwrap();
+        remember(&inputs, &[&root.to_string_lossy()]);
+        add_session(
+            &inputs,
+            &root.to_string_lossy(),
+            "20260101-000000-000-model",
+        );
+        let id = "0123456789abcdef0123456789abcdef";
+        let empty_id = "1123456789abcdef0123456789abcdef";
+        let sessions = session_dir(&inputs, &root.to_string_lossy());
+        let foreign = crate::test_support::write_v4_fixture(
+            &sessions,
+            id,
+            vec![serde_json::json!({
+                "kind": "message/complete",
+                "payload": {"message": {"id": "m1", "role": "user", "content": "legacy preview"}}
+            })],
+        );
+        crate::test_support::write_v4_fixture(&sessions, empty_id, Vec::new());
+
+        let tree = snapshot(&inputs);
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].total, 2);
+        assert_eq!(tree.0[0].sessions.len(), 2);
+        let row = tree.0[0]
+            .sessions
+            .iter()
+            .find(|row| row.path == foreign.to_string_lossy())
+            .expect("foreign tree row");
+        assert_eq!(row.name, format!("v4-{id}"));
+        assert_eq!(row.turns, 1);
     }
 
     #[test]

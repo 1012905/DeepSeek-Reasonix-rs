@@ -54,8 +54,9 @@ impl Timestamp {
     /// Go `t.UnixNano()`.
     pub fn unix_nanos(self) -> i64 {
         self.0
-            .timestamp_nanos_opt()
-            .unwrap_or_else(|| self.0.timestamp() * 1_000_000_000)
+            .timestamp()
+            .wrapping_mul(1_000_000_000)
+            .wrapping_add(i64::from(self.0.nanosecond()))
     }
 }
 
@@ -346,6 +347,16 @@ mod tests {
             assert!(map.contains_key(key), "missing {key}");
         }
         assert!(!map.contains_key("host") && !map.contains_key("readOnly"));
+    }
+
+    #[test]
+    fn timestamp_unix_nanos_wraps_outside_the_int64_range_like_go() {
+        assert_eq!(Timestamp::zero().unix_nanos(), -6_795_364_578_871_345_152);
+        let at = chrono::DateTime::parse_from_rfc3339("2500-01-01T00:00:00Z").unwrap();
+        assert_eq!(
+            Timestamp::from_datetime(at).unix_nanos(),
+            -1_721_518_473_709_551_616
+        );
     }
 
     #[test]

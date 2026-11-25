@@ -195,6 +195,11 @@ impl Agent {
         self.cancel.cancel();
     }
 
+    /// Starts a fresh cancellation generation at the host's admission boundary.
+    pub fn reset_cancellation(&self) {
+        self.cancel.reset();
+    }
+
     /// Appends the user input and drives the tool loop until the model
     /// returns a final answer, the turn is cancelled, or the provider
     /// errors (Go: `Run`).
@@ -206,6 +211,7 @@ impl Agent {
         }
         let started = Instant::now();
         let result = self.run_tool_loop(input).await;
+        self.cancel.reset();
         self.running.store(false, Ordering::SeqCst);
         let work_ms = started.elapsed().as_millis().clamp(1, i64::MAX as u128) as i64;
         result.map(|mut out| {

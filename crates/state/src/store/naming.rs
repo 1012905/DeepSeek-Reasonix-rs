@@ -309,9 +309,14 @@ pub fn v4_sessions_root(sessions_dir: &Path) -> PathBuf {
     let is_sessions_folder = sessions_dir
         .file_name()
         .is_some_and(|name| name == "sessions");
-    match (is_sessions_folder, sessions_dir.parent()) {
-        (true, Some(parent)) if !parent.as_os_str().is_empty() => parent.join("sessions-v4"),
-        _ => PathBuf::new(),
+    if !is_sessions_folder {
+        return PathBuf::new();
+    }
+    match sessions_dir.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() && parent != Path::new(".") => {
+            parent.join("sessions-v4")
+        }
+        _ => PathBuf::from("sessions-v4"),
     }
 }
 
@@ -488,6 +493,19 @@ mod tests {
 
     fn p(s: &str) -> &Path {
         Path::new(s)
+    }
+
+    #[test]
+    fn v4_sessions_root_treats_a_bare_sessions_parent_as_current_directory() {
+        assert_eq!(
+            v4_sessions_root(p("sessions")),
+            PathBuf::from("sessions-v4")
+        );
+        assert_eq!(
+            v4_sessions_root(p("./sessions")),
+            PathBuf::from("sessions-v4")
+        );
+        assert!(v4_sessions_root(p("other")).as_os_str().is_empty());
     }
 
     #[test]
