@@ -186,6 +186,17 @@ impl<'a> MutationObserver<'a> {
         try_write_admission(self.store, cancellation, cancellation)
     }
 
+    pub async fn register_writer(
+        &self,
+        writer_id: &str,
+        kind: &str,
+        turn: i64,
+    ) -> Result<RegisteredWriter<'a>, WriterError> {
+        let cancellation = CancellationToken::new();
+        self.register_writer_context(&cancellation, writer_id, kind, turn)
+            .await
+    }
+
     pub async fn register_writer_context(
         &self,
         cancellation: &CancellationToken,

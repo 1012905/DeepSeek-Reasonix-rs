@@ -122,6 +122,138 @@ async fn unregister_of_a_pending_writer_cancels_without_waiting_for_admission() 
     drop(exclusive);
 }
 
+#[tokio::test]
+async fn dropping_a_pending_registration_retires_its_placeholder() {
+    let fixture = fixture();
+    let observer = observer(&fixture.store);
+    let exclusive = fixture
+        .store
+        .barrier()
+        .try_enter_exclusive()
+        .expect("exclusive owner");
+    let cancellation = CancellationToken::new();
+    let mut registering =
+        Box::pin(observer.register_writer_context(&cancellation, "dropped", "background", 1));
+    tokio::select! {
+        biased;
+        _ = &mut registering => panic!("blocked registration completed unexpectedly"),
+        _ = tokio::task::yield_now() => {}
+    }
+    wait_for_registration(&observer, "dropped").await;
+
+    drop(registering);
+    drop(exclusive);
+    let mut replacement = observer
+        .try_register_writer("dropped", "replacement", 2)
+        .expect("dropped registration retired its placeholder");
+    assert_eq!(observer.active_writers()[0].kind, "replacement");
+    replacement.unregister();
+    assert!(!fixture.store.barrier().busy());
+}
+
+#[tokio::test]
+async fn dropping_a_pending_leader_closes_its_followers() {
+    let fixture = fixture();
+    let observer = observer(&fixture.store);
+    let exclusive = fixture
+        .store
+        .barrier()
+        .try_enter_exclusive()
+        .expect("exclusive owner");
+    let leader_cancellation = CancellationToken::new();
+    let follower_cancellation = CancellationToken::new();
+    let mut leader =
+        Box::pin(observer.register_writer_context(&leader_cancellation, "shared", "leader", 1));
+    tokio::select! {
+        biased;
+        _ = &mut leader => panic!("blocked leader completed unexpectedly"),
+        _ = tokio::task::yield_now() => {}
+    }
+    wait_for_registration(&observer, "shared").await;
+    let mut follower =
+        Box::pin(observer.register_writer_context(&follower_cancellation, "shared", "follower", 2));
+    tokio::select! {
+        biased;
+        _ = &mut follower => panic!("blocked follower completed unexpectedly"),
+        _ = tokio::task::yield_now() => {}
+    }
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    while observer.writer_followers_for_test("shared") == 0 {
+        assert!(Instant::now() < deadline, "follower did not subscribe");
+        tokio::task::yield_now().await;
+    }
+
+    drop(leader);
+    let error = timeout(WAIT_TIMEOUT, follower)
+        .await
+        .expect("dropped leader closed its follower")
+        .expect_err("abandoned leader");
+    assert_eq!(error.kind(), WriterErrorKind::Cancelled);
+    assert!(observer.active_writers().is_empty());
+    drop(exclusive);
+}
+
+#[tokio::test]
+async fn dropping_an_explicitly_retired_pending_leader_still_closes_followers() {
+    let fixture = fixture();
+    let observer = observer(&fixture.store);
+    let exclusive = fixture
+        .store
+        .barrier()
+        .try_enter_exclusive()
+        .expect("exclusive owner");
+    let leader_cancellation = CancellationToken::new();
+    let follower_cancellation = CancellationToken::new();
+    let mut leader =
+        Box::pin(observer.register_writer_context(&leader_cancellation, "shared", "leader", 1));
+    tokio::select! {
+        biased;
+        _ = &mut leader => panic!("blocked leader completed unexpectedly"),
+        _ = tokio::task::yield_now() => {}
+    }
+    wait_for_registration(&observer, "shared").await;
+    let mut follower =
+        Box::pin(observer.register_writer_context(&follower_cancellation, "shared", "follower", 2));
+    tokio::select! {
+        biased;
+        _ = &mut follower => panic!("blocked follower completed unexpectedly"),
+        _ = tokio::task::yield_now() => {}
+    }
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    while observer.writer_followers_for_test("shared") == 0 {
+        assert!(Instant::now() < deadline, "follower did not subscribe");
+        tokio::task::yield_now().await;
+    }
+
+    observer.unregister_writer("shared");
+    drop(leader);
+    let error = timeout(WAIT_TIMEOUT, follower)
+        .await
+        .expect("retired leader drop closed its follower")
+        .expect_err("retired leader");
+    assert_eq!(error.kind(), WriterErrorKind::Cancelled);
+    drop(exclusive);
+}
+
+#[tokio::test]
+async fn empty_writer_ids_are_successful_noops() {
+    let fixture = fixture();
+    let observer = observer(&fixture.store);
+    let cancellation = CancellationToken::new();
+    let mut asynchronous = observer
+        .register_writer_context(&cancellation, "", "background", 1)
+        .await
+        .expect("empty asynchronous registration");
+    asynchronous.unregister();
+    let mut synchronous = observer
+        .try_register_writer("", "background", 1)
+        .expect("empty synchronous registration");
+    synchronous.unregister();
+
+    assert!(observer.active_writers().is_empty());
+    assert!(!fixture.store.barrier().busy());
+}
+
 #[test]
 fn old_cleanup_cannot_remove_or_release_a_replacement_generation() {
     let fixture = fixture();

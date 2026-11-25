@@ -192,6 +192,7 @@ impl Store {
 
     pub fn begin(&self, turn: i64, prompt: &str, msg_index: i64) -> Result<(), StoreError> {
         let _disk = self.lock_disk()?;
+        self.invalidate_undo()?;
         let mut state = self.state();
         if let Some(current) = state.current.take() {
             let mut current = current;

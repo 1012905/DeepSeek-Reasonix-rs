@@ -110,6 +110,27 @@ fn preview_capture_uses_the_previewer_source() {
     assert_eq!(file.capture_source, Some(CaptureSource::Previewer));
 }
 
+#[tokio::test]
+async fn background_context_registration_returns_an_owned_permit() {
+    let fixture = fixture();
+    let observer = MutationObserver::new(ObserverOptions {
+        store: &fixture.store,
+        ownership_turn: 1,
+        writer_id: "owner".into(),
+        background: false,
+        seq: None,
+    });
+
+    let mut writer = observer
+        .register_writer("background", "shell", 1)
+        .await
+        .expect("background-context registration");
+    assert_eq!(observer.active_writers()[0].id, "background");
+    assert!(fixture.store.barrier().has_writers());
+    writer.unregister();
+    assert!(!fixture.store.barrier().busy());
+}
+
 #[test]
 fn active_writers_are_sorted_and_other_excludes_the_observers_own_id() {
     let fixture = fixture();

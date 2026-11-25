@@ -24,7 +24,6 @@ pub enum WriterErrorKind {
     Retired,
     Pending,
     Undo,
-    InvalidWriterId,
 }
 
 #[derive(Debug, Error)]
@@ -35,8 +34,6 @@ enum WriterErrorInner {
     Retired,
     #[error("background writer preparation is pending")]
     Pending,
-    #[error("writer id must not be empty")]
-    InvalidWriterId,
     #[error(transparent)]
     BeginWrite(#[from] BeginWriteError),
 }
@@ -50,7 +47,6 @@ impl WriterError {
             WriterErrorInner::Panicked => WriterErrorKind::Panicked,
             WriterErrorInner::Retired => WriterErrorKind::Retired,
             WriterErrorInner::Pending => WriterErrorKind::Pending,
-            WriterErrorInner::InvalidWriterId => WriterErrorKind::InvalidWriterId,
             WriterErrorInner::BeginWrite(error) => match error {
                 BeginWriteError::Cancelled => WriterErrorKind::Cancelled,
                 BeginWriteError::Busy => WriterErrorKind::BarrierBusy,
@@ -200,13 +196,19 @@ impl WriterRegistry {
             return Err(WriterError::from(BeginWriteError::Cancelled));
         }
         if writer_id.is_empty() {
-            return Err(WriterError(Arc::new(WriterErrorInner::InvalidWriterId)));
+            return Ok(RegisteredWriter::noop(store));
         }
         let prepare = cancellation.child_token();
         let (registration, leader) = registry.registration(writer_id, kind, turn, prepare.clone());
         if !leader {
             return wait_for_ready(store, registry, writer_id, cancellation, registration).await;
         }
+        let mut guard = RegistrationGuard::new(
+            store,
+            Arc::clone(&registry),
+            writer_id,
+            Arc::clone(&registration),
+        );
 
         let observer = RegistrationPreparation {
             store,
@@ -215,14 +217,16 @@ impl WriterRegistry {
             registration: &registration,
             prepare: &prepare,
         };
-        match catch_unwind_future(observer.begin_write_context(cancellation)).await {
+        let result = match catch_unwind_future(observer.begin_write_context(cancellation)).await {
             Ok(Ok(permit)) => observer.publish_admission(permit),
             Ok(Err(error)) => Err(observer.fail(error.into())),
             Err(payload) => {
                 observer.fail_panic();
                 std::panic::resume_unwind(payload)
             }
-        }
+        };
+        guard.disarm();
+        result
     }
 
     pub(super) fn register_try<'s>(
@@ -237,7 +241,7 @@ impl WriterRegistry {
             return Err(WriterError::from(BeginWriteError::Cancelled));
         }
         if writer_id.is_empty() {
-            return Err(WriterError(Arc::new(WriterErrorInner::InvalidWriterId)));
+            return Ok(RegisteredWriter::noop(store));
         }
         let prepare = cancellation.child_token();
         let (registration, leader) = registry.registration(writer_id, kind, turn, prepare.clone());
@@ -308,6 +312,40 @@ impl WriterRegistry {
             .take();
         drop(permit);
         self.publish(store);
+    }
+
+    fn abandon(&self, store: &Store, writer_id: &str, registration: &Arc<WriterRegistration>) {
+        let removed = {
+            let mut state = self.state();
+            if state
+                .writers
+                .get(writer_id)
+                .is_some_and(|current| Arc::ptr_eq(current, registration))
+            {
+                state.writers.remove(writer_id);
+                true
+            } else {
+                false
+            }
+        };
+        registration.prepare.cancel();
+        let permit = registration
+            .permit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        drop(permit);
+        if matches!(
+            registration.outcome.borrow().clone(),
+            RegistrationOutcome::Pending
+        ) {
+            registration.finish(RegistrationOutcome::Failed(Arc::new(WriterError::from(
+                BeginWriteError::Cancelled,
+            ))));
+        }
+        if removed {
+            self.publish(store);
+        }
     }
 
     fn remove_if_current(&self, writer_id: &str, registration: &Arc<WriterRegistration>) {
@@ -415,12 +453,16 @@ impl<'store, 'preparation> RegistrationPreparation<'store, 'preparation> {
 }
 
 #[derive(Debug)]
-pub struct RegisteredWriter<'a> {
-    store: &'a Store,
+struct WriterHandle {
     registry: Arc<WriterRegistry>,
     writer_id: String,
     registration: Arc<WriterRegistration>,
-    active: bool,
+}
+
+#[derive(Debug)]
+pub struct RegisteredWriter<'a> {
+    store: &'a Store,
+    handle: Option<WriterHandle>,
 }
 
 impl<'a> RegisteredWriter<'a> {
@@ -432,18 +474,26 @@ impl<'a> RegisteredWriter<'a> {
     ) -> Self {
         Self {
             store,
-            registry,
-            writer_id: writer_id.to_owned(),
-            registration,
-            active: true,
+            handle: Some(WriterHandle {
+                registry,
+                writer_id: writer_id.to_owned(),
+                registration,
+            }),
+        }
+    }
+
+    fn noop(store: &'a Store) -> Self {
+        Self {
+            store,
+            handle: None,
         }
     }
 
     pub fn unregister(&mut self) {
-        if self.active {
-            self.registry
-                .retire(self.store, &self.writer_id, Some(&self.registration));
-            self.active = false;
+        if let Some(handle) = self.handle.take() {
+            handle
+                .registry
+                .retire(self.store, &handle.writer_id, Some(&handle.registration));
         }
     }
 }
@@ -451,6 +501,44 @@ impl<'a> RegisteredWriter<'a> {
 impl Drop for RegisteredWriter<'_> {
     fn drop(&mut self) {
         self.unregister();
+    }
+}
+
+struct RegistrationGuard<'s> {
+    store: &'s Store,
+    registry: Arc<WriterRegistry>,
+    writer_id: String,
+    registration: Arc<WriterRegistration>,
+    armed: bool,
+}
+
+impl<'s> RegistrationGuard<'s> {
+    fn new(
+        store: &'s Store,
+        registry: Arc<WriterRegistry>,
+        writer_id: &str,
+        registration: Arc<WriterRegistration>,
+    ) -> Self {
+        Self {
+            store,
+            registry,
+            writer_id: writer_id.to_owned(),
+            registration,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RegistrationGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.registry
+                .abandon(self.store, &self.writer_id, &self.registration);
+        }
     }
 }
 

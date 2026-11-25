@@ -232,7 +232,7 @@ pub(super) fn commit(
     if let Err(error) = persist_manifest(store, transaction, TransactionPhase::PersistCommitted) {
         return fail(store, transaction, stages, error, applier, true, injection);
     }
-    cleanup_committed(store, &transaction.targets)?;
+    cleanup_committed(store, &transaction.targets);
     store.publish_undo_offer(transaction);
     result.files = stages;
     Ok(result)
@@ -311,26 +311,11 @@ pub(super) fn publish_target(
     Ok(())
 }
 
-fn cleanup_committed(store: &Store, targets: &[TransactionTarget]) -> Result<(), TransactionError> {
-    let mut errors = Vec::new();
+fn cleanup_committed(store: &Store, targets: &[TransactionTarget]) {
     for target in targets {
-        for path in [&target.backup_path, &target.publish_tmp] {
-            if path.is_empty() {
-                continue;
-            }
-            if let Err(error) = secure_path::remove(store.root.as_path(), Path::new(path))
-                && !error.is_not_found()
-            {
-                errors.push(TransactionError::at(
-                    TransactionPhase::Cleanup,
-                    error.into(),
-                ));
-            }
+        if target.backup_path.is_empty() {
+            continue;
         }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(TransactionError::Compensation(errors))
+        let _ = secure_path::remove(store.root.as_path(), Path::new(&target.backup_path));
     }
 }
