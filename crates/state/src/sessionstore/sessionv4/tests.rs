@@ -473,6 +473,8 @@ fn source_store_can_be_renamed_after_all_handles_close() {
 #[cfg(unix)]
 #[test]
 fn confined_metadata_does_not_open_the_final_entry() {
+    use cap_std::fs::FileTypeExt;
+
     let temp = TempDir::new().expect("tempdir");
     let socket =
         std::os::unix::net::UnixListener::bind(temp.path().join("value")).expect("unix socket");
@@ -559,13 +561,13 @@ fn link_dir(target: &std::path::Path, link: &std::path::Path) {
     }
 }
 
-fn link_confined_dir(target: &std::path::Path, link: &std::path::Path, name: &str) {
+fn link_confined_dir(_target: &std::path::Path, link: &std::path::Path, name: &str) {
     #[cfg(unix)]
     std::os::unix::fs::symlink(std::path::Path::new(name), link).expect("symlink");
     #[cfg(windows)]
     {
         let _ = name;
-        link_dir(target, link);
+        link_dir(_target, link);
     }
 }
 
