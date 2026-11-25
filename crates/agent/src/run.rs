@@ -211,8 +211,8 @@ impl Agent {
         }
         let started = Instant::now();
         let result = self.run_tool_loop(input).await;
-        self.running.store(false, Ordering::SeqCst);
         self.cancel.reset();
+        self.running.store(false, Ordering::SeqCst);
         let work_ms = started.elapsed().as_millis().clamp(1, i64::MAX as u128) as i64;
         result.map(|mut out| {
             if out.work_duration_ms == 0 {
