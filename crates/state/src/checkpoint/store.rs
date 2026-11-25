@@ -69,19 +69,19 @@ pub enum StoreError {
 }
 
 #[derive(Debug, Default)]
-struct StoreState {
-    done: Vec<Checkpoint>,
-    current: Option<Checkpoint>,
-    seen: HashSet<String>,
-    session_id: String,
-    active_writers: Vec<ActiveWriter>,
-    mutation_seq: i64,
-    protected_turns: BTreeSet<i64>,
-    unreadable: BTreeSet<i64>,
+pub(super) struct StoreState {
+    pub(super) done: Vec<Checkpoint>,
+    pub(super) current: Option<Checkpoint>,
+    pub(super) seen: HashSet<String>,
+    pub(super) session_id: String,
+    pub(super) active_writers: Vec<ActiveWriter>,
+    pub(super) mutation_seq: i64,
+    pub(super) protected_turns: BTreeSet<i64>,
+    pub(super) unreadable: BTreeSet<i64>,
 }
 
 impl StoreState {
-    fn all(&self) -> Vec<Checkpoint> {
+    pub(super) fn all(&self) -> Vec<Checkpoint> {
         let mut checkpoints = self.done.clone();
         if let Some(current) = &self.current {
             checkpoints.push(current.clone());
@@ -90,7 +90,7 @@ impl StoreState {
         checkpoints
     }
 
-    fn checkpoint_mut(&mut self, turn: i64) -> Option<&mut Checkpoint> {
+    pub(super) fn checkpoint_mut(&mut self, turn: i64) -> Option<&mut Checkpoint> {
         if self
             .current
             .as_ref()
@@ -103,7 +103,7 @@ impl StoreState {
             .find(|checkpoint| checkpoint.turn == turn)
     }
 
-    fn next_turn(&self) -> i64 {
+    pub(super) fn next_turn(&self) -> i64 {
         let known = self
             .all()
             .iter()
@@ -123,11 +123,11 @@ impl StoreState {
 
 #[derive(Debug)]
 pub struct Store {
-    dir: Option<PathBuf>,
-    root: PathBuf,
-    blobs: Option<BlobStore>,
-    config: StoreConfig,
-    state: Mutex<StoreState>,
+    pub(super) dir: Option<PathBuf>,
+    pub(super) root: PathBuf,
+    pub(super) blobs: Option<BlobStore>,
+    pub(super) config: StoreConfig,
+    pub(super) state: Mutex<StoreState>,
 }
 
 impl Store {
@@ -775,7 +775,7 @@ impl Store {
         }
     }
 
-    fn persist_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
+    pub(super) fn persist_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let Some(dir) = &self.dir else {
             return Ok(());
         };
@@ -798,7 +798,7 @@ impl Store {
         })
     }
 
-    fn lock_existing_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
+    pub(super) fn lock_existing_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
         let Some(dir) = &self.dir else {
             return Ok(None);
         };
@@ -813,7 +813,7 @@ impl Store {
         }
     }
 
-    fn lock_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
+    pub(super) fn lock_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
         let Some(dir) = &self.dir else {
             return Ok(None);
         };
@@ -827,7 +827,7 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    fn state(&self) -> MutexGuard<'_, StoreState> {
+    pub(super) fn state(&self) -> MutexGuard<'_, StoreState> {
         self.state.lock().unwrap_or_else(|error| error.into_inner())
     }
 }
