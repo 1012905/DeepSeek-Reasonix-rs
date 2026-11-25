@@ -287,8 +287,9 @@ impl TurnController {
         self.cancel_requested.store(false, Ordering::SeqCst);
         self.ensure_session_path();
         let result = self.agent.run(input).await;
+        let receipt = self.finish_turn(result);
         self.running.store(false, Ordering::SeqCst);
-        self.finish_turn(result)
+        receipt
     }
 
     /// Submits raw user input as one turn and drives it to completion (Go

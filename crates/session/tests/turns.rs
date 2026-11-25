@@ -114,6 +114,22 @@ impl Sink for Recorder {
     }
 }
 
+#[derive(Default)]
+struct RunningAtDone {
+    controller: Mutex<Option<Arc<TurnController>>>,
+    running: Mutex<Option<bool>>,
+}
+
+impl Sink for RunningAtDone {
+    fn emit(&self, e: Event) {
+        if e.kind == reasonix_session::turns::TURN_DONE {
+            let controller = self.controller.lock().expect("controller lock");
+            let running = controller.as_ref().expect("bound controller").running();
+            *self.running.lock().expect("running lock") = Some(running);
+        }
+    }
+}
+
 /// One controller over the canned endpoint with the standard fixtures.
 async fn controller(base: &str, sink: Arc<dyn Sink>) -> Arc<TurnController> {
     let mut cfg = ClientConfig::new("relay", base, "m");
@@ -177,6 +193,24 @@ async fn submit_runs_a_turn_and_lands_the_answer_on_the_sink() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("hello"), "{text}");
     assert!(text.contains("the final answer"), "{text}");
+}
+
+#[tokio::test]
+async fn admission_stays_closed_until_the_completion_event_is_emitted() {
+    let sink = Arc::new(RunningAtDone::default());
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("done"),
+        &usage_frame(1, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let ctrl = controller(&base, sink.clone()).await;
+    *sink.controller.lock().expect("controller lock") = Some(ctrl.clone());
+
+    ctrl.submit("hello").await.expect("turn admitted");
+
+    assert_eq!(*sink.running.lock().expect("running lock"), Some(true));
+    assert!(!ctrl.running());
 }
 
 #[tokio::test]
