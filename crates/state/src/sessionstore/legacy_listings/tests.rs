@@ -606,6 +606,38 @@ fn sorting_is_stable_by_activity_descending_then_path() {
 }
 
 #[test]
+fn initial_listing_status_serializes_discovering() {
+    let project = project();
+    let service = LegacyListings::with_default_replay();
+    let (_, status) = service.snapshot(&project.path().join("sessions"));
+    assert_eq!(status.listing_state, ListingState::Discovering);
+    assert_eq!(
+        serde_json::to_value(status).expect("serialize listing status"),
+        json!({"listingState": "discovering", "countsComplete": false})
+    );
+    service.close();
+}
+
+#[test]
+fn background_discovery_skips_orphan_indexes_that_synchronous_listing_ignores() {
+    let project = project();
+    user_source(project.path(), ID, "legacy");
+    let sessions = project.path().join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    fs::write(
+        crate::store::naming::session_event_index(&sessions.join(format!("v4-{ID}.jsonl"))),
+        b"rebuildable index",
+    )
+    .expect("orphan index");
+
+    let synchronous = discover_legacy_sessions(&sessions).expect("synchronous discovery");
+    assert_eq!(synchronous.sources.len(), 1);
+    let background = super::discovery::discover_background_legacy_sessions(&sessions)
+        .expect("background discovery");
+    assert!(background.sources.is_empty());
+}
+
+#[test]
 fn snapshot_returns_pending_rows_without_waiting_for_replay() {
     let project = project();
     user_source(project.path(), ID, "hello");

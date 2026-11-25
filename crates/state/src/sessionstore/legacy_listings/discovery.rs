@@ -10,6 +10,7 @@ use super::{
 };
 use crate::sessionstore::eventlog::record::CreatedAt;
 use crate::sessionstore::listing::SessionInfo;
+use crate::sessionstore::session::session_artifact_exists;
 use crate::sessionstore::sessionv4::{Session as V4Session, fs::ConfinedRoot, open_in};
 use crate::sessionstore::v4_import::{is_v4_session_removed, v4_copy_begun, v4_import_path};
 use crate::store::naming::{is_v4_session_id, session_cleanup_pending, v4_sessions_root};
@@ -22,6 +23,19 @@ pub struct LegacyDiscovery {
 }
 
 pub fn discover_legacy_sessions(dir: &Path) -> Result<LegacyDiscovery, LegacyListingError> {
+    discover_legacy_sessions_where(dir, v4_copy_begun)
+}
+
+pub fn discover_background_legacy_sessions(
+    dir: &Path,
+) -> Result<LegacyDiscovery, LegacyListingError> {
+    discover_legacy_sessions_where(dir, session_artifact_exists)
+}
+
+fn discover_legacy_sessions_where(
+    dir: &Path,
+    imported: impl Fn(&Path) -> bool,
+) -> Result<LegacyDiscovery, LegacyListingError> {
     let root = v4_sessions_root(dir);
     if root.as_os_str().is_empty() {
         return Ok(LegacyDiscovery::default());
@@ -59,7 +73,7 @@ pub fn discover_legacy_sessions(dir: &Path) -> Result<LegacyDiscovery, LegacyLis
     let mut discovery = LegacyDiscovery::default();
     for name in names {
         let path = v4_import_path(dir, &name);
-        if !legacy_session_visible(&path) || v4_copy_begun(&path) {
+        if !legacy_session_visible(&path) || imported(&path) {
             continue;
         }
         discovery.seen.insert(name.clone());

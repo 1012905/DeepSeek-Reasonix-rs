@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::discovery::{
-    discover_legacy_sessions, legacy_session_info, legacy_session_visible, sort_legacy_rows,
+    discover_background_legacy_sessions, legacy_session_info, legacy_session_visible,
+    sort_legacy_rows,
 };
 use super::resolver::{clean_directory, same_source};
 use super::{
@@ -81,7 +82,6 @@ impl fmt::Display for RowState {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListingStatus {
-    #[serde(skip_serializing_if = "is_default_listing_state")]
     pub listing_state: ListingState,
     #[serde(skip_serializing_if = "is_zero_u64")]
     pub listing_revision: u64,
@@ -98,10 +98,6 @@ fn is_zero_u64(value: &u64) -> bool {
 
 fn is_zero_usize(value: &usize) -> bool {
     *value == 0
-}
-
-fn is_default_listing_state(state: &ListingState) -> bool {
-    *state == ListingState::Discovering
 }
 
 #[derive(Clone, Debug)]
@@ -538,7 +534,7 @@ impl LegacyListings {
     }
 
     fn scan(&self, dir: &Path) {
-        let discovery = discover_legacy_sessions(dir);
+        let discovery = discover_background_legacy_sessions(dir);
         let failed_scan = discovery.is_err();
         let discovery = discovery.unwrap_or_default();
         for source in discovery.sources {
