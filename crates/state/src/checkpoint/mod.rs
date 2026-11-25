@@ -3,7 +3,9 @@
 mod atomic_json;
 mod barrier;
 mod blob;
+mod ownership;
 mod path_capture;
+mod rewind;
 mod secure_path;
 mod store;
 mod types;
@@ -16,6 +18,7 @@ pub use path_capture::{
     normalize_rel_path, safe_path,
 };
 pub use reasonix_core::fileencoding;
+pub use rewind::RewindError;
 pub use secure_path::{
     SecureError, chmod, open_workspace_file, path_exists, read_file, remove, rename, write_new_file,
 };
@@ -28,6 +31,10 @@ mod barrier_tests;
 mod blob_path_tests;
 #[cfg(test)]
 mod gc_tests;
+#[cfg(test)]
+mod ownership_tests;
+#[cfg(test)]
+mod rewind_tests;
 #[cfg(test)]
 mod secure_path_tests;
 #[cfg(test)]

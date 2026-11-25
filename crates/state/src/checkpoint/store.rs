@@ -14,6 +14,7 @@ use tracing::warn;
 
 use super::blob::{BlobError, BlobStore, digest, valid_blob_ref};
 use super::path_capture::{CaptureError, capture_path, normalize_rel_path, safe_path};
+use super::rewind::PlanRegistry;
 use super::types::{
     ActiveWriter, CONFLICT_BUSY_WRITER, CaptureAfterOpts, CaptureBeforeOpts, CaptureOptions,
     CaptureSource, ChangeKind, Checkpoint, Coverage, CoverageGap, DEFAULT_BLOB_QUOTA_BYTES,
@@ -121,12 +122,19 @@ impl StoreState {
     }
 }
 
+#[derive(Debug, Default)]
+pub(super) struct StoreRuntime {
+    pub(super) barrier: super::barrier::MutationBarrier,
+    pub(super) plans: Mutex<PlanRegistry>,
+}
+
 #[derive(Debug)]
 pub struct Store {
     pub(super) dir: Option<PathBuf>,
     pub(super) root: PathBuf,
     pub(super) blobs: Option<BlobStore>,
     pub(super) config: StoreConfig,
+    pub(super) runtime: StoreRuntime,
     pub(super) state: Mutex<StoreState>,
 }
 
@@ -151,12 +159,17 @@ impl Store {
             root,
             blobs,
             config,
+            runtime: StoreRuntime::default(),
             state: Mutex::new(state),
         }
     }
 
     pub fn blobs(&self) -> Option<&BlobStore> {
         self.blobs.as_ref()
+    }
+
+    pub fn barrier(&self) -> &super::barrier::MutationBarrier {
+        &self.runtime.barrier
     }
 
     pub fn load(&self) -> Result<(), StoreError> {
