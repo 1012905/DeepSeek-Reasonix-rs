@@ -1314,6 +1314,21 @@ fn cache_publication_validates_cancellation_after_preparing_the_temp() {
 
 #[test]
 fn close_final_flush_stops_publication_after_the_shutdown_deadline() {
+    const CHILD: &str = "REASONIX_LEGACY_SHUTDOWN_DEADLINE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "sessionstore::legacy_listings::tests::close_final_flush_stops_publication_after_the_shutdown_deadline",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .expect("run shutdown deadline test");
+        assert!(status.success(), "shutdown deadline test child failed");
+        return;
+    }
+
     let project = project();
     let first_id = "ffffffffffffffffffffffffffff";
     let second_id = "1123456789abcdef0123456789abcdef";
@@ -1350,25 +1365,32 @@ fn close_final_flush_stops_publication_after_the_shutdown_deadline() {
         .expect("second replay did not start");
 
     let target = sessions.join(CACHE_NAME);
-    fs::create_dir(&target).expect("block cache publication");
-    let (closed_tx, closed_rx) = mpsc::channel();
+    let (publication_tx, publication_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let hook_target = target.clone();
+    let _reset = ResetCrashHook;
+    reasonix_core::fileutil::set_crash_point(Some(Box::new(move |operation, path| {
+        if operation == "atomic-write" && Path::new(path) == hook_target {
+            publication_tx.send(()).expect("signal final publication");
+            release_rx
+                .lock()
+                .expect("publication receiver")
+                .recv()
+                .expect("release final publication");
+            std::thread::sleep(Duration::from_millis(1200));
+        }
+    })));
     let closer = service.clone();
-    let started = Instant::now();
-    std::thread::spawn(move || {
-        closer.close();
-        closed_tx.send(()).expect("report close");
-    });
-    closed_rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("close exceeded the shutdown bound");
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed >= Duration::from_millis(750),
-        "close stopped before the shutdown deadline: {elapsed:?}"
-    );
-    assert!(target.is_dir(), "deadline-expired cache was published");
+    let close_thread = std::thread::spawn(move || closer.close());
+    publication_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("final flush did not reach publication");
+    release_tx.send(()).expect("release final publication");
+    close_thread.join().expect("close thread");
 
-    fs::remove_dir(&target).expect("unblock cache publication");
+    assert!(!target.exists(), "deadline-expired cache was published");
+    reasonix_core::fileutil::set_crash_point(None);
     let resolver = resolver_for(&sessions);
     resolver
         .flush(&sessions, true)
