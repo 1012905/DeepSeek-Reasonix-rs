@@ -188,8 +188,12 @@ async fn cancelling_the_turn_ends_it_and_keeps_completed_tool_pairs() {
 }
 
 #[tokio::test]
-async fn a_cancelled_token_ends_every_later_turn_before_sampling() {
-    let base = serve_responses(vec![chunked_sse(&[&text_frame("ok"), "[DONE]"])]).await;
+async fn a_cancelled_token_ends_the_current_turn_and_not_the_next_one() {
+    let base = serve_responses(vec![
+        chunked_sse(&[&text_frame("first"), "[DONE]"]),
+        chunked_sse(&[&text_frame("second"), "[DONE]"]),
+    ])
+    .await;
     let Fixture { agent, .. } = fixture(&base, registry_with_readers()).await;
     agent.cancel();
     let err = agent.run("q").await.expect_err("cancelled");
@@ -197,6 +201,8 @@ async fn a_cancelled_token_ends_every_later_turn_before_sampling() {
         matches!(err, reasonix_agent::TurnError::Cancelled),
         "{err:?}"
     );
+    let out = agent.run("next").await.expect("next turn");
+    assert_eq!(out.text, "first");
 }
 
 #[tokio::test]

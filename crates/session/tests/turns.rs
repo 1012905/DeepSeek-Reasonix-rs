@@ -247,6 +247,59 @@ async fn the_admitted_prompt_is_durable_before_the_answer() {
 }
 
 #[tokio::test]
+async fn cancel_while_idle_does_not_cancel_the_next_turn() {
+    let recorder = Recorder::shared();
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("not cancelled"),
+        &usage_frame(1, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let ctrl = controller(&base, recorder).await;
+
+    ctrl.cancel();
+    assert!(!ctrl.cancel_requested());
+    let receipt = ctrl.submit("next turn").await.expect("turn admitted");
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert!(!receipt.cancelled);
+}
+
+#[tokio::test]
+async fn cancel_between_admission_and_run_is_not_lost_or_carried_into_the_next_turn() {
+    let recorder = Recorder::shared();
+    let base = serve_responses(vec![
+        chunked_sse(&[
+            &text_frame("next turn"),
+            &usage_frame(1, 1, "stop"),
+            "[DONE]",
+        ]),
+        chunked_sse(&[
+            &text_frame("another turn"),
+            &usage_frame(1, 1, "stop"),
+            "[DONE]",
+        ]),
+    ])
+    .await;
+    let ctrl = controller(&base, recorder).await;
+
+    assert!(ctrl.try_admit());
+    ctrl.cancel();
+    let receipt = ctrl.run_admitted("cancel before run").await;
+    assert!(receipt.cancelled, "{receipt:?}");
+    assert!(matches!(
+        receipt.error,
+        Some(reasonix_agent::TurnError::Cancelled)
+            | Some(reasonix_agent::TurnError::Provider(
+                reasonix_provider::ProviderError::Cancelled
+            ))
+    ));
+
+    let receipt = ctrl.submit("after cancellation").await.expect("next turn");
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert!(!receipt.cancelled);
+}
+
+#[tokio::test]
 async fn a_running_turn_refuses_a_second_submit_and_cancel_ends_the_first() {
     let recorder = Recorder::shared();
     let base = serve_hanging_stream().await;

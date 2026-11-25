@@ -36,6 +36,10 @@ impl CancelToken {
         self.cancelled.load(Ordering::SeqCst)
     }
 
+    pub fn reset(&self) {
+        self.cancelled.store(false, Ordering::SeqCst);
+    }
+
     /// Resolves when the token is cancelled; immediate when it already is.
     pub async fn wait(&self) {
         while !self.is_cancelled() {

@@ -83,6 +83,8 @@ pub struct TurnController {
     session_path: Mutex<String>,
     steer: Arc<MemorySteerInbox>,
     running: AtomicBool,
+    /// Keeps a cancel from racing the next turn's cancellation reset.
+    admission: Mutex<()>,
     cancel_requested: AtomicBool,
     /// The host-owned approval surface; `None` is the Go-nil posture.
     broker: Option<Arc<ApprovalBroker>>,
@@ -137,6 +139,7 @@ impl TurnController {
             session_path: Mutex::new(String::new()),
             steer,
             running: AtomicBool::new(false),
+            admission: Mutex::new(()),
             cancel_requested: AtomicBool::new(false),
             broker,
             approval_policy,
@@ -272,7 +275,13 @@ impl TurnController {
     /// that admits and then spawns never answers 202 for a turn another
     /// submit already owns — the admission decides, not the spawn order.
     pub fn try_admit(&self) -> bool {
-        !self.running.swap(true, Ordering::SeqCst)
+        let _admission = self.admission.lock().expect("admission lock");
+        if self.running.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        self.cancel_requested.store(false, Ordering::SeqCst);
+        self.agent.reset_cancellation();
+        true
     }
 
     /// Drives an admitted turn to completion (Go: the body of `Submit` after
@@ -284,7 +293,6 @@ impl TurnController {
     /// The `turn_done` event reaches the sink before this returns, so a
     /// spawned caller publishes completion through the stream exactly once.
     pub async fn run_admitted(&self, input: &str) -> TurnReceipt {
-        self.cancel_requested.store(false, Ordering::SeqCst);
         self.ensure_session_path();
         let result = self.agent.run(input).await;
         let receipt = self.finish_turn(result);
@@ -303,6 +311,10 @@ impl TurnController {
 
     /// Aborts the in-flight turn at its next await point (Go `Cancel`).
     pub fn cancel(&self) {
+        let _admission = self.admission.lock().expect("admission lock");
+        if !self.running.load(Ordering::SeqCst) {
+            return;
+        }
         self.cancel_requested.store(true, Ordering::SeqCst);
         self.agent.cancel();
     }
