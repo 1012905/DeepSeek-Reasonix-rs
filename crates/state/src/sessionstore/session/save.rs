@@ -25,6 +25,7 @@ use thiserror::Error;
 use crate::sessionstore::branch::{
     BranchMetaError, record_session_content_revision, session_content_revision,
 };
+use crate::sessionstore::dag::DagError;
 use crate::sessionstore::display_index::{
     load_session_display_index, refresh_session_display_index,
 };
@@ -46,6 +47,7 @@ use crate::sessionstore::session_lease::{
     SessionWriteAuthoritySave, WriteAuthorityError, observe_unleased_session_write,
 };
 use crate::sessionstore::session_lock::{SessionFileLockError, lock_session_file};
+use crate::sessionstore::v4_import::ImportError;
 use crate::store::naming::session_display_index;
 
 use super::Session;
@@ -137,6 +139,10 @@ pub enum LoadError {
     },
     #[error("unowned session event log reader is not available in this build")]
     UnownedEventLog,
+    #[error(transparent)]
+    Dag(#[from] DagError),
+    #[error(transparent)]
+    V4Import(Box<ImportError>),
     #[error(
         "session image payload unavailable: this runtime lost images the stored session still holds; reopen it"
     )]
@@ -178,6 +184,8 @@ pub enum SaveError {
     Exists,
     #[error("session event log is written by Reasonix 1.x: {path}")]
     DagForeign { path: String },
+    #[error("session event log written by Reasonix 1.x already holds this transcript: {path}")]
+    DagUnchanged { path: String },
     #[error("session event log for {path} uses schema {version}; this build supports up to {max}")]
     FutureSchema {
         path: String,
@@ -284,7 +292,7 @@ impl Session {
         // (7) The event log must be one this build owns.
         let probe = probe_session_event_log(Path::new(path))?;
         // (8) Refuse future schemas and foreign 1.x DAG logs.
-        probe_refuses_save(path, &probe)?;
+        probe_refuses_save(path, &probe, &msgs)?;
         // (9) Repair a torn tail before deciding anything on top of it.
         if probe.native && probe.size > 0 {
             repair_session_event_log_tail(Path::new(path))?;
@@ -1099,6 +1107,58 @@ mod tests {
             err.to_string()
                 .contains("session event log is written by Reasonix 1.x")
         );
+    }
+
+    fn write_dag(session: &Path, user_content: &str) -> Vec<u8> {
+        fs::write(session, b"").expect("write checkpoint");
+        let records = [
+            format!(
+                "{{\"schema_version\":2,\"at\":\"2026-09-25T13:00:00Z\",\"type\":\"message\",\"id\":\"u\",\"parent\":\"\",\"head\":\"main\",\"msgs\":[{{\"role\":\"user\",\"content\":{}}}]}}",
+                serde_json::to_string(user_content).expect("content JSON")
+            ),
+            "{\"schema_version\":2,\"at\":\"2026-09-25T13:00:01Z\",\"type\":\"message\",\"id\":\"a\",\"parent\":\"u\",\"head\":\"main\",\"msgs\":[{\"role\":\"assistant\",\"content\":\"answer\"}]}".to_string(),
+        ];
+        let body = format!("{}\n", records.join("\n"));
+        fs::write(session_event_log(session), body.as_bytes()).expect("write DAG");
+        body.into_bytes()
+    }
+
+    #[test]
+    fn unchanged_foreign_dag_save_is_typed_and_writes_nothing() {
+        let dir = tempdir();
+        let path = dir.path().join("foreign.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        let before = write_dag(&path, "same question");
+
+        let session = load_session(&path_str).expect("load foreign DAG");
+        let err = session
+            .save(&path_str)
+            .expect_err("unchanged foreign save refused");
+        assert!(matches!(
+            err,
+            SaveError::DagUnchanged { ref path } if path == &path_str
+        ));
+        assert_eq!(fs::read(session_event_log(&path)).expect("log"), before);
+        assert_eq!(fs::read(&path).expect("checkpoint"), b"");
+    }
+
+    #[test]
+    fn changed_foreign_dag_save_is_refused_without_writing_a_sidecar() {
+        let dir = tempdir();
+        let path = dir.path().join("foreign.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        let before = write_dag(&path, "stored question");
+
+        let session = session_of(vec![user_message("different question")]);
+        let err = session
+            .save(&path_str)
+            .expect_err("changed foreign save refused");
+        assert!(matches!(
+            err,
+            SaveError::DagForeign { ref path } if path == &path_str
+        ));
+        assert_eq!(fs::read(session_event_log(&path)).expect("log"), before);
+        assert!(!session_meta(&path).exists());
     }
 
     #[test]

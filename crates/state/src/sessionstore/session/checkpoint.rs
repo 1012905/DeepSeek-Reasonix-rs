@@ -20,6 +20,7 @@ use super::load::load_session_messages;
 use super::save::parent_dir;
 use super::save::{SaveError, WriteMessagesError};
 use crate::sessionstore::branch::{BRANCH_META_COUNTS_VERSION, update_branch_meta};
+use crate::sessionstore::dag::dag_transcript_matches;
 use crate::sessionstore::eventlog::record::now_utc;
 use crate::sessionstore::eventlog::{
     SESSION_EVENT_IMAGE_BLOBS_SCHEMA_VERSION, SessionEventLogProbe, probe_session_event_log,
@@ -172,6 +173,7 @@ pub(crate) fn heal_empty_checkpoint_from_wal(session_path: &Path) -> Result<(), 
 pub(crate) fn probe_refuses_save(
     path: &str,
     probe: &SessionEventLogProbe,
+    msgs: &[Message],
 ) -> Result<(), SaveError> {
     if probe.future_schema {
         return Err(SaveError::FutureSchema {
@@ -181,6 +183,11 @@ pub(crate) fn probe_refuses_save(
         });
     }
     if probe.dag {
+        if dag_transcript_matches(Path::new(path), msgs) {
+            return Err(SaveError::DagUnchanged {
+                path: path.to_string(),
+            });
+        }
         return Err(SaveError::DagForeign {
             path: path.to_string(),
         });
