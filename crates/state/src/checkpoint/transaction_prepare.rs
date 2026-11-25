@@ -18,6 +18,7 @@ pub(super) fn prepare(
     store: &Store,
     plan: &RewindPlan,
     conversation_forward: &[u8],
+    with_checkpoint_backup: bool,
     injection: Option<&TransactionInjection>,
 ) -> Result<TransactionManifest, TransactionError> {
     let created_at = crate::sessionstore::eventlog::record::CreatedAt::now();
@@ -43,27 +44,23 @@ pub(super) fn prepare(
         ..TransactionManifest::default()
     };
 
-    let prepared = build_targets(store, plan, &mut transaction);
-    if matches!(plan.scope, RewindScope::Conversation | RewindScope::Both) {
-        match checkpoint_backup(store, plan.turn) {
-            Ok(backup) => transaction.checkpoint_backup = backup,
-            Err(error) => {
-                let error = TransactionError::at(TransactionPhase::Prepare, error);
-                return abort_prepare(store, transaction, error);
-            }
+    let result = (|| {
+        build_targets(store, plan, &mut transaction)?;
+        if with_checkpoint_backup
+            && matches!(plan.scope, RewindScope::Conversation | RewindScope::Both)
+        {
+            transaction.checkpoint_backup = checkpoint_backup(store, plan.turn)?;
         }
+        if injection.is_some_and(|value| value.fails(TransactionPhase::PersistPrepared)) {
+            return Err(TransactionError::injected(
+                TransactionPhase::PersistPrepared,
+            ));
+        }
+        persist_manifest(store, &transaction, TransactionPhase::PersistPrepared)
+    })();
+    if let Err(cause) = result {
+        return abort_prepare(store, transaction, cause);
     }
-    if let Err(error) = prepared {
-        return abort_prepare(store, transaction, error);
-    }
-    if injection.is_some_and(|value| value.fails(TransactionPhase::PersistPrepared)) {
-        return abort_prepare(
-            store,
-            transaction,
-            TransactionError::injected(TransactionPhase::PersistPrepared),
-        );
-    }
-    persist_manifest(store, &transaction, TransactionPhase::PersistPrepared)?;
     Ok(transaction)
 }
 
@@ -126,9 +123,16 @@ fn build_targets(
         if forward.existed {
             let data = forward.content.as_deref().unwrap_or_default();
             if let Some(blobs) = &store.blobs {
-                target.forward_blob = blobs.put(data).map_err(|error| {
-                    TransactionError::at(TransactionPhase::Prepare, error.into())
-                })?;
+                match blobs.put(data) {
+                    Ok(reference) => target.forward_blob = reference,
+                    Err(error) => {
+                        let _ = secure_path::remove(&store.root, &publish_tmp);
+                        return Err(TransactionError::at(
+                            TransactionPhase::Prepare,
+                            error.into(),
+                        ));
+                    }
+                }
             } else {
                 target.forward_inline = data.to_vec();
             }

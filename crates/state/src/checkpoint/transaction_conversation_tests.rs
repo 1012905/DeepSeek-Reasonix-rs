@@ -134,8 +134,10 @@ fn conversation_restore_failure_keeps_manifest_committing_with_attribution() {
 
 fn assert_checkpoints_truncated(fixture: &Fixture) {
     assert!(fixture.store.list().is_empty());
-    assert!(!turn_path(&fixture.dir, 0, false).exists());
-    assert!(!turn_path(&fixture.dir, 0, true).exists());
+    for turn in 0..=2 {
+        assert!(!turn_path(&fixture.dir, turn, false).exists());
+        assert!(!turn_path(&fixture.dir, turn, true).exists());
+    }
     assert!(
         Store::new(Some(&fixture.dir), fixture.root.path())
             .list()
@@ -156,10 +158,9 @@ fn conversation_commit_without_applier_truncates_store_checkpoints() {
     assert!(!result.undo_available);
     assert_checkpoints_truncated(&fixture);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
-    assert_eq!(
-        single_manifest(&fixture.dir).0.state,
-        TransactionState::Committed
-    );
+    let durable = single_manifest(&fixture.dir).0;
+    assert_eq!(durable.state, TransactionState::Committed);
+    assert!(durable.checkpoint_backup.is_empty());
 }
 
 #[test]
@@ -181,7 +182,7 @@ fn both_commit_without_applier_truncates_store_checkpoints() {
 }
 
 #[test]
-fn conversation_compensation_without_applier_restores_checkpoint_backup() {
+fn conversation_compensation_without_applier_leaves_checkpoints_truncated() {
     let mut fixture = fixture();
     write(fixture.root.path(), "a.txt", "a-after");
     write(fixture.root.path(), "b.txt", "b-created");
@@ -228,33 +229,11 @@ fn conversation_compensation_without_applier_restores_checkpoint_backup() {
             .phases()
             .contains(&TransactionPhase::SyncRestoredOwnership)
     );
-    assert_eq!(
-        single_manifest(&fixture.dir).0.state,
-        TransactionState::Aborted
-    );
-    assert_eq!(
-        fixture
-            .store
-            .list()
-            .iter()
-            .map(|meta| meta.turn)
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2]
-    );
+    let durable = single_manifest(&fixture.dir).0;
+    assert_eq!(durable.state, TransactionState::Aborted);
+    assert!(durable.checkpoint_backup.is_empty());
+    assert_checkpoints_truncated(&fixture);
     assert!(fixture.store.state().current.is_none());
-    assert_eq!(
-        read_json_file::<Checkpoint>(&turn_path(&fixture.dir, 0, false)).unwrap(),
-        checkpoints[0]
-    );
-    assert_eq!(
-        read_json_file::<Checkpoint>(&turn_path(&fixture.dir, 1, true)).unwrap(),
-        expired
-    );
-    assert!(!turn_path(&fixture.dir, 1, false).exists());
-    assert_eq!(
-        Store::new(Some(&fixture.dir), fixture.root.path()).list(),
-        fixture.store.list()
-    );
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
     assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
 }

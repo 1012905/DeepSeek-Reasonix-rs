@@ -463,8 +463,13 @@ impl Store {
             }
         }
 
-        let mut transaction =
-            super::transaction_prepare::prepare(self, &plan, conversation_forward, injection)?;
+        let mut transaction = super::transaction_prepare::prepare(
+            self,
+            &plan,
+            conversation_forward,
+            applier.is_some(),
+            injection,
+        )?;
         if injection.is_some_and(|value| value.crashes(TransactionPhase::CrashAfterPrepared)) {
             return Err(TransactionError::InjectedCrash {
                 phase: TransactionPhase::CrashAfterPrepared,

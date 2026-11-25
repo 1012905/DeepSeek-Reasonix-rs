@@ -101,6 +101,28 @@ fn crash_after_prepared_leaves_targets_unchanged_and_temp_durable() {
 }
 
 #[test]
+fn prepared_manifest_failure_cleans_publish_temps() {
+    let (fixture, plan_id) = prepared_fixture();
+    fs::write(super::types::transaction_dir(&fixture.dir), b"blocked").unwrap();
+
+    let error = commit(&fixture, &plan_id, b"forward").unwrap_err();
+
+    let leftovers: Vec<_> = fs::read_dir(fixture.root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().contains(".reasonix-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "stale transaction temps: {leftovers:?}"
+    );
+    assert!(error.phases().contains(&TransactionPhase::PersistPrepared));
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
+    assert!(!fixture.root.path().join("c.txt").exists());
+}
+
+#[test]
 fn missing_restore_blob_rejects_before_target_mutation() {
     let (mut fixture, plan_id) = prepared_fixture();
     fixture.store.config.retain = 1;

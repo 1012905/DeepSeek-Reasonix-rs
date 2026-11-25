@@ -293,7 +293,6 @@ fn mark_stage(
 }
 
 pub(super) fn restore_conversation(
-    store: &Store,
     transaction: &TransactionManifest,
     applier: Option<&dyn ConversationApplier>,
 ) -> Result<(), TransactionError> {
@@ -304,19 +303,7 @@ pub(super) fn restore_conversation(
         return Ok(());
     }
     let Some(applier) = applier else {
-        if transaction.checkpoint_backup.is_empty() {
-            return Ok(());
-        }
-        return super::transaction_checkpoint_restore::restore(
-            store,
-            &transaction.checkpoint_backup,
-        )
-        .map_err(|source| {
-            conversation_error(
-                ConversationPhase::RestoreCheckpoints,
-                ConversationError::external(ConversationPhase::RestoreCheckpoints, source),
-            )
-        });
+        return Ok(());
     };
     let mut errors = Vec::new();
     if !transaction.conversation_forward.is_empty()
@@ -360,7 +347,7 @@ pub(super) fn fail(
     injection: Option<&TransactionInjection>,
 ) -> Result<(), TransactionError> {
     let mut compensation_errors = Vec::new();
-    if restore_state && let Err(error) = restore_conversation(store, transaction, applier) {
+    if restore_state && let Err(error) = restore_conversation(transaction, applier) {
         compensation_errors.push(error);
     }
     if let Err(error) = compensate(store, &transaction.targets, &mut stages, injection) {
