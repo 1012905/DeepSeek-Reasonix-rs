@@ -130,6 +130,24 @@ impl Sink for RunningAtDone {
     }
 }
 
+#[derive(Default)]
+struct CancelAtDone {
+    controller: Mutex<Option<Arc<TurnController>>>,
+    cancel_requested: Mutex<Option<bool>>,
+}
+
+impl Sink for CancelAtDone {
+    fn emit(&self, e: Event) {
+        if e.kind == reasonix_session::turns::TURN_DONE {
+            let controller = self.controller.lock().expect("controller lock");
+            let controller = controller.as_ref().expect("bound controller");
+            controller.cancel();
+            *self.cancel_requested.lock().expect("cancel lock") =
+                Some(controller.cancel_requested());
+        }
+    }
+}
+
 /// One controller over the canned endpoint with the standard fixtures.
 async fn controller(base: &str, sink: Arc<dyn Sink>) -> Arc<TurnController> {
     let mut cfg = ClientConfig::new("relay", base, "m");
@@ -214,6 +232,30 @@ async fn admission_stays_closed_until_the_completion_event_is_emitted() {
 }
 
 #[tokio::test]
+async fn cancel_during_completion_does_not_mark_the_finished_turn() {
+    let sink = Arc::new(CancelAtDone::default());
+    let base = serve_responses(vec![chunked_sse(&[
+        &text_frame("done"),
+        &usage_frame(1, 1, "stop"),
+        "[DONE]",
+    ])])
+    .await;
+    let ctrl = controller(&base, sink.clone()).await;
+    *sink.controller.lock().expect("controller lock") = Some(ctrl.clone());
+
+    let receipt = ctrl.submit("hello").await.expect("turn admitted");
+
+    assert!(receipt.error.is_none(), "{:?}", receipt.error);
+    assert!(!receipt.cancelled);
+    assert_eq!(
+        *sink.cancel_requested.lock().expect("cancel lock"),
+        Some(false)
+    );
+    assert!(!ctrl.cancel_requested());
+    assert!(!ctrl.running());
+}
+
+#[tokio::test]
 async fn the_admitted_prompt_is_durable_before_the_answer() {
     let dir = tempfile::tempdir().expect("tmp");
     let recorder = Recorder::shared();
@@ -293,6 +335,7 @@ async fn cancel_between_admission_and_run_is_not_lost_or_carried_into_the_next_t
                 reasonix_provider::ProviderError::Cancelled
             ))
     ));
+    assert!(!ctrl.cancel_requested());
 
     let receipt = ctrl.submit("after cancellation").await.expect("next turn");
     assert!(receipt.error.is_none(), "{:?}", receipt.error);

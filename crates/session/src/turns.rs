@@ -10,7 +10,6 @@
 //! user turns and refuses nothing else with typed errors.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use reasonix_agent::approval::{
@@ -70,6 +69,19 @@ pub struct TurnReceipt {
     pub error: Option<TurnError>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TurnPhase {
+    Idle,
+    Running,
+    Finishing,
+}
+
+#[derive(Debug)]
+struct TurnAdmission {
+    phase: TurnPhase,
+    cancel_requested: bool,
+}
+
 /// One controller over one runtime (Go `control.Controller`, the turn
 /// group). The frozen read surface ([`Controller`]) is implemented so the
 /// hub can adopt the runtime the controller drives.
@@ -82,10 +94,8 @@ pub struct TurnController {
     label: String,
     session_path: Mutex<String>,
     steer: Arc<MemorySteerInbox>,
-    running: AtomicBool,
-    /// Keeps a cancel from racing the next turn's cancellation reset.
-    admission: Mutex<()>,
-    cancel_requested: AtomicBool,
+    /// Serializes admission, cancellation and the completion transition.
+    admission: Mutex<TurnAdmission>,
     /// The host-owned approval surface; `None` is the Go-nil posture.
     broker: Option<Arc<ApprovalBroker>>,
     /// The base policy the interactive gate is shaped from.
@@ -138,9 +148,10 @@ impl TurnController {
             label,
             session_path: Mutex::new(String::new()),
             steer,
-            running: AtomicBool::new(false),
-            admission: Mutex::new(()),
-            cancel_requested: AtomicBool::new(false),
+            admission: Mutex::new(TurnAdmission {
+                phase: TurnPhase::Idle,
+                cancel_requested: false,
+            }),
             broker,
             approval_policy,
         });
@@ -238,13 +249,16 @@ impl TurnController {
     /// Whether a turn is running (Go `Running`): the admission guard the
     /// frontends read before submitting.
     pub fn running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        self.admission.lock().expect("admission lock").phase != TurnPhase::Idle
     }
 
     /// Whether [`Self::cancel`] was asked of the active turn (Go
     /// `CancelRequested`).
     pub fn cancel_requested(&self) -> bool {
-        self.cancel_requested.load(Ordering::SeqCst)
+        self.admission
+            .lock()
+            .expect("admission lock")
+            .cancel_requested
     }
 
     /// Pins a fresh auto-save file when none is set and a session dir is
@@ -275,12 +289,13 @@ impl TurnController {
     /// that admits and then spawns never answers 202 for a turn another
     /// submit already owns — the admission decides, not the spawn order.
     pub fn try_admit(&self) -> bool {
-        let _admission = self.admission.lock().expect("admission lock");
-        if self.running.swap(true, Ordering::SeqCst) {
+        let mut admission = self.admission.lock().expect("admission lock");
+        if admission.phase != TurnPhase::Idle {
             return false;
         }
-        self.cancel_requested.store(false, Ordering::SeqCst);
+        admission.cancel_requested = false;
         self.agent.reset_cancellation();
+        admission.phase = TurnPhase::Running;
         true
     }
 
@@ -295,8 +310,9 @@ impl TurnController {
     pub async fn run_admitted(&self, input: &str) -> TurnReceipt {
         self.ensure_session_path();
         let result = self.agent.run(input).await;
-        let receipt = self.finish_turn(result);
-        self.running.store(false, Ordering::SeqCst);
+        let cancelled = self.begin_finish();
+        let receipt = self.finish_turn(result, cancelled);
+        self.end_turn();
         receipt
     }
 
@@ -311,11 +327,11 @@ impl TurnController {
 
     /// Aborts the in-flight turn at its next await point (Go `Cancel`).
     pub fn cancel(&self) {
-        let _admission = self.admission.lock().expect("admission lock");
-        if !self.running.load(Ordering::SeqCst) {
+        let mut admission = self.admission.lock().expect("admission lock");
+        if admission.phase != TurnPhase::Running {
             return;
         }
-        self.cancel_requested.store(true, Ordering::SeqCst);
+        admission.cancel_requested = true;
         self.agent.cancel();
     }
 
@@ -341,14 +357,29 @@ impl TurnController {
         self.session.save(&path)
     }
 
+    fn begin_finish(&self) -> bool {
+        let mut admission = self.admission.lock().expect("admission lock");
+        let cancelled = admission.cancel_requested;
+        admission.cancel_requested = false;
+        admission.phase = TurnPhase::Finishing;
+        cancelled
+    }
+
+    fn end_turn(&self) {
+        self.admission.lock().expect("admission lock").phase = TurnPhase::Idle;
+    }
+
     /// Saves a changed transcript and lands the completion event (Go:
     /// `finishInFlightTurn`'s snapshot followed by `finishGuardedTurn`'s
     /// `TurnDone`). The transcript is durable before the completion event
     /// fans out.
-    fn finish_turn(&self, result: Result<reasonix_agent::TurnOutput, TurnError>) -> TurnReceipt {
-        let cancelled = self.cancel_requested.load(Ordering::SeqCst);
+    fn finish_turn(
+        &self,
+        result: Result<reasonix_agent::TurnOutput, TurnError>,
+        cancelled: bool,
+    ) -> TurnReceipt {
         let (work_ms, error, turn_cancelled) = match result {
-            Ok(out) => (out.work_duration_ms, None, false),
+            Ok(out) => (out.work_duration_ms, None, cancelled),
             Err(err) => {
                 let was_cancelled = cancelled && is_cancelled(&err);
                 (0, Some(err), was_cancelled)
