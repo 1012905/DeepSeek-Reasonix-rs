@@ -287,7 +287,9 @@ pub fn open_in(root: &Path, name: &str) -> Result<Session, V4Error> {
     let (log_size, log_mod_time) = match store.metadata(&Path::new(name).join("events.frames")) {
         Ok(info) => (
             i64::try_from(info.len()).unwrap_or(i64::MAX),
-            DateTime::<Utc>::from(info.modified().unwrap_or(std::time::UNIX_EPOCH)).fixed_offset(),
+            info.modified()
+                .map(|time| DateTime::<Utc>::from(time.into_std()).fixed_offset())
+                .unwrap_or_default(),
         ),
         Err(_) => (0, DateTime::<FixedOffset>::default()),
     };

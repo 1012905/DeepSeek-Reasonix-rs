@@ -404,6 +404,17 @@ fn removal_operations_publish_verbatim_and_failures_keep_pending() {
     assert!(session_cleanup_pending(&path).is_file());
 }
 
+#[test]
+fn removal_preservation_ignores_only_a_missing_root() {
+    let temp = TempDir::new().expect("tempdir");
+    let sessions = temp.path().join("sessions");
+    let path = v4_import_path(&sessions, ID);
+
+    preserve_v4_removal(&path).expect("missing sessions directory");
+    fs::write(&sessions, b"not a directory").expect("replace sessions directory");
+    assert!(preserve_v4_removal(&path).is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn removal_marker_reads_refuse_external_symlinks() {

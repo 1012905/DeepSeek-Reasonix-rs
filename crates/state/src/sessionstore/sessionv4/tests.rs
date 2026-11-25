@@ -470,6 +470,21 @@ fn source_store_can_be_renamed_after_all_handles_close() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn confined_metadata_does_not_open_the_final_entry() {
+    let temp = TempDir::new().expect("tempdir");
+    let socket =
+        std::os::unix::net::UnixListener::bind(temp.path().join("value")).expect("unix socket");
+    let store = super::fs::ConfinedRoot::new(temp.path()).expect("confined root");
+
+    let metadata = store
+        .metadata(std::path::Path::new("value"))
+        .expect("socket metadata");
+    assert!(metadata.file_type().is_socket());
+    drop(socket);
+}
+
 #[test]
 fn confined_root_refuses_a_replaced_root_directory() {
     let temp = TempDir::new().expect("tempdir");

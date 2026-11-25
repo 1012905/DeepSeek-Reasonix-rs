@@ -499,8 +499,12 @@ pub fn preserve_v4_removal(path: &Path) -> Result<(), ImportError> {
     if target.as_os_str().is_empty() {
         return Ok(());
     }
-    let Ok((store, _)) = removed_marker_store(path) else {
-        return Ok(());
+    let (store, _) = match removed_marker_store(path) {
+        Ok(store) => store,
+        Err(ImportError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(err) => return Err(err),
     };
     let pending = session_cleanup_pending(path);
     let Some(name) = pending.file_name() else {
@@ -533,8 +537,10 @@ fn removed_marker_store(
     let Some(name) = marker.file_name().and_then(|name| name.to_str()) else {
         return Err(ImportError::Removed);
     };
-    let store = super::sessionv4::fs::ConfinedRoot::new(parent)
-        .map_err(|err| ImportError::io(parent, io::Error::other(err)))?;
+    let store = super::sessionv4::fs::ConfinedRoot::new(parent).map_err(|err| match err {
+        V4Error::Io { source, .. } => ImportError::io(parent, source),
+        err => ImportError::Source(err),
+    })?;
     Ok((store, name.to_string()))
 }
 

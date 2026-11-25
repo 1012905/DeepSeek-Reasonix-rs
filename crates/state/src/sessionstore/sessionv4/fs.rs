@@ -4,7 +4,6 @@ use std::io::{self, Read};
 #[cfg(windows)]
 use std::path::Prefix;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
 use cap_fs_ext::{FollowSymlinks, MetadataExt as _, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -33,7 +32,7 @@ enum PathPart {
 #[derive(Debug, Clone)]
 pub(crate) struct ConfinedRoot {
     root: PathBuf,
-    handle: Arc<Dir>,
+    identity: (u64, u64),
 }
 
 impl ConfinedRoot {
@@ -41,7 +40,8 @@ impl ConfinedRoot {
         let resolved = fs::canonicalize(root).map_err(|err| V4Error::io(root, err))?;
         let handle = Self::open_dir(&resolved).map_err(|err| V4Error::io(root, err))?;
         let current = Self::open_dir(&resolved).map_err(|err| V4Error::io(root, err))?;
-        let same = same_dir(&handle, &current).map_err(|err| V4Error::io(root, err))?;
+        let identity = dir_identity(&handle).map_err(|err| V4Error::io(root, err))?;
+        let same = identity == dir_identity(&current).map_err(|err| V4Error::io(root, err))?;
         let resolved_again = fs::canonicalize(&resolved).map_err(|err| V4Error::io(root, err))?;
         if !same || resolved_again != resolved {
             return Err(V4Error::io(
@@ -51,7 +51,7 @@ impl ConfinedRoot {
         }
         Ok(Self {
             root: resolved,
-            handle: Arc::new(handle),
+            identity,
         })
     }
 
@@ -75,8 +75,8 @@ impl ConfinedRoot {
 
     fn dir(&self) -> io::Result<Dir> {
         let current = Self::open_dir(&self.root)?;
-        // The retained handle prevents a replaced root path from redirecting reads.
-        if !same_dir(&self.handle, &current)? {
+        // Identity pins the root without retaining a descriptor between reads.
+        if dir_identity(&current)? != self.identity {
             return Err(io::Error::other("root directory was replaced"));
         }
         Ok(current)
@@ -118,10 +118,9 @@ impl ConfinedRoot {
             .map_err(|err| V4Error::io(relative, err))
     }
 
-    pub(crate) fn metadata(&self, relative: &Path) -> Result<fs::Metadata, V4Error> {
+    pub(crate) fn metadata(&self, relative: &Path) -> Result<cap_fs_ext::Metadata, V4Error> {
         Self::validate_relative(relative)?;
-        self.open(relative)?
-            .metadata()
+        self.metadata_confined(relative)
             .map_err(|err| V4Error::io(relative, err))
     }
 
@@ -192,12 +191,83 @@ impl ConfinedRoot {
         }
         Ok(current.into_std_file())
     }
+
+    fn metadata_confined(&self, relative: &Path) -> io::Result<cap_fs_ext::Metadata> {
+        let root = self.dir()?;
+        let mut current = root.try_clone()?;
+        let mut ancestors: Vec<(OsString, Dir)> = Vec::new();
+        let mut pending: Vec<PathPart> = relative
+            .components()
+            .rev()
+            .map(|part| match part {
+                Component::Normal(part) => PathPart::Normal(part.to_owned()),
+                Component::CurDir => PathPart::CurDir,
+                Component::ParentDir => PathPart::ParentDir,
+                _ => unreachable!("relative paths are validated before opening"),
+            })
+            .collect();
+        let mut symlinks = 0;
+        while let Some(part) = pending.pop() {
+            match part {
+                PathPart::ParentDir => {
+                    let Some((_, parent)) = ancestors.pop() else {
+                        return Err(io::Error::other("path escapes root"));
+                    };
+                    current = parent;
+                }
+                PathPart::CurDir => {}
+                PathPart::Normal(name) => {
+                    let metadata = current.symlink_metadata(Path::new(&name))?;
+                    if metadata.file_type().is_symlink() {
+                        symlinks += 1;
+                        if symlinks > MAX_SYMLINKS {
+                            return Err(io::Error::other("too many symbolic links"));
+                        }
+                        let target = read_link(&current, Path::new(&name))?;
+                        let target_parts = if target.is_absolute() {
+                            let Some(parts) = absolute_relative(&self.root, &target) else {
+                                return Err(io::Error::other("symlink escapes root"));
+                            };
+                            current = root.try_clone()?;
+                            ancestors.clear();
+                            parts
+                        } else {
+                            relative_parts(&target)?
+                        };
+                        let mut expanded: Vec<PathPart> = target_parts
+                            .into_iter()
+                            .chain(pending.into_iter().rev())
+                            .collect();
+                        expanded.reverse();
+                        pending = expanded;
+                        continue;
+                    }
+                    if pending.is_empty() {
+                        return Ok(metadata);
+                    }
+                    if !metadata.is_dir() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotADirectory,
+                            "path component is not a directory",
+                        ));
+                    }
+                    let (file, opened) = open_entry_nofollow(&current, Path::new(&name))?;
+                    if opened.file_type().is_symlink() || !opened.is_dir() {
+                        return Err(io::Error::other("directory changed while opening"));
+                    }
+                    let parent =
+                        std::mem::replace(&mut current, Dir::from_std_file(file.into_std()));
+                    ancestors.push((name, parent));
+                }
+            }
+        }
+        current.dir_metadata()
+    }
 }
 
-fn same_dir(left: &Dir, right: &Dir) -> io::Result<bool> {
-    let left = left.dir_metadata()?;
-    let right = right.dir_metadata()?;
-    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+fn dir_identity(dir: &Dir) -> io::Result<(u64, u64)> {
+    let metadata = dir.dir_metadata()?;
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 fn read_link(dir: &Dir, name: &Path) -> io::Result<PathBuf> {
