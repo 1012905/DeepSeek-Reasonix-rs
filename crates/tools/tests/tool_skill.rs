@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 struct MemoryStore {
     skills: Vec<SkillRecord>,
     project_scope: bool,
+    written: std::sync::Mutex<Option<(String, String, String)>>,
 }
 
 impl SkillStore for MemoryStore {
@@ -42,8 +43,10 @@ impl SkillStore for MemoryStore {
         &self,
         name: &str,
         scope: &str,
-        _content: &str,
+        content: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        *self.written.lock().unwrap() =
+            Some((name.to_owned(), scope.to_owned(), content.to_owned()));
         Ok(format!("skills/{scope}/{name}"))
     }
 }
@@ -273,6 +276,7 @@ fn install_skill_validates_fields_writes_frontmatter_and_fires_the_hook() {
     let store = Arc::new(MemoryStore {
         skills: vec![],
         project_scope: true,
+        ..Default::default()
     });
     let hook_called: Arc<std::sync::Mutex<Option<(String, String, String)>>> = Arc::default();
     let hook: InstalledHook = {
@@ -281,7 +285,7 @@ fn install_skill_validates_fields_writes_frontmatter_and_fires_the_hook() {
             *called.lock().unwrap() = Some((name.to_owned(), path.to_owned(), scope.to_owned()));
         })
     };
-    let tool = InstallSkillTool::new(Some(store), Some(hook));
+    let tool = InstallSkillTool::new(Some(store.clone()), Some(hook));
 
     let no_name = tool
         .execute(
@@ -321,6 +325,13 @@ fn install_skill_validates_fields_writes_frontmatter_and_fires_the_hook() {
     let called = hook_called.lock().unwrap().clone().unwrap();
     assert_eq!(called.0, "demo");
     assert_eq!(called.2, "project");
+    let written = store.written.lock().unwrap().clone().unwrap();
+    assert_eq!(written.0, "demo");
+    assert_eq!(written.1, "project");
+    assert_eq!(
+        written.2,
+        "---\nname: \"demo\"\ndescription: \"One-liner\"\nrunAs: \"subagent\"\nallowed-tools: [\"read_file\", \"grep\"]\n---\n\nPlaybook body\n"
+    );
 }
 
 #[test]
@@ -328,6 +339,7 @@ fn install_project_scope_without_workspace_is_refused() {
     let store = Arc::new(MemoryStore {
         skills: vec![],
         project_scope: false,
+        ..Default::default()
     });
     let tool = InstallSkillTool::new(Some(store), None);
     let err = tool

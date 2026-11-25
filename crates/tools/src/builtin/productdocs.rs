@@ -832,12 +832,33 @@ mod tests {
 
     #[test]
     fn list_filters_by_language_and_audience() {
-        let catalog = sample_catalog();
+        let catalog = load_catalog(&[
+            (
+                "GUIDE.md".to_owned(),
+                "# Getting Started\n\nInstall Reasonix.\n".to_owned(),
+            ),
+            (
+                "GUIDE.zh-CN.md".to_owned(),
+                "# 入门\n\n安装 Reasonix。\n".to_owned(),
+            ),
+            (
+                "SPEC.md".to_owned(),
+                "# Specification\n\nDeveloper contract.\n".to_owned(),
+            ),
+        ])
+        .expect("sample catalog loads");
         let all = list(&catalog, "all", "all");
         assert!(all.contains("GUIDE.md"));
+        assert!(all.contains("SPEC.md"));
         let en = list(&catalog, "en", "all");
         assert!(en.contains("GUIDE.md"));
         assert!(!en.contains("GUIDE.zh-CN.md"));
+        let user = list(&catalog, "en", "user");
+        assert!(user.contains("GUIDE.md"));
+        assert!(!user.contains("SPEC.md"));
+        let developer = list(&catalog, "en", "developer");
+        assert!(developer.contains("SPEC.md"));
+        assert!(!developer.contains("GUIDE.md"));
     }
 
     #[test]

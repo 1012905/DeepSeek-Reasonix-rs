@@ -310,10 +310,10 @@ mod tests {
     use super::*;
     use crate::builtin::confine::real_path;
 
-    fn state_root() -> String {
-        let dir = std::env::temp_dir().join("reasonix-sessiondata-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        real_path(&dir.to_string_lossy()).unwrap()
+    fn state_root() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_path(&dir.path().to_string_lossy()).unwrap();
+        (dir, root)
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn denies_the_sessions_tree_and_allows_an_allow_root() {
-        let root = state_root();
+        let (_dir, root) = state_root();
         let sessions = pathgo::join(&[&root, "sessions"]);
         std::fs::create_dir_all(&sessions).unwrap();
         let guard = SessionDataGuard::new(&root, &[]);
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn trusted_and_schedule_stores_carry_typed_refusals() {
-        let root = state_root();
+        let (_dir, root) = state_root();
         let trusted = pathgo::join(&[&root, TRUSTED_STATE_DIR]);
         let schedule = pathgo::join(&[&root, SCHEDULE_STATE_DIR]);
         std::fs::create_dir_all(&trusted).unwrap();
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn security_boundary_settings_json_is_denied_at_the_root() {
-        let root = state_root();
+        let (_dir, root) = state_root();
         let guard = SessionDataGuard::new(&root, &[]);
         let boundary = pathgo::join(&[&root, "settings.json"]);
         std::fs::write(&boundary, "{}").unwrap();
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn per_project_sessions_match_positionally() {
-        let root = state_root();
+        let (_dir, root) = state_root();
         let store = pathgo::join(&[&root, "projects", "abcd", "sessions"]);
         std::fs::create_dir_all(&store).unwrap();
         let guard = SessionDataGuard::new(&root, &[]);
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn command_hint_warns_on_a_lexical_reference_but_never_blocks() {
-        let root = state_root();
+        let (_dir, root) = state_root();
         let guard = SessionDataGuard::new(&root, &[]);
         let rel = pathgo::to_slash(&root);
         let hint = guard.command_hint("", &format!("cat {rel}/sessions/chat-1.json"));

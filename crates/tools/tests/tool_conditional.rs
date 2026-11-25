@@ -315,6 +315,13 @@ impl SlashGate for RejectGate {
     }
 }
 
+struct AllowGate;
+impl SlashGate for AllowGate {
+    fn admit(&self, _: &str) -> Result<(), Refusal> {
+        Ok(())
+    }
+}
+
 fn entry(name: &str, skill: bool, renderer: Option<Arc<dyn SlashRenderer>>) -> SlashEntry {
     SlashEntry {
         name: name.to_owned(),
@@ -403,11 +410,11 @@ fn skill_entry_passes_gate_then_expands_frame() {
             name: "review".to_owned(),
             description: "review".to_owned(),
             arg_hint: String::new(),
-            skill: false,
+            skill: true,
             visibility: None,
             renderer: Some(Arc::new(FixedRenderer("check the diff".to_owned()))),
         }]),
-        None,
+        Some(Arc::new(AllowGate)),
     );
     let out = open
         .execute(

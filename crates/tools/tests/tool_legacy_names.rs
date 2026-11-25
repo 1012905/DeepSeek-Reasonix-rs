@@ -132,13 +132,21 @@ fn surface_four_evidence_recognizes_review_task_receipts_and_profiles() {
         "review",
         &json!({"run_in_background": true})
     ));
+    assert!(!is_review_task_receipt(
+        "task",
+        "review",
+        &json!({"run_in_background": "false"})
+    ));
+    assert!(!is_review_task_receipt("task", "review", &json!([])));
     // Plain task receipts do not.
     assert!(!is_review_task_receipt("task", "plan", &json!({})));
 
     assert_eq!(
-        task_profile_from_args(&json!({"profile": "review"})),
+        task_profile_from_args(&json!({"profile": " review "})),
         Some("review".to_owned())
     );
+    assert_eq!(task_profile_from_args(&json!({"profile": "  "})), None);
+    assert_eq!(task_profile_from_args(&json!({"profile": 1})), None);
     assert_eq!(task_profile_from_args(&json!({})), None);
 }
 

@@ -191,11 +191,14 @@ pub fn is_review_task_receipt(tool_name: &str, profile: &str, args: &Value) -> b
     if tool_name != LEGACY_TASK || profile != "review" {
         return false;
     }
-    let run_in_background = args
-        .get("run_in_background")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    !run_in_background
+    let Some(fields) = args.as_object() else {
+        return false;
+    };
+    match fields.get("run_in_background") {
+        None => true,
+        Some(Value::Bool(run_in_background)) => !run_in_background,
+        Some(_) => false,
+    }
 }
 
 /// Reads the `profile` field off a `task` receipt's args
@@ -204,6 +207,8 @@ pub fn is_review_task_receipt(tool_name: &str, profile: &str, args: &Value) -> b
 pub fn task_profile_from_args(args: &Value) -> Option<String> {
     args.get("profile")
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
         .map(str::to_owned)
 }
 

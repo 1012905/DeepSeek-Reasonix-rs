@@ -279,6 +279,7 @@ fn audit_router_spend_and_pool_truncation_accumulate() {
     let snap = audit.snapshot();
     assert_eq!(snap.router.prompt_tokens, 15);
     assert_eq!(snap.router.completion_tokens, 6);
+    assert!((snap.router.cost - 0.0015).abs() < 1e-12);
     assert_eq!(snap.router.latency_ms, 20);
     assert_eq!(snap.router.candidates_dropped, 7);
 }

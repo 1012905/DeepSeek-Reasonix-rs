@@ -196,7 +196,7 @@ fn await_user_fails_closed_without_an_asker() {
 }
 
 #[test]
-fn await_user_parks_the_current_item_with_an_asker() {
+fn await_user_records_the_current_item_with_an_asker() {
     let host = Arc::new(FakeAwaitHost {
         todos: vec![todo("open now", "in_progress", "s1")],
         plan_submission: false,
