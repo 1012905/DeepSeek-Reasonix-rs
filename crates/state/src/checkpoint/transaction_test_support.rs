@@ -165,6 +165,16 @@ pub fn active_writer() -> ActiveWriter {
     }
 }
 
+pub fn committed_fixture() -> (Fixture, RewindResult) {
+    let fixture = modify_add_delete_fixture();
+    let rewind = plan(&fixture.store, RewindScope::Code);
+    let result = fixture
+        .store
+        .commit_rewind(&rewind.plan_id, 7, b"forward", None, None)
+        .unwrap();
+    (fixture, result)
+}
+
 pub fn modify_add_delete_fixture() -> Fixture {
     let mut fixture = fixture();
     write(fixture.root.path(), "a.txt", "a-after");

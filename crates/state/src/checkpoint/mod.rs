@@ -3,6 +3,7 @@
 mod atomic_json;
 mod barrier;
 mod blob;
+mod observer;
 mod ownership;
 mod path_capture;
 mod rewind;
@@ -14,10 +15,13 @@ mod transaction_prepare;
 mod transaction_publish;
 mod transaction_recovery;
 mod types;
+mod undo;
+mod writer_admission;
 
 pub use atomic_json::{read_json_file, write_json_atomic};
 pub use barrier::{BarrierError, ExclusivePermit, MutationBarrier, WritePermit};
 pub use blob::{BlobError, BlobStore, digest, valid_blob_ref};
+pub use observer::{BeginWriteError, MutationObserver, ObserverOptions};
 pub use path_capture::{
     CaptureError, Fingerprint, PathError, capture_path, compare_identity, fingerprint_path,
     normalize_rel_path, safe_path,
@@ -33,6 +37,7 @@ pub use transaction::{
     TransactionError, TransactionInjection, TransactionPhase,
 };
 pub use types::*;
+pub use writer_admission::{RegisteredWriter, WriterError, WriterErrorKind};
 
 #[cfg(test)]
 mod barrier_tests;
@@ -40,6 +45,8 @@ mod barrier_tests;
 mod blob_path_tests;
 #[cfg(test)]
 mod gc_tests;
+#[cfg(test)]
+mod observer_tests;
 #[cfg(test)]
 mod ownership_tests;
 #[cfg(test)]
@@ -57,4 +64,8 @@ mod transaction_test_support;
 #[cfg(test)]
 mod transaction_tests;
 #[cfg(test)]
+mod undo_tests;
+#[cfg(test)]
 mod wire_tests;
+#[cfg(test)]
+mod writer_admission_tests;

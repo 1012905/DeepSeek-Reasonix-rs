@@ -233,6 +233,7 @@ pub(super) fn commit(
         return fail(store, transaction, stages, error, applier, true, injection);
     }
     cleanup_committed(store, &transaction.targets)?;
+    store.publish_undo_offer(transaction);
     result.files = stages;
     Ok(result)
 }

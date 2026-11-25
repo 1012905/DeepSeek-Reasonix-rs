@@ -15,6 +15,7 @@ use tracing::warn;
 use super::blob::{BlobError, BlobStore, digest, valid_blob_ref};
 use super::path_capture::{CaptureError, capture_path, normalize_rel_path, safe_path};
 use super::rewind::PlanRegistry;
+use super::secure_path::SecureError;
 use super::types::{
     ActiveWriter, CONFLICT_BUSY_WRITER, CaptureAfterOpts, CaptureBeforeOpts, CaptureOptions,
     CaptureSource, ChangeKind, Checkpoint, Coverage, CoverageGap, DEFAULT_BLOB_QUOTA_BYTES,
@@ -66,6 +67,12 @@ pub enum StoreError {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
+    },
+    #[error("persist undo invalidation {id}: {source}")]
+    UndoInvalidation {
+        id: String,
+        #[source]
+        source: SecureError,
     },
 }
 
@@ -127,6 +134,7 @@ pub(super) struct StoreRuntime {
     pub(super) barrier: super::barrier::MutationBarrier,
     pub(super) plans: Mutex<PlanRegistry>,
     pub(super) recovery_notes: Mutex<Vec<super::transaction::RecoveryNote>>,
+    pub(super) undo: super::undo::UndoRuntime,
 }
 
 #[derive(Debug)]

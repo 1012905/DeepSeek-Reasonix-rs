@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -51,6 +52,8 @@ impl Store {
             })
             .collect();
         entries.sort();
+        let mut latest: Option<TransactionManifest> = None;
+        let mut undone_parents = HashSet::new();
         for path in entries {
             if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
                 continue;
@@ -71,8 +74,29 @@ impl Store {
                     continue;
                 }
             };
+            if transaction.state == TransactionState::Committed && transaction.kind == "undo" {
+                undone_parents.insert(transaction.parent_transaction.clone());
+            }
+            if transaction.kind == "rewind"
+                && matches!(
+                    transaction.state,
+                    TransactionState::Committed
+                        | TransactionState::Invalidated
+                        | TransactionState::Undone
+                )
+                && latest
+                    .as_ref()
+                    .is_none_or(|current| current.created_at.get() < transaction.created_at.get())
+            {
+                latest = Some(transaction.clone());
+            }
             self.recover_transaction(transaction);
         }
+        let offer = latest.filter(|transaction| {
+            transaction.state == TransactionState::Committed
+                && !undone_parents.contains(&transaction.id)
+        });
+        self.restore_undo_offer(offer);
     }
 
     fn recover_transaction(&self, mut transaction: TransactionManifest) {
@@ -170,7 +194,7 @@ impl Store {
         }
     }
 
-    fn transaction_manifest_path(&self, id: &str) -> PathBuf {
+    pub(super) fn transaction_manifest_path(&self, id: &str) -> PathBuf {
         self.dir
             .as_deref()
             .map(|dir| transaction_dir(dir).join(format!("{id}.json")))

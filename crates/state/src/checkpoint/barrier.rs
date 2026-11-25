@@ -90,6 +90,10 @@ impl MutationBarrier {
         self.inner.changed.notify_waiters();
     }
 
+    pub fn try_write(&self) -> Result<Option<WritePermit>, BarrierError> {
+        self.try_write_inner()
+    }
+
     pub fn try_enter_write(&self) -> Option<WritePermit> {
         self.try_write().ok().flatten()
     }
@@ -106,7 +110,7 @@ impl MutationBarrier {
         self.wait_for_admission(|| self.try_exclusive()).await
     }
 
-    fn try_write(&self) -> Result<Option<WritePermit>, BarrierError> {
+    fn try_write_inner(&self) -> Result<Option<WritePermit>, BarrierError> {
         let mut state = self.inner.state();
         if state.closed {
             return Err(BarrierError::Closed);
