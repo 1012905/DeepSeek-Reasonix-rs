@@ -558,6 +558,39 @@ fn native_flat_import_rehomes_wal_state_ahead_of_checkpoint() {
 }
 
 #[test]
+fn blocked_native_flat_import_preserves_source_without_copy_fallback() {
+    let (_root, src, global, workspace, project) = fixture();
+    let events = src.join("chat.events.jsonl");
+    write(&events, EVENTS);
+    legacy_meta(&src, "chat", &workspace, "blocked native");
+    let flat = global.join("chat.jsonl");
+    let native = Session::new("");
+    native.add(Message {
+        role: Role::USER,
+        content: "WAL must survive".into(),
+        ..Default::default()
+    });
+    native.save(flat.to_str().unwrap()).unwrap();
+    let checkpoint = r#"{"role":"user","content":"stale checkpoint"}"#;
+    write(&flat, checkpoint);
+    let flat_meta = crate::store::session_meta(&flat);
+    write(&flat_meta, "corrupt branch meta");
+    set_mtime(&flat, mtime(&events));
+    let dest = project.join("chat.jsonl");
+    let router = route_to(&project);
+
+    assert_eq!(
+        migrate_legacy_sessions(&src, &global, Some(&router)).unwrap(),
+        0
+    );
+    assert_eq!(read(&flat), checkpoint);
+    assert_eq!(read(&flat_meta), "corrupt branch meta");
+    assert!(!dest.exists());
+    assert!(!global.join(ROUTED).exists());
+    assert!(!global.join(JSONL).exists());
+}
+
+#[test]
 fn native_flat_import_holds_destination_locks_through_retirement() {
     let (_root, src, global, workspace, project) = fixture();
     let events = src.join("chat.events.jsonl");

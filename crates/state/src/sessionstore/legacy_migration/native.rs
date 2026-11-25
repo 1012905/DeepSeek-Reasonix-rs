@@ -87,7 +87,9 @@ pub(crate) fn rehome_flat_import(
             record_imported_title(dest_dir, base, summary);
             (1, false)
         }
-        FlatImportOutcome::Deferred | FlatImportOutcome::Incomplete => (0, true),
+        FlatImportOutcome::Deferred
+        | FlatImportOutcome::Incomplete
+        | FlatImportOutcome::Blocked => (0, true),
         _ => (0, false),
     }
 }
@@ -113,14 +115,8 @@ fn move_flat_import(
         return FlatImportOutcome::Deferred;
     }
     let outcome = move_native_flat_import(old, new);
-    if matches!(
-        outcome,
-        FlatImportOutcome::Moved | FlatImportOutcome::Deferred | FlatImportOutcome::Incomplete
-    ) {
+    if outcome != FlatImportOutcome::Fallback {
         return outcome;
-    }
-    if matches!(outcome, FlatImportOutcome::Blocked) {
-        return FlatImportOutcome::NotApplicable;
     }
     move_plain_flat_import(old, new)
 }
