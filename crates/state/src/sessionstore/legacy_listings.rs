@@ -8,6 +8,7 @@ mod service;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use reasonix_core::filelock::FileLockError;
 use thiserror::Error;
@@ -89,7 +90,7 @@ pub type LegacyReplay = Arc<
         + 'static,
 >;
 
-/// Cooperative cancellation for replay adapters.
+/// Cooperative cancellation and deadlines for listing work.
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken {
     state: Arc<CancelState>,
@@ -98,6 +99,7 @@ pub struct CancellationToken {
 #[derive(Debug, Default)]
 struct CancelState {
     cancelled: Mutex<bool>,
+    deadline: Option<Instant>,
     wake: Condvar,
 }
 
@@ -106,12 +108,26 @@ impl CancellationToken {
         Self::default()
     }
 
+    pub fn after(timeout: Duration) -> Self {
+        Self {
+            state: Arc::new(CancelState {
+                cancelled: Mutex::new(false),
+                deadline: Some(Instant::now() + timeout),
+                wake: Condvar::new(),
+            }),
+        }
+    }
+
     pub fn is_cancelled(&self) -> bool {
-        *self
-            .state
+        let state = &self.state;
+        let cancelled = state
             .cancelled
             .lock()
-            .unwrap_or_else(|err| err.into_inner())
+            .unwrap_or_else(|err| err.into_inner());
+        *cancelled
+            || state
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
     }
 
     pub fn cancel(&self) {
@@ -130,17 +146,64 @@ impl CancellationToken {
             .cancelled
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        while !*cancelled {
-            cancelled = self
-                .state
-                .wake
-                .wait(cancelled)
-                .unwrap_or_else(|err| err.into_inner());
+        loop {
+            if *cancelled
+                || self
+                    .state
+                    .deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                return;
+            }
+            cancelled = if let Some(deadline) = self.state.deadline {
+                self.state
+                    .wake
+                    .wait_timeout(
+                        cancelled,
+                        deadline.saturating_duration_since(Instant::now()),
+                    )
+                    .unwrap_or_else(|err| err.into_inner())
+                    .0
+            } else {
+                self.state
+                    .wake
+                    .wait(cancelled)
+                    .unwrap_or_else(|err| err.into_inner())
+            };
         }
+    }
+
+    pub(crate) fn wait_timeout(&self, timeout: Duration) -> bool {
+        let cancelled = self
+            .state
+            .cancelled
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if *cancelled
+            || self
+                .state
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return true;
+        }
+        let timeout = self.state.deadline.map_or(timeout, |deadline| {
+            timeout.min(deadline.saturating_duration_since(Instant::now()))
+        });
+        let (guard, _) = self
+            .state
+            .wake
+            .wait_timeout(cancelled, timeout)
+            .unwrap_or_else(|err| err.into_inner());
+        *guard
+            || self
+                .state
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
     }
 }
 
-/// Reads a source transcript, checking cancellation at the synchronous boundary.
+/// Reads a source transcript, checking cancellation between frames and events.
 pub fn read_legacy_transcript(
     session: &V4Session,
     token: &CancellationToken,
@@ -148,11 +211,24 @@ pub fn read_legacy_transcript(
     if token.is_cancelled() {
         return Err(LegacyListingError::Cancelled);
     }
-    let transcript = session.transcript()?;
+    let transcript = read_legacy_transcript_where(session, || token.is_cancelled())?;
     if token.is_cancelled() {
         return Err(LegacyListingError::Cancelled);
     }
     Ok(transcript)
+}
+
+fn read_legacy_transcript_where(
+    session: &V4Session,
+    cancelled: impl Fn() -> bool,
+) -> Result<Transcript, LegacyListingError> {
+    session.transcript_with_cancellation(|| {
+        if cancelled() {
+            Err(LegacyListingError::Cancelled)
+        } else {
+            Ok(())
+        }
+    })
 }
 
 /// The durable tombstone path, or an empty path for a non-import transcript.

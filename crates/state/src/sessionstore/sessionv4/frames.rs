@@ -151,35 +151,40 @@ pub fn decode_frame(compressed: &[u8], raw_len: usize) -> Result<Vec<u8>, V4Erro
     Ok(raw)
 }
 
-pub(crate) fn scan_commits(
+pub(crate) fn scan_commits<E>(
     store: &ConfinedRoot,
     log: &Path,
     pool: &ContentPool,
-    mut visit: impl FnMut(Vec<Event>) -> Result<(), V4Error>,
-) -> Result<(), V4Error> {
+    cancel: impl Fn() -> Result<(), E>,
+    mut visit: impl FnMut(Vec<Event>) -> Result<(), E>,
+) -> Result<(), E>
+where
+    E: From<V4Error>,
+{
     let mut file = store.open(log)?;
     let mut pending: Option<Record> = None;
     let mut events = Vec::new();
     let mut digest = Sha256::new();
     let mut next = 1u64;
     loop {
+        cancel()?;
         let Some(raw) = read_frame(&mut file)? else {
             return Ok(());
         };
         let record: Record = serde_json::from_slice(&raw)
             .map_err(|err| V4Error::Damaged(Damage::RecordJson(err)))?;
         if record.schema_version != super::SCHEMA_VERSION || record.codec != super::CODEC {
-            return Err(Unsupported::Schema {
+            return Err(V4Error::Unsupported(Unsupported::Schema {
                 schema: record.schema_version,
                 codec: record.codec,
                 revision: 0,
-            }
+            })
             .into());
         }
         match record.record_type.as_str() {
             "batch/begin" => {
                 if pending.is_some() || record.first_sequence != next || record.event_count <= 0 {
-                    return Err(Damage::BatchBegin.into());
+                    return Err(V4Error::Damaged(Damage::BatchBegin).into());
                 }
                 digest = Sha256::new();
                 digest.update(&raw);
@@ -189,15 +194,15 @@ pub(crate) fn scan_commits(
             }
             "batch/event" => {
                 let Some(begin) = pending.as_ref() else {
-                    return Err(Damage::BatchEvent.into());
+                    return Err(V4Error::Damaged(Damage::BatchEvent).into());
                 };
                 let Some(event) = record.event else {
-                    return Err(Damage::BatchEvent.into());
+                    return Err(V4Error::Damaged(Damage::BatchEvent).into());
                 };
                 if events.len() >= begin.event_count as usize
                     || event.seq != begin.first_sequence + events.len() as u64
                 {
-                    return Err(Damage::BatchEvent.into());
+                    return Err(V4Error::Damaged(Damage::BatchEvent).into());
                 }
                 let mut event = event;
                 event.payload = pool.payload(&event)?;
@@ -207,19 +212,23 @@ pub(crate) fn scan_commits(
             }
             "batch/end" => {
                 let Some(begin) = pending.as_ref() else {
-                    return Err(Damage::BatchEnd.into());
+                    return Err(V4Error::Damaged(Damage::BatchEnd).into());
                 };
                 if record.commit_id != begin.commit_id
                     || events.len() != begin.event_count as usize
                     || super::hex(&digest.clone().finalize()) != record.sha256
                 {
-                    return Err(Damage::Checksum.into());
+                    return Err(V4Error::Damaged(Damage::Checksum).into());
                 }
                 next = begin.first_sequence + begin.event_count as u64;
                 pending = None;
                 visit(std::mem::take(&mut events))?;
             }
-            other => return Err(Unsupported::RecordType(other.to_string()).into()),
+            other => {
+                return Err(
+                    V4Error::Unsupported(Unsupported::RecordType(other.to_string())).into(),
+                );
+            }
         }
     }
 }

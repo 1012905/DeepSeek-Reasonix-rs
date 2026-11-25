@@ -23,24 +23,29 @@ pub struct LegacyDiscovery {
 }
 
 pub fn discover_legacy_sessions(dir: &Path) -> Result<LegacyDiscovery, LegacyListingError> {
-    discover_legacy_sessions_where(dir, v4_copy_begun)
+    discover_legacy_sessions_where(dir, v4_copy_begun, &CancellationToken::new())
 }
 
-pub fn discover_background_legacy_sessions(
+pub(crate) fn discover_background_legacy_sessions_with_token(
     dir: &Path,
+    token: &CancellationToken,
 ) -> Result<LegacyDiscovery, LegacyListingError> {
-    discover_legacy_sessions_where(dir, session_artifact_exists)
+    discover_legacy_sessions_where(dir, session_artifact_exists, token)
 }
 
-fn discover_legacy_sessions_where(
+pub(super) fn discover_legacy_sessions_where(
     dir: &Path,
     imported: impl Fn(&Path) -> bool,
+    token: &CancellationToken,
 ) -> Result<LegacyDiscovery, LegacyListingError> {
+    if token.is_cancelled() {
+        return Err(LegacyListingError::Cancelled);
+    }
     let root = v4_sessions_root(dir);
     if root.as_os_str().is_empty() {
         return Ok(LegacyDiscovery::default());
     }
-    let entries = match fs::read_dir(&root) {
+    let mut entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(LegacyDiscovery::default());
@@ -53,7 +58,13 @@ fn discover_legacy_sessions_where(
         }
     };
     let mut names = Vec::new();
-    for entry in entries {
+    loop {
+        if token.is_cancelled() {
+            return Err(LegacyListingError::Cancelled);
+        }
+        let Some(entry) = entries.next() else {
+            break;
+        };
         let entry = entry.map_err(|error| LegacyListingError::Io {
             path: root.clone(),
             source: error.into(),
@@ -75,6 +86,9 @@ fn discover_legacy_sessions_where(
         let path = v4_import_path(dir, &name);
         if !legacy_session_visible(&path) || imported(&path) {
             continue;
+        }
+        if token.is_cancelled() {
+            return Err(LegacyListingError::Cancelled);
         }
         discovery.seen.insert(name.clone());
         match open_in(&root, &name) {

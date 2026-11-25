@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::{CancellationToken, LegacyListingError, LegacyReplay, ListingCache};
@@ -45,17 +45,52 @@ impl LegacyResolver {
         &self.dir
     }
 
+    fn lock_state(
+        &self,
+        token: &CancellationToken,
+    ) -> Result<MutexGuard<'_, ResolverState>, LegacyListingError> {
+        loop {
+            let guard = match self.state.try_lock() {
+                Ok(guard) => guard,
+                Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if token.wait_timeout(Duration::from_millis(10)) {
+                        return Err(LegacyListingError::Cancelled);
+                    }
+                    continue;
+                }
+            };
+            return if token.is_cancelled() {
+                Err(LegacyListingError::Cancelled)
+            } else {
+                Ok(guard)
+            };
+        }
+    }
+
     pub fn lookup(&self, source: &Session) -> Option<Listing> {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        self.lookup_with_token(source, &CancellationToken::new())
+            .ok()
+            .flatten()
+    }
+
+    pub(crate) fn lookup_with_token(
+        &self,
+        source: &Session,
+        token: &CancellationToken,
+    ) -> Result<Option<Listing>, LegacyListingError> {
+        let mut state = self.lock_state(token)?;
         let cache = state
             .cache
             .get_or_insert_with(|| ListingCache::load(&self.dir));
         if let Some(listing) = cache.get(source) {
-            return Some(listing);
+            return Ok(Some(listing));
         }
-        let listing = source.cached_listing()?;
+        let Some(listing) = source.cached_listing() else {
+            return Ok(None);
+        };
         cache.put(source, listing.clone());
-        Some(listing)
+        Ok(Some(listing))
     }
 
     pub fn resolve(
@@ -72,13 +107,7 @@ impl LegacyResolver {
         replay: LegacyReplay,
         token: &CancellationToken,
     ) -> Result<Listing, LegacyListingError> {
-        if token.is_cancelled() {
-            return Err(LegacyListingError::Cancelled);
-        }
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
-        if token.is_cancelled() {
-            return Err(LegacyListingError::Cancelled);
-        }
+        let mut state = self.lock_state(token)?;
         let cache = state
             .cache
             .get_or_insert_with(|| ListingCache::load(&self.dir));
@@ -113,7 +142,16 @@ impl LegacyResolver {
     }
 
     pub fn flush(&self, dir: &Path, force: bool) -> Result<(), LegacyListingError> {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        self.flush_with_token(dir, force, &CancellationToken::new())
+    }
+
+    pub(crate) fn flush_with_token(
+        &self,
+        dir: &Path,
+        force: bool,
+        token: &CancellationToken,
+    ) -> Result<(), LegacyListingError> {
+        let mut state = self.lock_state(token)?;
         if !state.cache.as_ref().is_some_and(|cache| cache.is_dirty()) {
             return Ok(());
         }
@@ -125,7 +163,7 @@ impl LegacyResolver {
                 .unwrap_or(LegacyListingError::Backoff));
         }
         let cache = state.cache.as_mut().expect("dirty cache checked above");
-        match cache.save(dir) {
+        match cache.save_with_token(dir, token) {
             Ok(()) => {
                 state.write = WriteState::default();
                 Ok(())

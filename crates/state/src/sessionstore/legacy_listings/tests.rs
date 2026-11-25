@@ -677,8 +677,11 @@ fn background_discovery_skips_orphan_indexes_that_synchronous_listing_ignores() 
 
     let synchronous = discover_legacy_sessions(&sessions).expect("synchronous discovery");
     assert_eq!(synchronous.sources.len(), 1);
-    let background = super::discovery::discover_background_legacy_sessions(&sessions)
-        .expect("background discovery");
+    let background = super::discovery::discover_background_legacy_sessions_with_token(
+        &sessions,
+        &CancellationToken::new(),
+    )
+    .expect("background discovery");
     assert!(background.sources.is_empty());
 }
 
@@ -1060,4 +1063,315 @@ fn discovery_skips_imported_removed_and_invalid_sources() {
         open(&removed).expect("removed source").manifest.session_id,
         removed_id
     );
+}
+
+#[test]
+fn default_transcript_scan_cancels_between_frames() {
+    let mut fixture = Fixture::new(ID);
+    for index in 0..3 {
+        fixture.batch(
+            vec![message("u", "user", &format!("question {index}"))],
+            End::Ended,
+        );
+    }
+    let session = open(&fixture.dir).expect("source");
+    let checks = AtomicUsize::new(0);
+
+    let result = super::read_legacy_transcript_where(&session, || {
+        checks.fetch_add(1, Ordering::SeqCst) >= 5
+    });
+
+    assert!(matches!(result, Err(LegacyListingError::Cancelled)));
+    assert_eq!(checks.load(Ordering::SeqCst), 6);
+}
+
+#[test]
+fn default_transcript_scan_cancels_between_events() {
+    let mut fixture = Fixture::new(ID);
+    fixture.batch(
+        vec![
+            message("u1", "user", "first"),
+            message("u2", "user", "second"),
+            message("u3", "user", "third"),
+        ],
+        End::Ended,
+    );
+    let session = open(&fixture.dir).expect("source");
+    let checks = AtomicUsize::new(0);
+
+    let result = super::read_legacy_transcript_where(&session, || {
+        checks.fetch_add(1, Ordering::SeqCst) >= 7
+    });
+
+    assert!(matches!(result, Err(LegacyListingError::Cancelled)));
+    assert_eq!(checks.load(Ordering::SeqCst), 8);
+}
+
+#[test]
+fn resolver_gate_acquisition_yields_to_cancellation() {
+    let project = project();
+    let dir = user_source(project.path(), ID, "held");
+    let sessions = project.path().join("sessions");
+    let resolver = resolver_for(&sessions);
+    let source = open(&dir).expect("source");
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let holder_replay: LegacyReplay = Arc::new(move |_, _| {
+        entered_tx.send(()).expect("signal gate holder");
+        release_rx
+            .lock()
+            .expect("release receiver")
+            .recv()
+            .expect("release gate holder");
+        Err(LegacyListingError::Cancelled)
+    });
+    let holder_resolver = Arc::clone(&resolver);
+    let holder_source = source.clone();
+    let holder = std::thread::spawn(move || {
+        holder_resolver.resolve_with_token(&holder_source, holder_replay, &CancellationToken::new())
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("gate holder did not start");
+
+    let token = CancellationToken::after(Duration::from_millis(50));
+    let waiting_resolver = Arc::clone(&resolver);
+    let (result_tx, result_rx) = mpsc::channel();
+    let waiting = std::thread::spawn(move || {
+        result_tx
+            .send(waiting_resolver.resolve_with_token(
+                &source,
+                replay_count(Arc::new(AtomicUsize::new(0))),
+                &token,
+            ))
+            .expect("report cancelled acquisition");
+    });
+    let early = result_rx.recv_timeout(Duration::from_secs(1));
+    release_tx.send(()).expect("release holder after wait");
+    waiting.join().expect("cancelled waiter");
+    assert!(matches!(
+        holder.join().expect("gate holder"),
+        Err(LegacyListingError::Cancelled)
+    ));
+
+    let result = early.expect("resolver gate ignored cancellation");
+    assert!(matches!(result, Err(LegacyListingError::Cancelled)));
+}
+
+#[test]
+fn close_cancels_discovery_waiting_for_a_synchronous_resolver_gate() {
+    let project = project();
+    let dir = user_source(project.path(), ID, "shared gate");
+    let sessions = project.path().join("sessions");
+    let resolver = resolver_for(&sessions);
+    let source = open(&dir).expect("source");
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let holder_replay: LegacyReplay = Arc::new(move |_, _| {
+        entered_tx.send(()).expect("signal synchronous replay");
+        release_rx
+            .lock()
+            .expect("release receiver")
+            .recv()
+            .expect("release synchronous replay");
+        Err(LegacyListingError::Cancelled)
+    });
+    let holder_resolver = Arc::clone(&resolver);
+    let holder = std::thread::spawn(move || {
+        holder_resolver.resolve_with_token(&source, holder_replay, &CancellationToken::new())
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("synchronous replay did not hold the gate");
+
+    let service = LegacyListings::with_default_replay();
+    service.snapshot(&sessions);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !service.scan_started(&sessions) {
+        assert!(Instant::now() < deadline, "background scan did not start");
+        std::thread::yield_now();
+    }
+
+    let (closed_tx, closed_rx) = mpsc::channel();
+    let closer = service.clone();
+    let closer_thread = std::thread::spawn(move || {
+        closer.close();
+        closed_tx.send(()).expect("report close");
+    });
+    let early = closed_rx.recv_timeout(Duration::from_secs(2));
+    release_tx.send(()).expect("release synchronous replay");
+    closer_thread.join().expect("close thread");
+    assert!(matches!(
+        holder.join().expect("synchronous replay"),
+        Err(LegacyListingError::Cancelled)
+    ));
+    assert!(early.is_ok(), "close remained blocked on the resolver gate");
+}
+
+#[test]
+fn cancelled_discovery_does_not_touch_the_filesystem() {
+    let project = project();
+    let sessions = project.path().join("sessions");
+    fs::write(project.path().join("sessions-v4"), b"not a directory").expect("block legacy root");
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let result = super::discovery::discover_legacy_sessions_where(
+        &sessions,
+        crate::sessionstore::session::session_artifact_exists,
+        &token,
+    );
+
+    assert!(matches!(result, Err(LegacyListingError::Cancelled)));
+}
+
+#[test]
+fn background_discovery_cancels_before_opening_the_next_candidate() {
+    let project = project();
+    user_source(project.path(), ID, "first");
+    user_source(project.path(), "1123456789abcdef0123456789abcdef", "second");
+    let sessions = project.path().join("sessions");
+    let token = CancellationToken::new();
+    let candidates = AtomicUsize::new(0);
+
+    let result = super::discovery::discover_legacy_sessions_where(
+        &sessions,
+        |_| {
+            if candidates.fetch_add(1, Ordering::SeqCst) == 1 {
+                token.cancel();
+            }
+            false
+        },
+        &token,
+    );
+
+    assert!(matches!(result, Err(LegacyListingError::Cancelled)));
+    assert_eq!(candidates.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn cancelled_flush_retains_completed_rows_for_retry() {
+    let project = project();
+    let dir = user_source(project.path(), ID, "completed");
+    let sessions = project.path().join("sessions");
+    let resolver = LegacyResolver::new(&sessions);
+    resolver
+        .resolve(
+            &open(&dir).expect("source"),
+            replay_count(Arc::new(AtomicUsize::new(0))),
+        )
+        .expect("resolve");
+    let token = CancellationToken::new();
+    token.cancel();
+
+    assert!(matches!(
+        resolver.flush_with_token(&sessions, true, &token),
+        Err(LegacyListingError::Cancelled)
+    ));
+    assert!(!sessions.join(CACHE_NAME).exists());
+    resolver
+        .flush(&sessions, true)
+        .expect("retry completed rows");
+    assert_eq!(ListingCache::load(&sessions).len(), 1);
+}
+
+struct ResetCrashHook;
+
+impl Drop for ResetCrashHook {
+    fn drop(&mut self) {
+        reasonix_core::fileutil::set_crash_point(None);
+    }
+}
+
+#[test]
+fn cache_publication_validates_cancellation_after_preparing_the_temp() {
+    let _reset = ResetCrashHook;
+    let project = project();
+    let dir = user_source(project.path(), ID, "completed");
+    let sessions = project.path().join("sessions");
+    let target = sessions.join(CACHE_NAME);
+    let mut cache = ListingCache::load(&sessions);
+    cache.put(&open(&dir).expect("source"), Listing::default());
+    let token = CancellationToken::new();
+    let hook_token = token.clone();
+    let hook_target = target.clone();
+    reasonix_core::fileutil::set_crash_point(Some(Box::new(move |operation, path| {
+        if operation == "atomic-write" && Path::new(path) == hook_target {
+            hook_token.cancel();
+        }
+    })));
+
+    let result = cache.save_with_token(&sessions, &token);
+
+    assert!(matches!(result, Err(LegacyListingError::Cancelled)));
+    assert!(cache.is_dirty());
+    assert!(!target.exists());
+    cache.save(&sessions).expect("retry publication");
+    assert!(target.is_file());
+}
+
+#[test]
+fn close_final_flush_stops_publication_after_the_shutdown_deadline() {
+    let project = project();
+    let first_id = "ffffffffffffffffffffffffffff";
+    let second_id = "1123456789abcdef0123456789abcdef";
+    let first = user_source(project.path(), first_id, "completed");
+    user_source(project.path(), second_id, "cancelled");
+    set_modified(
+        &first.join("events.frames"),
+        DateTime::parse_from_rfc3339("2026-10-02T12:00:00Z").expect("time"),
+    );
+    set_modified(
+        &project
+            .path()
+            .join("sessions-v4")
+            .join(second_id)
+            .join("events.frames"),
+        DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z").expect("time"),
+    );
+    let sessions = project.path().join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let replay_calls = Arc::clone(&calls);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let service = LegacyListings::new(move |session, token| {
+        if replay_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return read_legacy_transcript(session, token);
+        }
+        entered_tx.send(()).expect("signal blocked replay");
+        token.wait();
+        Err(LegacyListingError::Cancelled)
+    });
+    service.snapshot(&sessions);
+    entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("second replay did not start");
+
+    let target = sessions.join(CACHE_NAME);
+    fs::create_dir(&target).expect("block cache publication");
+    let (closed_tx, closed_rx) = mpsc::channel();
+    let closer = service.clone();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        closer.close();
+        closed_tx.send(()).expect("report close");
+    });
+    closed_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("close exceeded the shutdown bound");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(750),
+        "close stopped before the shutdown deadline: {elapsed:?}"
+    );
+    assert!(target.is_dir(), "deadline-expired cache was published");
+
+    fs::remove_dir(&target).expect("unblock cache publication");
+    let resolver = resolver_for(&sessions);
+    resolver
+        .flush(&sessions, true)
+        .expect("persist retained rows");
+    assert_eq!(ListingCache::load(&sessions).len(), 1);
 }

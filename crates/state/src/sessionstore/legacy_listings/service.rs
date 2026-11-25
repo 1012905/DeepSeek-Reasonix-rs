@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::discovery::{
-    discover_background_legacy_sessions, legacy_session_info, legacy_session_visible,
+    discover_background_legacy_sessions_with_token, legacy_session_info, legacy_session_visible,
     sort_legacy_rows,
 };
 use super::resolver::{clean_directory, same_source};
@@ -25,6 +25,7 @@ const TICK: Duration = Duration::from_millis(250);
 const SCAN_FRESHNESS: Duration = Duration::from_secs(5);
 const ERROR_RETRY: Duration = Duration::from_secs(60);
 const WRITE_WINDOW: Duration = Duration::from_secs(1);
+const SHUTDOWN_WINDOW: Duration = Duration::from_secs(1);
 const WRITE_BATCH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
@@ -259,6 +260,17 @@ impl LegacyListings {
         self.inner.closed.load(Ordering::Acquire)
     }
 
+    #[cfg(test)]
+    pub(super) fn scan_started(&self, dir: &Path) -> bool {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .dirs
+            .get(dir)
+            .is_some_and(|directory| !directory.scan_needed)
+    }
+
     pub fn close(&self) {
         self.inner.closed.swap(true, Ordering::AcqRel);
         self.inner.token.cancel();
@@ -437,7 +449,10 @@ impl LegacyListings {
                 })
         };
         if let Some(dir) = flush {
-            let result = resolver_for(&dir).flush(&dir, false);
+            let result = resolver_for(&dir).flush_with_token(&dir, false, &self.inner.token);
+            if matches!(result, Err(LegacyListingError::Cancelled)) {
+                return true;
+            }
             let mut state = self
                 .inner
                 .state
@@ -464,6 +479,9 @@ impl LegacyListings {
             Arc::clone(&self.inner.replay),
             &self.inner.token,
         );
+        if matches!(result, Err(LegacyListingError::Cancelled)) {
+            return true;
+        }
         let mut state = self
             .inner
             .state
@@ -534,14 +552,21 @@ impl LegacyListings {
     }
 
     fn scan(&self, dir: &Path) {
-        let discovery = discover_background_legacy_sessions(dir);
+        let discovery = discover_background_legacy_sessions_with_token(dir, &self.inner.token);
+        if matches!(discovery, Err(LegacyListingError::Cancelled)) {
+            return;
+        }
         let failed_scan = discovery.is_err();
         let discovery = discovery.unwrap_or_default();
         for source in discovery.sources {
             if self.is_closed() {
                 return;
             }
-            let cached = resolver_for(dir).lookup(&source);
+            let cached = match resolver_for(dir).lookup_with_token(&source, &self.inner.token) {
+                Ok(cached) => cached,
+                Err(LegacyListingError::Cancelled) => return,
+                Err(_) => None,
+            };
             let id = source.manifest.session_id.clone();
             let mut state = self
                 .inner
@@ -656,8 +681,9 @@ fn run(service: Weak<ServiceInner>, receiver: Receiver<()>, done: Arc<Completion
             .keys()
             .cloned()
             .collect::<Vec<_>>();
+        let token = CancellationToken::after(SHUTDOWN_WINDOW);
         for dir in dirs {
-            let _ = resolver_for(&dir).flush(&dir, false);
+            let _ = resolver_for(&dir).flush_with_token(&dir, false, &token);
         }
     }
 }

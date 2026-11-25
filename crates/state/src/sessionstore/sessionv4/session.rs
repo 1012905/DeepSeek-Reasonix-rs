@@ -79,14 +79,26 @@ impl Session {
     }
 
     pub fn transcript(&self) -> Result<Transcript, V4Error> {
+        self.transcript_with_cancellation(|| Ok(()))
+    }
+
+    pub(crate) fn transcript_with_cancellation<E>(
+        &self,
+        cancel: impl Fn() -> Result<(), E>,
+    ) -> Result<Transcript, E>
+    where
+        E: From<V4Error>,
+    {
+        cancel()?;
         let mut output = Transcript::default();
         if self.log_size == 0 {
             return Ok(output);
         }
         let pool = ContentPool::for_session(self);
         let mut fold = MessageFold::default();
-        scan_commits(&self.store, &self.log_path(), &pool, |events| {
+        scan_commits(&self.store, &self.log_path(), &pool, &cancel, |events| {
             for event in events {
+                cancel()?;
                 if !matches!(
                     event.kind.as_str(),
                     "message/complete"

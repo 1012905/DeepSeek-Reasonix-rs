@@ -1,5 +1,7 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use reasonix_core::filelock::try_acquire;
@@ -112,6 +114,17 @@ impl ListingCache {
     }
 
     pub fn save(&mut self, dir: &Path) -> Result<(), LegacyListingError> {
+        self.save_with_token(dir, &super::CancellationToken::new())
+    }
+
+    pub(crate) fn save_with_token(
+        &mut self,
+        dir: &Path,
+        token: &super::CancellationToken,
+    ) -> Result<(), LegacyListingError> {
+        if token.is_cancelled() {
+            return Err(LegacyListingError::Cancelled);
+        }
         if !self.dirty {
             return Ok(());
         }
@@ -124,6 +137,9 @@ impl ListingCache {
         let mut merged = Self::load(dir);
         let root = v4_sessions_root(dir);
         for (id, entry) in &self.changed {
+            if token.is_cancelled() {
+                return Err(LegacyListingError::Cancelled);
+            }
             if root.as_os_str().is_empty() {
                 continue;
             }
@@ -134,14 +150,31 @@ impl ListingCache {
                 merged.entries.insert(id.clone(), entry.clone());
             }
         }
+        if token.is_cancelled() {
+            return Err(LegacyListingError::Cancelled);
+        }
         let raw = serde_json::to_vec(&merged)?;
         let target = dir.join(CACHE_NAME);
-        atomic_write_file_strict_validated(&target, &raw, 0o600, None).map_err(|source| {
-            LegacyListingError::Io {
-                path: target.clone(),
-                source: source.into(),
+        let publication_cancelled = Cell::new(false);
+        let validate = || {
+            if token.is_cancelled() {
+                publication_cancelled.set(true);
+                Err(io::Error::from(io::ErrorKind::Interrupted))
+            } else {
+                Ok(())
             }
-        })?;
+        };
+        if let Err(source) =
+            atomic_write_file_strict_validated(&target, &raw, 0o600, Some(&validate))
+        {
+            if publication_cancelled.get() {
+                return Err(LegacyListingError::Cancelled);
+            }
+            return Err(LegacyListingError::Io {
+                path: target,
+                source: source.into(),
+            });
+        }
         self.entries.extend(merged.entries);
         self.changed.clear();
         self.dirty = false;
