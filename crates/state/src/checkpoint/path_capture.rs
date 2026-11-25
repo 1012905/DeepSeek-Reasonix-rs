@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Component, Path, PathBuf};
 
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
@@ -293,26 +295,258 @@ fn component_eq(left: &Component<'_>, right: &Component<'_>) -> bool {
     }
 }
 
-fn lexical_clean(path: &Path) -> PathBuf {
-    let mut clean = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir => clean.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if clean.file_name().is_some() {
-                    clean.pop();
-                } else if !clean.has_root() {
-                    clean.push("..");
+#[cfg(windows)]
+type CleanUnit = u16;
+#[cfg(not(windows))]
+type CleanUnit = u8;
+
+const DOT: CleanUnit = b'.' as CleanUnit;
+
+pub(super) fn lexical_clean(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let encoded = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    #[cfg(not(windows))]
+    let encoded = path.as_os_str().as_encoded_bytes().to_vec();
+    let original = encoded.as_slice();
+    #[cfg(windows)]
+    let (separator, volume_len) = (b'\\' as CleanUnit, windows_volume_name_len(original));
+    #[cfg(not(windows))]
+    let (separator, volume_len) = (b'/' as CleanUnit, 0);
+    let rest = &original[volume_len..];
+    if rest.is_empty() {
+        let mut clean = original.to_vec();
+        #[cfg(windows)]
+        if volume_len <= 1
+            || !is_windows_separator(original[0])
+            || !is_windows_separator(original[1])
+        {
+            clean.push(DOT);
+        }
+        #[cfg(not(windows))]
+        clean.push(DOT);
+        #[cfg(windows)]
+        windows_from_slash(&mut clean);
+        return os_string_from_encoded_units(clean).into();
+    }
+
+    let rooted = is_path_separator(rest[0], separator);
+    let mut clean = Vec::with_capacity(original.len() + 2);
+    clean.extend_from_slice(&original[..volume_len]);
+    let mut written = volume_len;
+    let mut dotdot = volume_len;
+    let mut diverged = false;
+    let mut read = 0;
+    if rooted {
+        append_clean_unit(&mut clean, &mut written, original, separator, &mut diverged);
+        read = 1;
+        dotdot = written;
+    }
+
+    while read < rest.len() {
+        if is_path_separator(rest[read], separator)
+            || (rest[read] == DOT
+                && (read + 1 == rest.len() || is_path_separator(rest[read + 1], separator)))
+        {
+            read += 1;
+        } else if rest[read] == DOT
+            && read + 1 < rest.len()
+            && rest[read + 1] == DOT
+            && (read + 2 == rest.len() || is_path_separator(rest[read + 2], separator))
+        {
+            read += 2;
+            if written > dotdot {
+                written -= 1;
+                while written > dotdot && !is_path_separator(clean[written], separator) {
+                    written -= 1;
                 }
+                clean.truncate(written);
+            } else if !rooted {
+                if written > 0 {
+                    append_clean_unit(&mut clean, &mut written, original, separator, &mut diverged);
+                }
+                append_clean_unit(&mut clean, &mut written, original, DOT, &mut diverged);
+                append_clean_unit(&mut clean, &mut written, original, DOT, &mut diverged);
+                dotdot = written;
             }
-            Component::Normal(part) => clean.push(part),
+        } else {
+            if (rooted && written != volume_len + 1) || (!rooted && written != volume_len) {
+                append_clean_unit(&mut clean, &mut written, original, separator, &mut diverged);
+            }
+            while read < rest.len() && !is_path_separator(rest[read], separator) {
+                append_clean_unit(
+                    &mut clean,
+                    &mut written,
+                    original,
+                    rest[read],
+                    &mut diverged,
+                );
+                read += 1;
+            }
         }
     }
-    if clean.as_os_str().is_empty() {
-        clean.push(".");
+    if written == volume_len {
+        append_clean_unit(&mut clean, &mut written, original, DOT, &mut diverged);
     }
-    clean
+    #[cfg(windows)]
+    windows_post_clean(&mut clean, volume_len, diverged);
+    #[cfg(windows)]
+    windows_from_slash(&mut clean);
+    os_string_from_encoded_units(clean).into()
+}
+
+fn os_string_from_encoded_units(units: Vec<CleanUnit>) -> OsString {
+    #[cfg(unix)]
+    {
+        OsString::from_vec(units)
+    }
+    #[cfg(windows)]
+    {
+        OsString::from_wide(&units)
+    }
+}
+
+fn append_clean_unit(
+    clean: &mut Vec<CleanUnit>,
+    written: &mut usize,
+    original: &[CleanUnit],
+    unit: CleanUnit,
+    diverged: &mut bool,
+) {
+    if !*diverged && (*written >= original.len() || original[*written] != unit) {
+        *diverged = true;
+    }
+    clean.push(unit);
+    *written += 1;
+}
+
+#[cfg(windows)]
+fn is_windows_separator(unit: CleanUnit) -> bool {
+    unit == b'/' as CleanUnit || unit == b'\\' as CleanUnit
+}
+
+#[cfg(not(windows))]
+fn is_path_separator(unit: CleanUnit, separator: CleanUnit) -> bool {
+    unit == separator
+}
+
+#[cfg(windows)]
+fn is_path_separator(unit: CleanUnit, separator: CleanUnit) -> bool {
+    unit == separator || unit == b'/' as CleanUnit
+}
+
+#[cfg(windows)]
+fn windows_from_slash(clean: &mut Vec<CleanUnit>) {
+    for unit in clean {
+        if *unit == b'/' as CleanUnit {
+            *unit = b'\\' as CleanUnit;
+        }
+    }
+}
+
+#[cfg(windows)]
+fn windows_post_clean(clean: &mut Vec<CleanUnit>, volume_len: usize, diverged: bool) {
+    if volume_len != 0 || !diverged {
+        return;
+    }
+    for &unit in clean.iter() {
+        if is_windows_separator(unit) {
+            break;
+        }
+        if unit == b':' as CleanUnit {
+            drop(clean.splice(0..0, [DOT, b'\\' as CleanUnit]));
+            return;
+        }
+    }
+    if clean.len() >= 3
+        && is_windows_separator(clean[0])
+        && clean[1] == b'?' as CleanUnit
+        && clean[2] == b'?' as CleanUnit
+    {
+        drop(clean.splice(0..0, [b'\\' as CleanUnit, DOT]));
+    }
+}
+
+#[cfg(windows)]
+fn windows_volume_name_len(path: &[CleanUnit]) -> usize {
+    if path.len() >= 2 && path[0] <= 0x7f && path[1] == b':' as CleanUnit {
+        return 2;
+    }
+    if path.is_empty() || !is_windows_separator(path[0]) {
+        return 0;
+    }
+    if windows_has_prefix_fold(path, br"\\.")
+        || windows_has_prefix_fold(path, br"\\?")
+        || windows_has_prefix_fold(path, br"\??")
+    {
+        if path.len() == 3 {
+            return 3;
+        }
+        if windows_has_prefix_fold(&path[4..], b"UNC") {
+            return valid_windows_volume_name_len(path, windows_unc_len(path, 8));
+        }
+        let (_, rest, found) = windows_cut_path(&path[4..]);
+        if !found {
+            return valid_windows_volume_name_len(path, path.len());
+        }
+        return valid_windows_volume_name_len(path, path.len() - rest.len() - 1);
+    }
+    if path.len() >= 2 && is_windows_separator(path[1]) {
+        return valid_windows_volume_name_len(path, windows_unc_len(path, 2));
+    }
+    0
+}
+
+#[cfg(windows)]
+fn windows_has_prefix_fold(path: &[CleanUnit], prefix: &[u8]) -> bool {
+    if path.len() < prefix.len() {
+        return false;
+    }
+    for (index, &expected) in prefix.iter().enumerate() {
+        let actual = path[index];
+        let matches = if is_windows_separator(expected as CleanUnit) {
+            is_windows_separator(actual)
+        } else {
+            u8::try_from(actual).is_ok_and(|actual| actual.eq_ignore_ascii_case(&expected))
+        };
+        if !matches {
+            return false;
+        }
+    }
+    path.len() == prefix.len() || is_windows_separator(path[prefix.len()])
+}
+
+#[cfg(windows)]
+fn windows_cut_path(path: &[CleanUnit]) -> (&[CleanUnit], &[CleanUnit], bool) {
+    let Some(index) = path.iter().position(|&unit| is_windows_separator(unit)) else {
+        return (path, &[], false);
+    };
+    (&path[..index], &path[index + 1..], true)
+}
+
+#[cfg(windows)]
+fn windows_unc_len(path: &[CleanUnit], prefix_len: usize) -> usize {
+    let mut separators = 0;
+    for (index, &unit) in path.iter().enumerate().skip(prefix_len) {
+        if is_windows_separator(unit) {
+            separators += 1;
+            if separators == 2 {
+                return index;
+            }
+        }
+    }
+    path.len()
+}
+
+#[cfg(windows)]
+fn valid_windows_volume_name_len(path: &[CleanUnit], len: usize) -> usize {
+    if path[..len]
+        .split(|&unit| is_windows_separator(unit))
+        .any(|part| part.len() == 2 && part[0] == DOT && part[1] == DOT)
+    {
+        0
+    } else {
+        len
+    }
 }
 
 pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, CaptureError> {

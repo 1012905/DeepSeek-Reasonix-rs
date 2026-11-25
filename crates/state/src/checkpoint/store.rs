@@ -152,6 +152,17 @@ impl Store {
         Self::new_with_config(dir, root, StoreConfig::default())
     }
 
+    pub(super) fn persistence_only(dir: PathBuf) -> Self {
+        Self {
+            dir: Some(dir),
+            root: PathBuf::new(),
+            blobs: None,
+            config: StoreConfig::default(),
+            runtime: StoreRuntime::default(),
+            state: Mutex::new(StoreState::default()),
+        }
+    }
+
     pub fn new_with_config(dir: Option<&Path>, root: &Path, config: StoreConfig) -> Self {
         let dir = dir
             .filter(|path| !path.as_os_str().is_empty())

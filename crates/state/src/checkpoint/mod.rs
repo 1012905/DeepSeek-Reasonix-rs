@@ -3,6 +3,7 @@
 mod atomic_json;
 mod barrier;
 mod blob;
+mod conversation_fork;
 mod observer;
 mod ownership;
 mod path_capture;
@@ -21,6 +22,7 @@ mod writer_admission;
 pub use atomic_json::{read_json_file, write_json_atomic};
 pub use barrier::{BarrierError, ExclusivePermit, MutationBarrier, WritePermit};
 pub use blob::{BlobError, BlobStore, digest, valid_blob_ref};
+pub use conversation_fork::ConversationForkError;
 pub use observer::{BeginWriteError, MutationObserver, ObserverOptions};
 pub use path_capture::{
     CaptureError, Fingerprint, PathError, capture_path, compare_identity, fingerprint_path,
@@ -43,6 +45,8 @@ pub use writer_admission::{RegisteredWriter, WriterError, WriterErrorKind};
 mod barrier_tests;
 #[cfg(test)]
 mod blob_path_tests;
+#[cfg(test)]
+mod conversation_fork_tests;
 #[cfg(test)]
 mod gc_tests;
 #[cfg(test)]
