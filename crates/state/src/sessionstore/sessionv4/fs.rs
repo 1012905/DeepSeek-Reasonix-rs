@@ -149,7 +149,7 @@ impl ConfinedRoot {
                 }
                 PathPart::CurDir => {}
                 PathPart::Normal(name) => {
-                    let (file, metadata) = open_entry_nofollow(&current, Path::new(&name))?;
+                    let metadata = current.symlink_metadata(Path::new(&name))?;
                     if metadata.file_type().is_symlink() {
                         symlinks += 1;
                         if symlinks > MAX_SYMLINKS {
@@ -174,10 +174,16 @@ impl ConfinedRoot {
                         pending = expanded;
                         continue;
                     }
+                    let (file, opened) = open_entry_nofollow(&current, Path::new(&name))?;
+                    if opened.file_type() != metadata.file_type()
+                        || (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino())
+                    {
+                        return Err(io::Error::other("entry changed while opening"));
+                    }
                     if pending.is_empty() {
                         return Ok(file.into_std());
                     }
-                    if !metadata.is_dir() {
+                    if !opened.is_dir() {
                         return Err(io::Error::new(
                             io::ErrorKind::NotADirectory,
                             "path component is not a directory",
