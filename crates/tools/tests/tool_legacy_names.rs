@@ -42,9 +42,18 @@ fn four_legacy_names_are_recognized_and_never_namespaced() {
 
 #[test]
 fn surface_one_guidance_prompts_keep_the_legacy_spelling() {
-    assert!(GUIDANCE_PLAN_EXEC_RESEARCH.contains("parallel_tasks"));
-    assert!(GUIDANCE_PLAN_EXEC_DISPATCH.contains("parallel_tasks"));
-    assert!(GUIDANCE_PROMETHEUS_PARALLEL.contains("parallel_tasks"));
+    assert_eq!(
+        GUIDANCE_PLAN_EXEC_RESEARCH,
+        "Research/exploration across modules = use parallel_tasks"
+    );
+    assert_eq!(
+        GUIDANCE_PLAN_EXEC_DISPATCH,
+        "Dispatch each batch via parallel_tasks — each sub-agent gets one module’s context"
+    );
+    assert_eq!(
+        GUIDANCE_PROMETHEUS_PARALLEL,
+        "For independent research directions, use parallel_tasks before planning."
+    );
 }
 
 #[test]

@@ -60,9 +60,9 @@ pub const GUIDANCE_PLAN_EXEC_RESEARCH: &str =
     "Research/exploration across modules = use parallel_tasks";
 
 /// `/plan-exec` routing rule: "Dispatch each batch via parallel_tasks — each
-/// sub-agent gets one module's context" (`turn_submit.go:536`).
+/// sub-agent gets one module’s context" (`turn_submit.go:536`).
 pub const GUIDANCE_PLAN_EXEC_DISPATCH: &str =
-    "Dispatch each batch via parallel_tasks — each sub-agent gets one module's context";
+    "Dispatch each batch via parallel_tasks — each sub-agent gets one module’s context";
 
 /// `/prometheus` planner prompt tail: "For independent research directions,
 /// use parallel_tasks before planning." (`session/control/controller.go:697`).

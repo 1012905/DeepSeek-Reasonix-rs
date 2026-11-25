@@ -108,10 +108,6 @@ pub fn step_tools(id: &str, env: &WireEnv) -> Vec<Arc<dyn Tool>> {
                 None,
             )),
         ],
-        // Host-side steps: extension loading (14), the capability surface and
-        // the use_capability proxy (13/15), and the catalog gate (16).
-        // TODO(wave41-capability-proxy): add the proxy once the catalog and
-        // ledger drive a live inventory.
         _ => Vec::new(),
     }
 }
