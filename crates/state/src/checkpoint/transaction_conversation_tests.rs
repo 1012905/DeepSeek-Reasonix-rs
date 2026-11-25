@@ -214,6 +214,7 @@ fn conversation_compensation_without_applier_restores_checkpoint_backup() {
     expired.recompute_coverage();
     write_json_atomic(&turn_path(&fixture.dir, 1, true), &expired).unwrap();
     fixture.store = Store::new(Some(&fixture.dir), fixture.root.path());
+    fixture.store.begin(2, "future", 9).unwrap();
     let plan = conversation_plan(&fixture, RewindScope::Conversation);
     let injection = TransactionInjection::fail(TransactionPhase::SyncRestoredOwnership);
 
@@ -238,8 +239,9 @@ fn conversation_compensation_without_applier_restores_checkpoint_backup() {
             .iter()
             .map(|meta| meta.turn)
             .collect::<Vec<_>>(),
-        vec![0, 1]
+        vec![0, 1, 2]
     );
+    assert!(fixture.store.state().current.is_none());
     assert_eq!(
         read_json_file::<Checkpoint>(&turn_path(&fixture.dir, 0, false)).unwrap(),
         checkpoints[0]
