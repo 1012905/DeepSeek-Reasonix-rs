@@ -126,6 +126,7 @@ impl StoreState {
 pub(super) struct StoreRuntime {
     pub(super) barrier: super::barrier::MutationBarrier,
     pub(super) plans: Mutex<PlanRegistry>,
+    pub(super) recovery_notes: Mutex<Vec<super::transaction::RecoveryNote>>,
 }
 
 #[derive(Debug)]
@@ -154,14 +155,16 @@ impl Store {
         };
         let blobs = dir.as_ref().map(|path| BlobStore::new(path.join("blobs")));
         let state = dir.as_deref().map(load_state).unwrap_or_default();
-        Self {
+        let store = Self {
             dir,
             root,
             blobs,
             config,
             runtime: StoreRuntime::default(),
             state: Mutex::new(state),
-        }
+        };
+        store.recover_file_transactions_on_startup();
+        store
     }
 
     pub fn blobs(&self) -> Option<&BlobStore> {

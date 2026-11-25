@@ -8,6 +8,11 @@ mod path_capture;
 mod rewind;
 mod secure_path;
 mod store;
+mod transaction;
+mod transaction_compensate;
+mod transaction_prepare;
+mod transaction_publish;
+mod transaction_recovery;
 mod types;
 
 pub use atomic_json::{read_json_file, write_json_atomic};
@@ -23,6 +28,10 @@ pub use secure_path::{
     SecureError, chmod, open_workspace_file, path_exists, read_file, remove, rename, write_new_file,
 };
 pub use store::{Store, StoreConfig, StoreError, expired_dir, turn_path};
+pub use transaction::{
+    ConversationApplier, ConversationError, ConversationPhase, RecoveryNote, RecoveryPhase,
+    TransactionError, TransactionInjection, TransactionPhase,
+};
 pub use types::*;
 
 #[cfg(test)]
@@ -39,5 +48,13 @@ mod rewind_tests;
 mod secure_path_tests;
 #[cfg(test)]
 mod store_tests;
+#[cfg(test)]
+mod transaction_conversation_tests;
+#[cfg(test)]
+mod transaction_recovery_tests;
+#[cfg(test)]
+mod transaction_test_support;
+#[cfg(test)]
+mod transaction_tests;
 #[cfg(test)]
 mod wire_tests;

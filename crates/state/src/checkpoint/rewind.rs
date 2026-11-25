@@ -189,15 +189,23 @@ impl Store {
         }
     }
 
-    #[allow(dead_code)] // Transaction delivery consumes the prepared-plan seams.
+    #[cfg(test)]
     pub(crate) fn rewind_plan(&self, plan_id: &str) -> Result<RewindPlan, RewindError> {
         self.plans().get(plan_id, CreatedAt::now())
     }
 
-    #[allow(dead_code)] // Transaction delivery consumes the prepared-plan seams.
+    #[cfg(test)]
     pub(crate) fn take_rewind_plan(&self, plan_id: &str) -> Result<RewindPlan, RewindError> {
+        self.take_rewind_plan_at(plan_id, CreatedAt::now())
+    }
+
+    pub(crate) fn take_rewind_plan_at(
+        &self,
+        plan_id: &str,
+        now: CreatedAt,
+    ) -> Result<RewindPlan, RewindError> {
         let mut registry = self.plans();
-        let plan = registry.get(plan_id, CreatedAt::now())?;
+        let plan = registry.get(plan_id, now)?;
         registry.entries.remove(plan_id);
         Ok(plan)
     }
