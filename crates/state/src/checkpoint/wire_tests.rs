@@ -16,6 +16,23 @@ fn file_revision_omits_empty_optional_fields_and_keeps_required_identity() {
 }
 
 #[test]
+fn checkpoint_schema_defaults_match_the_contract() {
+    let config = StoreConfig::default();
+    assert_eq!(config.retain, 100);
+    assert_eq!(config.blob_quota_bytes, 1 << 30);
+    assert_eq!(config.max_file_bytes, 32 << 20);
+    assert_eq!(SCHEMA_V2, 2);
+    assert_eq!(
+        serde_json::to_value(Coverage::Complete).unwrap(),
+        "complete"
+    );
+    assert_eq!(
+        serde_json::to_value(CoverageGap::default()).unwrap()["reason"],
+        ""
+    );
+}
+
+#[test]
 fn checkpoint_wire_distinguishes_unspecified_and_explicit_none_coverage() {
     let unspecified = serde_json::to_value(Checkpoint::default()).unwrap();
     assert!(unspecified.get("coverage").is_none());
