@@ -312,3 +312,81 @@ fn safe_path_rejects_symlink_components_without_a_workspace_root() {
         Err(PathError::Symlink { .. })
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn capture_path_rejects_unix_directories_as_directories_not_hardlinks() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().to_path_buf();
+    let directory = root.join("dir");
+    fs::create_dir(&directory).unwrap();
+    assert!(fs::metadata(&directory).unwrap().nlink() > 1);
+    assert!(matches!(
+        fingerprint_path(&root, &directory),
+        Err(CaptureError::Directory { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_path_rejects_symlinks_even_when_targets_stay_in_workspace() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().to_path_buf();
+    fs::write(root.join("target"), b"inside").unwrap();
+    symlink(Path::new("target"), root.join("link")).unwrap();
+    assert!(matches!(
+        fingerprint_path(&root, &root.join("link")),
+        Err(CaptureError::Path(PathError::Symlink { .. }))
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_path_rejects_absolute_symlinks_without_a_workspace_root() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("target");
+    let link = temp.path().join("link");
+    fs::write(&target, b"outside").unwrap();
+    symlink(&target, &link).unwrap();
+    assert!(matches!(
+        capture_path(
+            &link,
+            &CaptureOptions {
+                read_content: true,
+                ..CaptureOptions::default()
+            }
+        ),
+        Err(CaptureError::Path(PathError::Symlink { .. }))
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn capture_path_rejects_windows_junctions() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let target = root.join("target");
+    let link = root.join("link");
+    fs::create_dir(&target).unwrap();
+    let link = root
+        .canonicalize()
+        .unwrap()
+        .join(link.file_name().expect("link name"));
+    let status = std::process::Command::new("cmd")
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(target.canonicalize().unwrap())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(matches!(
+        fingerprint_path(&root, &link),
+        Err(CaptureError::Path(PathError::Symlink { .. }))
+    ));
+}

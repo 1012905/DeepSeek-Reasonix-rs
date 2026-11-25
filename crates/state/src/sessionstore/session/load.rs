@@ -29,9 +29,7 @@ use crate::sessionstore::eventlog::{
 };
 use crate::sessionstore::preview::migrate_legacy_provider_content;
 use crate::sessionstore::v4_import::prepare_session_path as prepare_v4_import;
-use crate::store::naming::{
-    session_blobs_dir, session_cleanup_pending, session_event_log, session_v4_removed_marker,
-};
+use crate::store::naming::{session_blobs_dir, session_cleanup_pending, session_event_log};
 
 /// Loads a session under the save-path lock (Go: LoadSession).
 ///
@@ -278,11 +276,7 @@ pub fn is_cleanup_pending(session_path: &str) -> bool {
 /// The marker path itself is the whole rule; only a `v4-<id>.jsonl` name in a
 /// sessions folder has one.
 fn is_v4_session_removed(session_path: &str) -> bool {
-    let marker = session_v4_removed_marker(Path::new(session_path));
-    if marker.as_os_str().is_empty() {
-        return false;
-    }
-    marker.exists()
+    crate::sessionstore::v4_import::is_v4_session_removed(Path::new(session_path))
 }
 
 /// Go save.go `IsVisibleSession`: whether a persisted session should
@@ -468,5 +462,71 @@ mod tests {
         std::fs::remove_file(&marker).expect("remove cleanup marker");
         assert!(!is_cleanup_pending(&path_str));
         assert!(is_visible_session(&path_str));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_v4_tombstone_symlink_does_not_hide_session() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions");
+        fs::create_dir_all(dir.path().join("sessions-v4")).expect("v4 root");
+        let path = sessions.join("v4-0123456789abcdef0123456789abcdef.jsonl");
+        let target = dir.path().join("outside-tombstone");
+        fs::write(&target, b"{}").expect("outside tombstone");
+        symlink(&target, crate::store::session_v4_removed_marker(&path)).expect("symlink");
+
+        assert!(is_visible_session(&path.to_string_lossy()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_v4_tombstone_symlink_still_hides_session() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions");
+        fs::create_dir_all(dir.path().join("sessions-v4")).expect("v4 root");
+        let path = sessions.join("v4-0123456789abcdef0123456789abcdef.jsonl");
+        let target = sessions.join("tombstone");
+        fs::write(&target, b"{}").expect("tombstone");
+        symlink(
+            Path::new("tombstone"),
+            crate::store::session_v4_removed_marker(&path),
+        )
+        .expect("symlink");
+
+        assert!(!is_visible_session(&path.to_string_lossy()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_v4_tombstone_junction_does_not_hide_session() {
+        let dir = tempdir();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions");
+        fs::create_dir_all(dir.path().join("sessions-v4")).expect("v4 root");
+        let path = sessions.join("v4-0123456789abcdef0123456789abcdef.jsonl");
+        let target = dir.path().join("outside-tombstone");
+        fs::create_dir(&target).expect("outside tombstone");
+        let marker = crate::store::session_v4_removed_marker(&path);
+        let marker = marker
+            .parent()
+            .expect("marker parent")
+            .canonicalize()
+            .expect("canonical parent")
+            .join(marker.file_name().expect("marker name"));
+        let status = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(marker)
+            .arg(target.canonicalize().expect("canonical target"))
+            .status()
+            .expect("create junction");
+        assert!(status.success());
+
+        assert!(is_visible_session(&path.to_string_lossy()));
     }
 }

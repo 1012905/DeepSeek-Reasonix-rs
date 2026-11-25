@@ -76,6 +76,8 @@ hostname = "0.4"
 regex = "1"
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 base64 = "0.22"
+cap-fs-ext = "=4.0.3"
+cap-std = "=4.0.3"
 # serve password mode (docs/contracts/http.md §2.3): bcrypt cost 12 and the
 # HMAC-SHA256 session signature. hmac shares digest 0.10 with sha2; bcrypt 0.17
 # is the last line on getrandom 0.3, the workspace pin.

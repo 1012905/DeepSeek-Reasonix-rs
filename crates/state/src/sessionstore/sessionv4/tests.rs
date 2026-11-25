@@ -471,6 +471,21 @@ fn source_store_can_be_renamed_after_all_handles_close() {
 }
 
 #[test]
+fn confined_root_refuses_a_replaced_root_directory() {
+    let temp = TempDir::new().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("root");
+    fs::write(root.join("value"), b"original").expect("original");
+    let store = super::fs::ConfinedRoot::new(&root).expect("confined root");
+    let moved = temp.path().join("moved");
+    fs::rename(&root, &moved).expect("move root");
+    fs::create_dir(&root).expect("replacement root");
+    fs::write(root.join("value"), b"replacement").expect("replacement");
+
+    assert!(store.read(std::path::Path::new("value")).is_err());
+}
+
+#[test]
 fn reads_after_the_source_moves_return_typed_errors_instead_of_panicking() {
     let mut fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
         crate::sessionstore::sessionv4::test_support::ID,
@@ -504,6 +519,175 @@ fn v4_root_rule_only_matches_a_sessions_directory() {
         v4_sessions_root(&temp.path().join("other"))
             .as_os_str()
             .is_empty()
+    );
+}
+
+fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).expect("symlink");
+    #[cfg(windows)]
+    {
+        let target = target.canonicalize().expect("canonical target");
+        let link = link
+            .parent()
+            .expect("link parent")
+            .canonicalize()
+            .expect("canonical parent")
+            .join(link.file_name().expect("link name"));
+        let status = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .expect("create junction");
+        assert!(status.success());
+    }
+}
+
+fn link_confined_dir(target: &std::path::Path, link: &std::path::Path, name: &str) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(std::path::Path::new(name), link).expect("symlink");
+    #[cfg(windows)]
+    {
+        let _ = name;
+        link_dir(target, link);
+    }
+}
+
+#[test]
+fn open_in_refuses_external_session_links() {
+    let fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
+        crate::sessionstore::sessionv4::test_support::ID,
+    );
+    let outside = TempDir::new().expect("outside");
+    let target = outside
+        .path()
+        .join(crate::sessionstore::sessionv4::test_support::ID);
+    fs::rename(&fixture.dir, &target).expect("move session");
+    link_dir(&target, &fixture.dir);
+
+    assert!(
+        open_in(
+            &fixture.root,
+            crate::sessionstore::sessionv4::test_support::ID
+        )
+        .is_err()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn open_in_refuses_relative_external_session_links() {
+    let fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
+        crate::sessionstore::sessionv4::test_support::ID,
+    );
+    let target = fixture
+        .temp
+        .path()
+        .join("outside")
+        .join(crate::sessionstore::sessionv4::test_support::ID);
+    fs::create_dir_all(target.parent().expect("outside parent")).expect("outside");
+    fs::rename(&fixture.dir, &target).expect("move session");
+    std::os::unix::fs::symlink(
+        std::path::Path::new("../outside").join(crate::sessionstore::sessionv4::test_support::ID),
+        &fixture.dir,
+    )
+    .expect("relative external symlink");
+
+    assert!(
+        open_in(
+            &fixture.root,
+            crate::sessionstore::sessionv4::test_support::ID
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn open_in_allows_confined_session_links() {
+    let fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
+        crate::sessionstore::sessionv4::test_support::ID,
+    );
+    let target = fixture.root.join("real-session");
+    fs::rename(&fixture.dir, &target).expect("move session");
+    link_confined_dir(&target, &fixture.dir, "real-session");
+
+    let session = open_in(
+        &fixture.root,
+        crate::sessionstore::sessionv4::test_support::ID,
+    )
+    .expect("confined session link");
+    assert_eq!(
+        session.manifest.session_id,
+        crate::sessionstore::sessionv4::test_support::ID
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn open_in_allows_absolute_confined_session_links() {
+    let fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
+        crate::sessionstore::sessionv4::test_support::ID,
+    );
+    let target = fixture.root.join("real-session");
+    fs::rename(&fixture.dir, &target).expect("move session");
+    link_dir(&target, &fixture.dir);
+
+    let session = open_in(
+        &fixture.root,
+        crate::sessionstore::sessionv4::test_support::ID,
+    )
+    .expect("absolute confined session link");
+    assert_eq!(
+        session.manifest.session_id,
+        crate::sessionstore::sessionv4::test_support::ID
+    );
+}
+
+#[test]
+fn content_pool_refuses_external_object_directory_links() {
+    let fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
+        crate::sessionstore::sessionv4::test_support::ID,
+    );
+    let reference = fixture.object(b"pooled", "text/plain");
+    let digest = reference["digest"].as_str().expect("digest");
+    let source = fixture.root.join(".content-v1/objects").join(&digest[..2]);
+    let outside = TempDir::new().expect("outside");
+    let target = outside.path().join(&digest[..2]);
+    fs::rename(&source, &target).expect("move objects");
+    link_dir(&target, &source);
+    let session = open(&fixture.dir).expect("open");
+    let pool = ContentPool::for_session(&session);
+
+    assert!(matches!(
+        pool.read(&serde_json::from_value(reference).expect("reference")),
+        Err(V4Error::Damaged(Damage::ContentObject { .. }))
+    ));
+}
+
+#[test]
+fn content_pool_allows_confined_object_directory_links() {
+    let fixture = crate::sessionstore::sessionv4::test_support::Fixture::new(
+        crate::sessionstore::sessionv4::test_support::ID,
+    );
+    let reference = fixture.object(b"pooled", "text/plain");
+    let digest = reference["digest"].as_str().expect("digest");
+    let objects = fixture.root.join(".content-v1/objects");
+    let source = objects.join(&digest[..2]);
+    let target = objects.join(format!("real-{}", &digest[..2]));
+    fs::rename(&source, &target).expect("move objects");
+    link_confined_dir(
+        &target,
+        &source,
+        target.file_name().expect("name").to_str().expect("utf8"),
+    );
+    let session = open(&fixture.dir).expect("open");
+    let pool = ContentPool::for_session(&session);
+
+    assert_eq!(
+        pool.read(&serde_json::from_value(reference).expect("reference"))
+            .expect("confined object"),
+        b"pooled"
     );
 }
 

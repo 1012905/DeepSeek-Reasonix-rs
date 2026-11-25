@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+cap-fs-ext = { workspace = true }
+cap-std = { workspace = true }
 chrono = { workspace = true }
 fs4 = { workspace = true }
 getrandom = { workspace = true }

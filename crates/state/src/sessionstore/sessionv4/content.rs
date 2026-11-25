@@ -63,16 +63,10 @@ impl ContentPool {
             .join(&reference.digest[..2])
             .join(&reference.digest[2..4])
             .join(&reference.digest);
-        let path = self.store.resolve(&relative).map_err(|err| {
+        let file = self.store.open(&relative).map_err(|err| {
             V4Error::Damaged(Damage::ContentObject {
                 path: relative.clone(),
                 source: std::io::Error::other(err),
-            })
-        })?;
-        let file = std::fs::File::open(&path).map_err(|err| {
-            V4Error::Damaged(Damage::ContentObject {
-                path: path.clone(),
-                source: err,
             })
         })?;
         let mut data = Vec::new();
@@ -80,7 +74,7 @@ impl ContentPool {
             .read_to_end(&mut data)
             .map_err(|err| {
                 V4Error::Damaged(Damage::ContentObject {
-                    path: path.clone(),
+                    path: relative.clone(),
                     source: err,
                 })
             })?;

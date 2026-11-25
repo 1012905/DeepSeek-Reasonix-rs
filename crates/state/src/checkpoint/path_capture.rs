@@ -1,7 +1,13 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+#[cfg(windows)]
+use cap_std::fs::OpenOptionsExt as _;
+use cap_std::fs::{Dir, OpenOptions};
 use reasonix_core::fileencoding::{self, Kind};
 use thiserror::Error;
 
@@ -12,6 +18,14 @@ use super::types::{
     DEFAULT_MAX_FILE_BYTES, GAP_CAPTURE_FAILED, GAP_HARDLINK, GAP_OUTSIDE_WORKSPACE, GAP_OVERSIZED,
     GAP_SYMLINK, GAP_UNREADABLE,
 };
+
+// Windows has no O_NOFOLLOW; opening the reparse point itself makes the check descriptor-relative.
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+#[cfg(windows)]
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+#[cfg(windows)]
+const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
 
 #[derive(Debug, Error)]
 pub enum PathError {
@@ -311,20 +325,12 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
         }
         PathError::Io { op, path, source } => CaptureError::Inspect { op, path, source },
     })?;
-    let metadata = match fs::symlink_metadata(&absolute) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {
-            return Ok(Fingerprint {
-                abs_path: absolute,
-                ..Fingerprint::default()
-            });
-        }
-        Err(source) => {
-            return Err(CaptureError::Unreadable {
-                path: absolute,
-                source,
-            });
-        }
+    let (root, relative) = capture_scope(&opts.workspace_root, &absolute)?;
+    let Some((mut file, metadata)) = open_captured_file(&root, &relative, &absolute)? else {
+        return Ok(Fingerprint {
+            abs_path: absolute,
+            ..Fingerprint::default()
+        });
     };
     let mut fingerprint = Fingerprint {
         abs_path: absolute.clone(),
@@ -336,14 +342,14 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
         size: metadata.len(),
         ..Fingerprint::default()
     };
+    if fingerprint.is_dir {
+        return Err(CaptureError::Directory { path: absolute });
+    }
     if fingerprint.nlink > 1 {
         return Err(CaptureError::Hardlink {
             path: absolute,
             nlink: fingerprint.nlink,
         });
-    }
-    if fingerprint.is_dir {
-        return Err(CaptureError::Directory { path: absolute });
     }
     if !opts.read_content {
         return Ok(fingerprint);
@@ -360,10 +366,6 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
             max_bytes,
         });
     }
-    let mut file = fs::File::open(&absolute).map_err(|source| CaptureError::Unreadable {
-        path: absolute.clone(),
-        source,
-    })?;
     let mut content = Vec::new();
     file.by_ref()
         .take(max_bytes.saturating_add(1))
@@ -383,6 +385,125 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
     fingerprint.encoding = fileencoding::detect_and_decode(&content).0;
     fingerprint.content = Some(content);
     Ok(fingerprint)
+}
+
+fn capture_scope(root: &Path, absolute: &Path) -> Result<(PathBuf, Vec<OsString>), CaptureError> {
+    let root = if root.as_os_str().is_empty() {
+        absolute
+            .ancestors()
+            .last()
+            .expect("an absolute path has a root")
+            .to_path_buf()
+    } else {
+        lexical_clean(
+            &std::path::absolute(root).map_err(|source| CaptureError::Inspect {
+                op: "resolve workspace root",
+                path: root.to_path_buf(),
+                source,
+            })?,
+        )
+    };
+    let relative = relative_components(&root, absolute).ok_or_else(|| {
+        CaptureError::Path(PathError::OutsideWorkspace {
+            path: absolute.to_path_buf(),
+            root: root.clone(),
+        })
+    })?;
+    Ok((root, relative))
+}
+
+fn open_captured_file(
+    root: &Path,
+    relative: &[OsString],
+    absolute: &Path,
+) -> Result<Option<(fs::File, fs::Metadata)>, CaptureError> {
+    let mut dir = match Dir::open_ambient_dir(root, ambient_authority()) {
+        Ok(dir) => dir,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(CaptureError::Unreadable {
+                path: absolute.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if relative.is_empty() {
+        let file = dir.into_std_file();
+        let metadata = file.metadata().map_err(|source| CaptureError::Unreadable {
+            path: absolute.to_path_buf(),
+            source,
+        })?;
+        return Ok(Some((file, metadata)));
+    }
+    let mut current = root.to_path_buf();
+    for (index, component) in relative.iter().enumerate() {
+        current.push(component);
+        let Some((file, metadata)) = open_checkpoint_entry(&dir, Path::new(component), &current)?
+        else {
+            return Ok(None);
+        };
+        if index + 1 == relative.len() {
+            return Ok(Some((file, metadata)));
+        }
+        if !metadata.is_dir() {
+            return Err(CaptureError::Unreadable {
+                path: current,
+                source: io::Error::new(
+                    io::ErrorKind::NotADirectory,
+                    "path component is not a directory",
+                ),
+            });
+        }
+        dir = Dir::from_std_file(file);
+    }
+    Ok(None)
+}
+
+fn open_checkpoint_entry(
+    dir: &Dir,
+    relative: &Path,
+    absolute: &Path,
+) -> Result<Option<(fs::File, fs::Metadata)>, CaptureError> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(windows)]
+    options
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .share_mode(FILE_SHARE_READ_WRITE);
+    match dir.open_with(relative, &options) {
+        Ok(file) => {
+            let opened = file.metadata().map_err(|source| CaptureError::Unreadable {
+                path: absolute.to_path_buf(),
+                source,
+            })?;
+            if opened.file_type().is_symlink() {
+                return Err(CaptureError::Path(PathError::Symlink {
+                    component: absolute.to_path_buf(),
+                }));
+            }
+            let file = file.into_std();
+            let metadata = file.metadata().map_err(|source| CaptureError::Unreadable {
+                path: absolute.to_path_buf(),
+                source,
+            })?;
+            Ok(Some((file, metadata)))
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(source) => {
+            if dir
+                .symlink_metadata(relative)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(CaptureError::Path(PathError::Symlink {
+                    component: absolute.to_path_buf(),
+                }));
+            }
+            Err(CaptureError::Unreadable {
+                path: absolute.to_path_buf(),
+                source,
+            })
+        }
+    }
 }
 
 pub fn fingerprint_path(root: &Path, path: &Path) -> Result<Fingerprint, CaptureError> {
