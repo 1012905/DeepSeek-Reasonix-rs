@@ -1075,6 +1075,7 @@ name = "reasonix-serve"
 version = "0.3.0"
 dependencies = [
  "axum",
+ "base64",
  "bcrypt",
  "bytes",
  "criterion",
@@ -1090,6 +1091,7 @@ dependencies = [
  "reasonix-session",
  "reasonix-state",
  "reasonix-tools",
+ "ruzstd",
  "serde",
  "serde_ignored",
  "serde_json",
@@ -1106,6 +1108,7 @@ dependencies = [
 name = "reasonix-session"
 version = "0.3.0"
 dependencies = [
+ "base64",
  "bytes",
  "chrono",
  "criterion",
@@ -1115,6 +1118,7 @@ dependencies = [
  "reasonix-safety",
  "reasonix-state",
  "reasonix-tools",
+ "ruzstd",
  "serde",
  "serde_json",
  "sha2",

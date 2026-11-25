@@ -10,10 +10,8 @@
 //! leaves the newer transcript authoritative. The checkpoint rewrite and
 //! the branch-meta revision ledger follow.
 //!
-//! Deferred to the slices that own them: the 1.x DAG load path (SESS-033),
-//! the v4 import inside `prepare_session_path` (SESS-036..038), and the
-//! overlong-name sidecar reconciliation (SESS-023's rename arm, which is in
-//! cleanup_pending.rs).
+//! The 1.x DAG guard and sessions-v4 import run before the native save path;
+//! overlong-name sidecar reconciliation lives in `cleanup_pending.rs`.
 
 use std::io;
 use std::path::{Path, PathBuf};

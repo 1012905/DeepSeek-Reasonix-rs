@@ -41,11 +41,13 @@ tokio-stream = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 criterion = { workspace = true }
 tempfile = { workspace = true }
 # The pipeline-adapter tests drive a real turn over the canned provider.
 reasonix-provider = { workspace = true }
 reasonix-state = { workspace = true }
+ruzstd = { workspace = true }
 # start_paused drives the coalesce window deterministically in tests.
 tokio = { version = "1", features = ["test-util"] }
 # Test-only: drives routers to responses (tower::ServiceExt::oneshot).

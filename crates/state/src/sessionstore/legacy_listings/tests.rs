@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 use super::*;
+use crate::sessionstore::branch::{BranchMeta, save_branch_meta};
 use crate::sessionstore::eventlog::record::CreatedAt;
 use crate::sessionstore::listing::SessionInfo;
 use crate::sessionstore::sessionv4::test_support::{End, Fixture, ID, message};
@@ -511,6 +512,50 @@ fn complete_listing_appends_and_persists_legacy_rows() {
 
     let second = crate::sessionstore::listing::list_sessions(&sessions).expect("cached listing");
     assert_eq!(second, first);
+}
+
+#[test]
+fn imported_v4_sources_do_not_duplicate_the_native_listing_row() {
+    let project = project();
+    user_source(project.path(), ID, "source preview");
+    let sessions = project.path().join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    let imported = sessions.join(format!("v4-{ID}.jsonl"));
+    fs::write(
+        &imported,
+        b"{\"role\":\"user\",\"content\":\"native preview\"}\n",
+    )
+    .expect("native import");
+    save_branch_meta(
+        &imported,
+        BranchMeta {
+            schema_version: 2,
+            turns: 1,
+            preview: "native preview".into(),
+            ..BranchMeta::default()
+        },
+    )
+    .expect("imported sidecar");
+
+    let rows = crate::sessionstore::listing::list_sessions(&sessions).expect("listing");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].path, imported.to_string_lossy());
+    assert_eq!(rows[0].preview, "native preview");
+    assert_eq!(rows[0].turns, 1);
+}
+
+#[test]
+fn removed_v4_sources_do_not_reappear_in_the_combined_listing() {
+    let project = project();
+    user_source(project.path(), ID, "removed preview");
+    let sessions = project.path().join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    let imported = sessions.join(format!("v4-{ID}.jsonl"));
+    preserve_v4_removal(&imported).expect("preserve removal");
+    fs::write(v4_removal_path(&imported), b"removed").expect("tombstone");
+
+    let rows = crate::sessionstore::listing::list_sessions(&sessions).expect("listing");
+    assert!(rows.is_empty());
 }
 
 #[test]

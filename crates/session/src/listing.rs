@@ -1,4 +1,4 @@
-//! Session listing read model: Go `sessionstore.ListNativeSessions`
+//! Session listing read model: Go `sessionstore.ListSessions`
 //! (docs/contracts/session-format.md §7.14) plus the row shaping of serve
 //! `sessions_list.go` — the `GET /sessions` body (http.md §7).
 //!
@@ -8,94 +8,15 @@
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
+pub use reasonix_state::sessionstore::listing::{SessionInfo, list_native_sessions};
 use reasonix_state::sessionstore::recovery_gc;
 use reasonix_state::sessionstore::session::{canonical_session_path, is_visible_session};
-use reasonix_state::sessionstore::session_order::{SessionOrderInfo, list_session_order};
 use reasonix_state::store::naming::{is_subagent_transcript_name, session_event_log};
 
 use crate::model::{SessionRow, Timestamp};
 use crate::title::{TitleCache, session_title};
-
-/// Go `branch.go` `branchMetaCountsInitialVersion` / `BranchMetaCountsVersion`.
-const BRANCH_META_COUNTS_INITIAL_VERSION: i64 = 1;
-const BRANCH_META_COUNTS_VERSION: i64 = 2;
-
-/// One listed session row: the sidecar/mtime record plus whether its
-/// counts were recorded from content (Go `SessionInfo.CountsKnown`).
-#[derive(Debug, Clone)]
-pub struct ListedSession {
-    pub info: SessionOrderInfo,
-    pub counts_known: bool,
-}
-
-/// Go `ListNativeSessions`: metadata rows for every visible session under
-/// `dir`, most-recently-active first. A missing directory is an empty
-/// list; an unreadable one is the caller's error to tolerate.
-pub fn list_native_sessions(dir: &Path) -> io::Result<Vec<ListedSession>> {
-    let ordered = list_session_order(dir)?;
-    let mut out = Vec::with_capacity(ordered.len());
-    for info in ordered {
-        if counts_need_refresh(info.schema_version, info.turns) {
-            if !artifacts_have_content(Path::new(&info.path)) {
-                continue;
-            }
-            // A session whose counts are not yet recorded shows the
-            // indexing fallback rather than an empty preview.
-            let mut info = info;
-            if info.preview.trim().is_empty() {
-                info.preview = format!("History is being indexed — {}", file_stem(&info.path));
-            }
-            out.push(ListedSession {
-                info,
-                counts_known: false,
-            });
-            continue;
-        }
-        if info.turns == 0 {
-            // Never had user interaction — an empty conversation appears in
-            // no list.
-            continue;
-        }
-        out.push(ListedSession {
-            info,
-            counts_known: true,
-        });
-    }
-    Ok(out)
-}
-
-/// Go `sessionListingCountsNeedRefresh`: sidecar counts recorded by an
-/// older build cannot be trusted for the lists that hide empty sessions.
-fn counts_need_refresh(schema_version: i64, turns: i64) -> bool {
-    if schema_version < BRANCH_META_COUNTS_INITIAL_VERSION {
-        return true;
-    }
-    turns == 0 && schema_version < BRANCH_META_COUNTS_VERSION
-}
-
-/// Go `sessionArtifactsHaveContent`: a transcript or event log with bytes.
-fn artifacts_have_content(session_path: &Path) -> bool {
-    if let Ok(info) = fs::metadata(session_path)
-        && !info.is_dir()
-        && info.len() > 0
-    {
-        return true;
-    }
-    event_log_size(session_path) > 0
-}
-
-fn event_log_size(session_path: &Path) -> u64 {
-    let log = session_event_log(session_path);
-    if log.as_os_str().is_empty() {
-        return 0;
-    }
-    fs::metadata(&log)
-        .map(|info| if info.is_dir() { 0 } else { info.len() })
-        .unwrap_or(0)
-}
 
 /// Go `SessionContentModTime`: when the conversation last changed on disk —
 /// the newer of the `.jsonl` checkpoint and the event log. The checkpoint
@@ -125,14 +46,18 @@ pub fn session_content_mod_time(session_path: &Path) -> Timestamp {
 /// nothing its parent lacks. A save-conflict loop mints one per save, and
 /// listing them fills the sidebar with identical-looking copies. The
 /// session in use is never hidden, and coverage is proven from content.
-pub fn hidden_recovery_copy(info: &SessionOrderInfo, current: &str) -> bool {
-    if !info.recovered {
+pub fn hidden_recovery_copy(info: &SessionInfo, current: &str) -> bool {
+    hidden_recovery_path(&info.path, info.recovered, current)
+}
+
+fn hidden_recovery_path(path: &str, recovered: bool, current: &str) -> bool {
+    if !recovered {
         return false;
     }
-    if canonical_session_path(&info.path) == current {
+    if canonical_session_path(path) == current {
         return false;
     }
-    let path = Path::new(&info.path);
+    let path = Path::new(path);
     recovery_gc::recovery_branch_covered_by_parent(path, &go_dir(path))
 }
 
@@ -147,7 +72,7 @@ fn go_dir(path: &Path) -> PathBuf {
 /// Go serve `compareSessions`: hand-placed rows first by the rank the
 /// person gave them, then never-placed rows newest activity first, paths
 /// tie-breaking byte-wise.
-pub fn compare_sessions(a: &SessionOrderInfo, b: &SessionOrderInfo) -> std::cmp::Ordering {
+pub fn compare_sessions(a: &SessionInfo, b: &SessionInfo) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     match (a.manual_rank == 0.0, b.manual_rank == 0.0) {
         (true, false) => return Ordering::Less,
@@ -175,7 +100,7 @@ pub fn compare_sessions(a: &SessionOrderInfo, b: &SessionOrderInfo) -> std::cmp:
 /// `[]`. `current` is the canonical path of the session a pane is driving;
 /// the hub read side has none and passes "".
 pub fn session_rows(dir: &Path, current: &str, titles: &TitleCache) -> Vec<SessionRow> {
-    let listed = match list_native_sessions(dir) {
+    let listed = match reasonix_state::sessionstore::listing::list_sessions(dir) {
         Ok(rows) => rows,
         Err(err) => {
             tracing::warn!(dir = %dir.display(), err = %err, "list sessions");
@@ -186,15 +111,14 @@ pub fn session_rows(dir: &Path, current: &str, titles: &TitleCache) -> Vec<Sessi
     // taken once, outside the row loop).
     let titles = titles.snapshot();
     let mut out = Vec::with_capacity(listed.len());
-    for listed in listed {
-        let info = &listed.info;
+    for info in listed {
         let base = file_name(&info.path);
         // A subagent transcript only means anything through the session
         // that spawned it; only flat legacy names reach here.
         if is_subagent_transcript_name(OsStr::new(&base)) {
             continue;
         }
-        if hidden_recovery_copy(info, current) {
+        if hidden_recovery_path(&info.path, info.recovered, current) {
             continue;
         }
         let modified = session_content_mod_time(Path::new(&info.path));
@@ -225,13 +149,6 @@ fn file_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn file_stem(path: &str) -> String {
-    file_name(path)
-        .strip_suffix(".jsonl")
-        .unwrap_or(path)
-        .to_string()
-}
-
 /// Go `IsVisibleSession`, re-exported shape for callers composing their
 /// own open-pane rows: cleanup-pending sessions appear in no list.
 pub fn is_visible(path: &str) -> bool {
@@ -240,11 +157,14 @@ pub fn is_visible(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    const BRANCH_META_COUNTS_VERSION: i64 = 2;
+
     use super::*;
     use reasonix_contract::provider::{Message, Role};
     use reasonix_state::sessionstore::branch::{BranchMeta, branch_id, save_branch_meta};
     use reasonix_state::sessionstore::eventlog::writer_id::digest_string;
     use reasonix_state::sessionstore::session::{digest_session_messages, load_session};
+    use serde_json::json;
 
     fn user_message(content: &str) -> Message {
         Message {
@@ -309,8 +229,8 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(!rows[0].counts_known);
         assert_eq!(
-            rows[0].info.preview,
-            "History is being indexed — 20260101-000000-000-model"
+            rows[0].preview,
+            "History is being indexed — 20260101-000000-000-model.jsonl"
         );
     }
 
@@ -352,7 +272,7 @@ mod tests {
         let rows = list_native_sessions(tmp.path()).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(rows[0].counts_known);
-        assert_eq!(rows[0].info.turns, 3);
+        assert_eq!(rows[0].turns, 3);
     }
 
     #[test]
@@ -381,10 +301,7 @@ mod tests {
         });
         let rows = list_native_sessions(tmp.path()).unwrap();
         assert_eq!(rows.len(), 2, "the listing itself never hides");
-        assert!(
-            hidden_recovery_copy(&rows[0].info, ""),
-            "covered copy hides"
-        );
+        assert!(hidden_recovery_copy(&rows[0], ""), "covered copy hides");
         // The copy in use is never hidden.
         let current = canonical_session_path(&copy.to_string_lossy());
         let rows = session_rows(tmp.path(), &current, &TitleCache::new(tmp.path()));
@@ -404,7 +321,7 @@ mod tests {
             meta.turns = 1;
         });
         let rows = list_native_sessions(tmp.path()).unwrap();
-        assert!(!hidden_recovery_copy(&rows[0].info, ""));
+        assert!(!hidden_recovery_copy(&rows[0], ""));
     }
 
     #[test]
@@ -436,18 +353,60 @@ mod tests {
     }
 
     #[test]
+    fn session_rows_include_foreign_v4_listings_and_skip_empty_ones() {
+        let tmp = crate::test_support::tempdir();
+        let sessions = tmp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let native = write_transcript(
+            &sessions,
+            "20260101-000000-000-model",
+            &[user_message("native preview")],
+        );
+        set_meta(&native, |meta| {
+            meta.schema_version = BRANCH_META_COUNTS_VERSION;
+            meta.turns = 1;
+            meta.preview = "native preview".into();
+        });
+        let id = "0123456789abcdef0123456789abcdef";
+        let empty_id = "1123456789abcdef0123456789abcdef";
+        let foreign = crate::test_support::write_v4_fixture(
+            &sessions,
+            id,
+            vec![
+                json!({"kind": "session/title", "payload": {"title": "Legacy title"}}),
+                json!({
+                    "kind": "message/complete",
+                    "payload": {"message": {"id": "m1", "role": "user", "content": "legacy preview"}}
+                }),
+            ],
+        );
+        crate::test_support::write_v4_fixture(&sessions, empty_id, Vec::new());
+
+        let rows = session_rows(&sessions, "", &TitleCache::new(&sessions));
+        assert_eq!(rows.len(), 2);
+        let row = rows
+            .iter()
+            .find(|row| row.path == foreign.to_string_lossy())
+            .expect("foreign session row");
+        assert_eq!(row.name, format!("v4-{id}"));
+        assert_eq!(row.turns, 1);
+        assert_eq!(row.title, "Legacy title");
+        assert!(rows.iter().any(|row| row.path == native.to_string_lossy()));
+    }
+
+    #[test]
     fn compare_sessions_orders_unplaced_rows_first_newest_activity() {
-        let placed = SessionOrderInfo {
+        let placed = SessionInfo {
             manual_rank: 2048.0,
-            ..SessionOrderInfo::default()
+            ..SessionInfo::default()
         };
-        let newer = SessionOrderInfo {
+        let newer = SessionInfo {
             last_activity_at: at("2026-01-03T00:00:00Z"),
-            ..SessionOrderInfo::default()
+            ..SessionInfo::default()
         };
-        let older = SessionOrderInfo {
+        let older = SessionInfo {
             last_activity_at: at("2026-01-02T00:00:00Z"),
-            ..SessionOrderInfo::default()
+            ..SessionInfo::default()
         };
         // The ones never placed by hand come first (Go compareSessions).
         assert_eq!(

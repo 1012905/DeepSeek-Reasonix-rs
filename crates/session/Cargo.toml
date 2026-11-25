@@ -23,8 +23,10 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 # Integration tests replay fixtures from disposable per-test directories.
 tempfile = { workspace = true }
+ruzstd = { workspace = true }
 # OPT-014: tree-build benchmarks (docs/optimization-plan.md).
 criterion = { workspace = true }
 
