@@ -12,5 +12,6 @@
 
 #![forbid(unsafe_code)]
 
+pub mod checkpoint;
 pub mod sessionstore;
 pub mod store;

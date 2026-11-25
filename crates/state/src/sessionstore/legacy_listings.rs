@@ -1,0 +1,1 @@
+//! Legacy session listing projection.
