@@ -286,3 +286,69 @@ pub mod shellrun;
 // declarations only; the bash_output/kill_shell/wait wrapper registration is
 // added by the integration slice.
 pub mod jobs;
+
+// wave39-b: TOOL-035 misc tools (present_files, system_one). Card and seam
+// only; host resolution binds in the integration slice.
+pub mod misc;
+
+pub use misc::{
+    CODE_SYSTEM_ONE_NOT_CONFIGURED, LOCAL_BACKEND, MAX_PRESENT_FILES, PRESENT_FILES_DESCRIPTION,
+    PRESENT_FILES_TOOL_NAME, PresentFilesHost, PresentFilesTool, PresentResult, PresentedFile,
+    SYSTEM_ONE_TOOL_NAME, SystemOneError, SystemOneEvaluator, SystemOneSpec, SystemOneTool,
+    present_files_tool, system_one_description, system_one_not_configured, system_one_schema,
+};
+
+// wave39-a: TOOL-030/031/032/033/034 web/browser/computer/media/plan faces.
+// Visibility declarations only; registry wiring into the live session is
+// added by the integration slice.
+pub mod browser;
+pub mod chartspec;
+pub mod computer;
+pub mod media;
+pub mod plan;
+pub mod plan_evidence;
+pub mod web;
+
+pub use browser::{
+    ActResult, BROWSER_ACT_DESCRIPTION, BROWSER_ACT_SCHEMA, BROWSER_ACT_TOOL_NAME,
+    BROWSER_OPEN_DESCRIPTION, BROWSER_OPEN_TOOL_NAME, BROWSER_READ_DESCRIPTION,
+    BROWSER_READ_TOOL_NAME, BrowserActTool, BrowserFailure, BrowserHost, BrowserOpenTool,
+    BrowserReadTool, BrowserStep, Changes, Dialog, LogEntry, Request, Snapshot, TabInfo,
+    browser_act_tool, browser_host_from, browser_open_tool, browser_read_tool, browser_tools,
+    human_bytes, render_changes, render_found, render_logs, render_requests, render_snapshot,
+    render_tabs, request_line, tab_line,
+};
+pub use chartspec::{
+    CODE_COLUMN_UNKNOWN, CODE_LIMIT_EXCEEDED, CODE_SCHEMA_INVALID, CODE_SPEC_VERSION_UNSUPPORTED,
+    CODE_TYPE_MISMATCH, ChartError, Mark, Spec, chart_id, parse as chartspec_parse,
+};
+pub use computer::{
+    ActResult as ComputerActResult, App, COMPUTER_ACT_DESCRIPTION, COMPUTER_ACT_TOOL_NAME,
+    COMPUTER_READ_DESCRIPTION, COMPUTER_READ_TOOL_NAME, ComputerActTool, ComputerHost,
+    ComputerReadTool, ComputerStep, Effect, Modal, Rect, Snapshot as ComputerSnapshot, StepResult,
+    Window, computer_act_tool, computer_host_from, computer_read_tool, computer_tools,
+    pointer_steps, render_apps, render_computer_snapshot, render_effect, screenshot_caption,
+};
+pub use media::{
+    READ_VIDEO_DESCRIPTION, READ_VIDEO_TOOL_NAME, RENDER_CHART_DESCRIPTION, RENDER_CHART_TOOL_NAME,
+    ReadVideoTool, RenderChartTool, VideoHost, VideoInfo, media_tools, normalize_frame_count,
+    read_video_tool, render_chart_tool, render_video_summary, sample_times, video_demuxer,
+    video_host_from,
+};
+pub use plan::{
+    CODE_PLAN_MODE_ACTIVE, COMPLETE_STEP_DESCRIPTION, COMPLETE_STEP_TOOL_NAME, CompleteStepTool,
+    PlanHost, PlanModeReader, TODO_WRITE_DESCRIPTION, TODO_WRITE_TOOL_NAME, TodoWriteTool,
+    complete_step_tool, plan_host_from, plan_mode_from, plan_tools, todo_write_tool,
+};
+pub use plan_evidence::{
+    TodoItem, TodoStepMatch, advance_serial_todo, first_unfinished_sub_step, in_progress_todo,
+    incomplete_todos, match_step, match_step_id, match_todo_identity, normalize_serial_todos,
+    preserves_completed_todo_positions, same_todos, todo_citation, todo_step_ids,
+    validate_serial_todos,
+};
+pub use web::{
+    FetchPage, IMPORT_WEB_IMAGE_DESCRIPTION, IMPORT_WEB_IMAGE_TOOL_NAME, ImageImportArgs,
+    ImageReceipt, ImportWebImageTool, WEB_FETCH_DESCRIPTION, WEB_FETCH_TOOL_NAME, WebFetchTool,
+    WebHost, content_type_short, import_web_image_tool, public_by_construction, render_fetch_page,
+    sha256_hex, validate_image_target, vet_fetch_url, web_fetch_tool, web_host_from, web_tools,
+};
