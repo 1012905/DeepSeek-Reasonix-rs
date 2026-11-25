@@ -270,6 +270,250 @@ pub fn delete_refusal(code: &str, message: &str) -> Refusal {
 }
 
 // ---------------------------------------------------------------------------
+// Recursive-delete extent analysis (shellsafe delete.go / delete_options.go).
+// The argv-level classifier, option and literal-target decisions land here; the
+// shellparse AST walk, nested-interpreter recursion, PowerShell host parser and
+// realPath target bounding are the host-machinery slice's gap.
+// ---------------------------------------------------------------------------
+
+/// shellsafe `DeleteExtent`: one recursive delete call's reach.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeleteExtent {
+    pub targets: Vec<String>,
+    pub recursive: bool,
+    pub unknown_option: bool,
+    pub dynamic_command: bool,
+}
+
+/// The static program name, taking the last path segment (shellsafe
+/// `ExecutableBase`).
+fn executable_base(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
+}
+
+/// deleteDirectoryChange: the directory-change wrappers that may precede a
+/// recursive delete.
+pub fn delete_directory_change(name: &str) -> bool {
+    matches!(
+        executable_base(name).to_ascii_lowercase().as_str(),
+        "cd" | "set-location" | "sl" | "pushd" | "push-location"
+    )
+}
+
+/// literalDeletePath: non-empty, no expansion/glob/pipeline characters, and a
+/// tilde accepted only inside a Windows 8.3 short-name segment.
+pub fn literal_delete_path(target: &str) -> bool {
+    !target.is_empty()
+        && !target.chars().any(|c| {
+            matches!(
+                c,
+                '$' | '%' | '*' | '?' | '[' | ']' | '{' | '}' | '`' | '\u{0}'
+            )
+        })
+        && tilde_is_literal(target)
+}
+
+/// tildeIsLiteral: a tilde expands to the home directory everywhere except
+/// inside a `SHORT~1` 8.3 segment of a drive-letter path.
+pub fn tilde_is_literal(target: &str) -> bool {
+    if !target.contains('~') {
+        return true;
+    }
+    let bytes = target.as_bytes();
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return false;
+    }
+    if bytes[2] != b'\\' && bytes[2] != b'/' {
+        return false;
+    }
+    for segment in target[3..].split(['/', '\\']) {
+        if segment.contains('~') && !short_name_segment(segment) {
+            return false;
+        }
+    }
+    true
+}
+
+/// The 8.3 short-name shape `SHORT~1` (shortNameSegment regex).
+fn short_name_segment(segment: &str) -> bool {
+    let mut parts = segment.split('~');
+    let Some(head) = parts.next() else {
+        return false;
+    };
+    let Some(tail) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && !head.is_empty()
+        && !head.contains(['\\', '/'])
+        && !head.contains('~')
+        && !tail.is_empty()
+        && tail.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// AnalyzeRecursiveDelete: classifies one command into its delete extent.
+/// `powershell` selects the PowerShell/PowerShell-CMD option vocabulary.
+pub fn analyze_recursive_delete(name: &str, args: &[String], powershell: bool) -> DeleteExtent {
+    let base = executable_base(name).to_ascii_lowercase();
+    match base.as_str() {
+        "cmd" => cmd_delete(args),
+        "find" => find_delete(args),
+        "xargs" => DeleteExtent::default(),
+        "rm" | "remove-item" | "ri" | "del" | "erase" | "rd" | "rmdir" | "" => {
+            direct_delete(&base, args, powershell)
+        }
+        _ => DeleteExtent::default(),
+    }
+}
+
+fn direct_delete(base: &str, args: &[String], powershell: bool) -> DeleteExtent {
+    let mut extent = DeleteExtent::default();
+    let mut options = true;
+    let ps_parameters =
+        powershell && matches!(base, "remove-item" | "ri" | "rm" | "del" | "erase" | "");
+    let cmd_parameters = powershell && matches!(base, "del" | "erase" | "rd" | "rmdir");
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if options && arg == "--" {
+            options = false;
+            i += 1;
+            continue;
+        }
+        if options && arg.starts_with('-') {
+            if ps_parameters {
+                let consumed = powershell_delete_option(&mut extent, arg, &args[i + 1..]);
+                i += consumed;
+            } else {
+                posix_delete_option(&mut extent, arg);
+            }
+            i += 1;
+            continue;
+        }
+        if cmd_parameters && arg.starts_with('/') {
+            cmd_delete_option(&mut extent, arg);
+            i += 1;
+            continue;
+        }
+        extent.targets.push(arg.clone());
+        i += 1;
+    }
+
+    if !extent.recursive {
+        return DeleteExtent::default();
+    }
+    if extent.targets.is_empty() {
+        extent.targets.push(String::new());
+    }
+    extent
+}
+
+fn powershell_delete_option(extent: &mut DeleteExtent, arg: &str, rest: &[String]) -> usize {
+    let stripped = arg.strip_prefix('-').unwrap_or(arg).to_ascii_lowercase();
+    let (key, value) = match stripped.split_once(':') {
+        Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+        None => (stripped, None),
+    };
+    match key.as_str() {
+        k if !k.is_empty() && k.starts_with("recurse") => {
+            extent.recursive |= value.as_deref() != Some("$false");
+        }
+        "force" | "literalpath" | "path" => {}
+        "erroraction" | "ea" | "warningaction" | "wa" | "informationaction" | "confirm" => {
+            if value.is_none() {
+                if rest.first().is_some_and(|r| !r.starts_with('-')) {
+                    return 1;
+                }
+                extent.unknown_option = true;
+            }
+        }
+        "verbose" | "debug" | "whatif" => {}
+        _ => extent.unknown_option = true,
+    }
+    0
+}
+
+fn posix_delete_option(extent: &mut DeleteExtent, arg: &str) {
+    if arg.starts_with("--") {
+        if arg.starts_with("--recursive") {
+            extent.recursive = true;
+        } else if arg != "--force" && arg != "--verbose" && arg != "--dir" {
+            extent.unknown_option = true;
+        }
+        return;
+    }
+    extent.recursive |= arg[1..].contains(['r', 'R']);
+    extent.unknown_option |= !arg[1..]
+        .trim_matches(|c: char| "rfRvidI".contains(c))
+        .is_empty();
+}
+
+fn cmd_delete_option(extent: &mut DeleteExtent, arg: &str) {
+    match arg.to_ascii_lowercase().as_str() {
+        "/s" => extent.recursive = true,
+        "/q" | "/f" => {}
+        _ => extent.unknown_option = true,
+    }
+}
+
+fn cmd_delete(args: &[String]) -> DeleteExtent {
+    let Some(first) = args.first() else {
+        return DeleteExtent::default();
+    };
+    if !first.eq_ignore_ascii_case("/c") {
+        return DeleteExtent::default();
+    }
+    let rest: Vec<String> = if args.len() == 2 {
+        args[1].split_whitespace().map(str::to_owned).collect()
+    } else {
+        args[1..].to_vec()
+    };
+    if rest.is_empty() {
+        return DeleteExtent::default();
+    }
+    let recursive = rest.iter().any(|a| a.eq_ignore_ascii_case("/s"));
+    let complex = rest
+        .iter()
+        .any(|a| a.contains(['^', '%', '&', '|', '\r', '\n']));
+    if recursive && complex {
+        return DeleteExtent {
+            recursive: true,
+            dynamic_command: true,
+            ..Default::default()
+        };
+    }
+    analyze_recursive_delete(&rest[0], &rest[1..], true)
+}
+
+fn find_delete(args: &[String]) -> DeleteExtent {
+    let mut extent = DeleteExtent::default();
+    let mut targets: Vec<String> = Vec::new();
+    for (i, arg) in args.iter().enumerate() {
+        match arg.as_str() {
+            "-delete" => extent.recursive = true,
+            "-follow" | "-L" => extent.unknown_option = true,
+            "-exec" | "-execdir" => {
+                // Nested `-exec` delete target extraction is the parser slice's gap.
+                if i + 1 >= args.len() {
+                    continue;
+                }
+            }
+            _ => {
+                if !arg.starts_with('-') {
+                    targets.push(arg.clone());
+                }
+            }
+        }
+    }
+    if targets.is_empty() {
+        targets.push(".".to_owned());
+    }
+    extent.targets = targets;
+    extent
+}
+
+// ---------------------------------------------------------------------------
 // Sandbox-unavailable identities (Go `sandbox.go:200-221`, `win_faults.go`).
 // Fault detection and the per-fault remediation sentences live in the safety
 // crate / OS-sandbox wave; the codes are the classification a caller matches
@@ -460,6 +704,61 @@ mod tests {
             syntax_error_message("near \";\""),
             "Fix the shell syntax and retry: near \";\""
         );
+    }
+
+    #[test]
+    fn analyze_rm_rf_collects_the_target_and_known_flags() {
+        let extent =
+            analyze_recursive_delete("rm", &["-rf".to_owned(), "src/old".to_owned()], false);
+        assert!(extent.recursive);
+        assert!(!extent.unknown_option);
+        assert_eq!(extent.targets, vec!["src/old".to_owned()]);
+    }
+
+    #[test]
+    fn an_unknown_delete_option_is_flagged() {
+        // A non-recursive call returns an empty extent per shellsafe; the
+        // unknown-option flag only survives on a recursive delete.
+        let extent = analyze_recursive_delete("rm", &["-rz".to_owned(), "x".to_owned()], false);
+        assert!(extent.recursive);
+        assert!(extent.unknown_option);
+    }
+
+    #[test]
+    fn powershell_remove_item_recurses_on_recurse_flag() {
+        let extent = analyze_recursive_delete(
+            "Remove-Item",
+            &["-Recurse".to_owned(), "C:\\data\\old".to_owned()],
+            true,
+        );
+        assert!(extent.recursive);
+        assert_eq!(extent.targets, vec!["C:\\data\\old".to_owned()]);
+    }
+
+    #[test]
+    fn literal_targets_reject_expansions_globs_and_home_tildes() {
+        assert!(!literal_delete_path("$VAR/old"));
+        assert!(!literal_delete_path("*"));
+        assert!(!literal_delete_path("~/old"));
+        assert!(!literal_delete_path("a[b]"));
+        assert!(literal_delete_path("src/old"));
+        // A Windows 8.3 short-name segment keeps the tilde literal.
+        assert!(literal_delete_path(r"C:\PROGRA~1\Old"));
+    }
+
+    #[test]
+    fn directory_change_wrappers_are_recognized() {
+        assert!(delete_directory_change("cd"));
+        assert!(delete_directory_change("pushd"));
+        assert!(delete_directory_change("Set-Location"));
+        assert!(!delete_directory_change("rm"));
+    }
+
+    #[test]
+    fn find_delete_recurses_on_delete_flag() {
+        let extent = find_delete(&["build".to_owned(), "-delete".to_owned()]);
+        assert!(extent.recursive);
+        assert_eq!(extent.targets, vec!["build".to_owned()]);
     }
 
     #[test]

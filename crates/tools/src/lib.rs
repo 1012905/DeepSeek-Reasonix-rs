@@ -28,6 +28,7 @@ pub mod roots;
 pub mod schema;
 pub mod shell;
 pub mod usecap;
+pub mod wiring;
 pub mod withdrawn;
 
 pub use abi::{

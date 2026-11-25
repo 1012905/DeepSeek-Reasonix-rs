@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::plugin::{
-    PluginEntry, merge_disabled_tool_policies, normalize_plugin_command_line,
+    PluginEntry, PluginSource, merge_disabled_tool_policies, normalize_plugin_command_line,
     validate_disabled_tools,
 };
 
@@ -441,20 +441,29 @@ pub fn remove_mcp_json_server(body: &str, name: &str) -> Result<(String, bool), 
 }
 
 /// Appends `.mcp.json` servers the TOML config did not declare
-/// (mcpjson.go mergeMCPJSON). The TOML plugin wins on a name collision; the
-/// `disabled_tools` lists are unioned so a later source cannot re-enable a
-/// restriction.
+/// (mcpjson.go mergeMCPJSON). On a name collision the declared plugin usually
+/// wins, but a project-scoped `.mcp.json` entry replaces a non-project declared
+/// entry wholesale; a project-scoped declared entry stays authoritative over
+/// a global incoming entry. The `disabled_tools` lists are unioned first in
+/// every branch so a later source cannot re-enable a restriction.
 pub fn merge_mcp_json(declared: &[PluginEntry], incoming: Vec<PluginEntry>) -> Vec<PluginEntry> {
     let mut out = declared.to_vec();
     let mut index: BTreeMap<String, usize> = BTreeMap::new();
     for (i, plugin) in out.iter().enumerate() {
         index.insert(plugin.name.clone(), i);
     }
-    for entry in incoming {
+    for mut entry in incoming {
         match index.get(&entry.name) {
             Some(&i) => {
-                out[i].disabled_tools =
+                entry.disabled_tools =
                     merge_disabled_tool_policies(&out[i].disabled_tools, &entry.disabled_tools);
+                if entry.source == PluginSource::ProjectMcpJson
+                    && !out[i].source.is_project_scoped()
+                {
+                    out[i] = entry;
+                } else {
+                    out[i].disabled_tools = entry.disabled_tools;
+                }
             }
             None => {
                 index.insert(entry.name.clone(), out.len());
@@ -695,6 +704,120 @@ mod tests {
         assert_eq!(shared.command, "toml-mcp");
         assert_eq!(shared.disabled_tools, vec!["a".to_owned(), "b".to_owned()]);
         assert_eq!(merged[1].name, "json-only");
+    }
+
+    #[test]
+    fn project_mcp_json_replaces_a_non_project_declared_entry() {
+        // mcpjson.go TestMergeMCPJSONPreservesUserDisabledTools: the incoming
+        // project-scoped .mcp.json entry wins wholesale; the disabled_tools
+        // union still survives the swap.
+        let declared = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "user-bin".to_owned(),
+            source: PluginSource::UserConfig,
+            disabled_tools: vec!["write".to_owned(), "delete".to_owned()],
+            ..PluginEntry::default()
+        }];
+        let incoming = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "project-bin".to_owned(),
+            source: PluginSource::ProjectMcpJson,
+            disabled_tools: vec!["delete".to_owned(), "publish".to_owned()],
+            ..PluginEntry::default()
+        }];
+        let merged = merge_mcp_json(&declared, incoming);
+        assert_eq!(merged.len(), 1);
+        let got = &merged[0];
+        assert_eq!(got.command, "project-bin");
+        assert_eq!(got.source, PluginSource::ProjectMcpJson);
+        assert_eq!(
+            got.disabled_tools,
+            vec![
+                "write".to_owned(),
+                "delete".to_owned(),
+                "publish".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_project_declared_entry_stays_authoritative_over_a_global_incoming() {
+        // TestMergeMCPJSONUserCollisionKeepsProjectDisabledTools: reverse
+        // direction, no wholesale replacement; only the disabled_tools union
+        // lands on the kept entry.
+        let declared = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "project-bin".to_owned(),
+            source: PluginSource::ProjectConfig,
+            disabled_tools: vec!["publish".to_owned(), "delete".to_owned()],
+            ..PluginEntry::default()
+        }];
+        let incoming = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "user-bin".to_owned(),
+            source: PluginSource::ClaudeUser,
+            disabled_tools: vec!["write".to_owned()],
+            ..PluginEntry::default()
+        }];
+        let merged = merge_mcp_json(&declared, incoming);
+        let got = &merged[0];
+        assert_eq!(got.command, "project-bin");
+        assert_eq!(got.source, PluginSource::ProjectConfig);
+        assert_eq!(
+            got.disabled_tools,
+            vec![
+                "publish".to_owned(),
+                "delete".to_owned(),
+                "write".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn an_untagged_incoming_entry_does_not_replace_the_declared_one() {
+        // Zero-value source matches TestMergeMCPJSONPrecedence: the declared
+        // reasonix.toml entry wins the collision.
+        let declared = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "local-bin".to_owned(),
+            ..PluginEntry::default()
+        }];
+        let incoming = vec![PluginEntry {
+            name: "shared".to_owned(),
+            kind: "http".to_owned(),
+            url: "https://override.example".to_owned(),
+            ..PluginEntry::default()
+        }];
+        let merged = merge_mcp_json(&declared, incoming);
+        assert_eq!(merged[0].command, "local-bin");
+        assert!(merged[0].url.is_empty());
+    }
+
+    #[test]
+    fn wholesale_replace_swaps_every_decoded_field_with_no_unknown_bag() {
+        // The merge layer operates on decoded PluginEntry values and keeps no
+        // per-server unknown-field bag: a wholesale replacement swaps every
+        // decoded field, so a field only the declared entry set does not
+        // survive. Unknown raw JSON fields live only in the upsert/remove
+        // rewrite path, which this merge never touches.
+        let declared = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "user-bin".to_owned(),
+            args: vec!["--user-arg".to_owned()],
+            headers: BTreeMap::from_iter([("X-User".to_owned(), "1".to_owned())]),
+            source: PluginSource::UserConfig,
+            ..PluginEntry::default()
+        }];
+        let incoming = vec![PluginEntry {
+            name: "shared".to_owned(),
+            command: "project-bin".to_owned(),
+            source: PluginSource::ProjectMcpJson,
+            ..PluginEntry::default()
+        }];
+        let merged = merge_mcp_json(&declared, incoming);
+        let got = &merged[0];
+        assert!(got.args.is_empty());
+        assert!(got.headers.is_empty());
     }
 
     #[test]

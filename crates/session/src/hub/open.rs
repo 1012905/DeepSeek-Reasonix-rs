@@ -206,26 +206,19 @@ fn first_non_empty<'a>(values: &[&'a str]) -> Option<&'a str> {
         .find(|value| !value.is_empty())
 }
 
-/// The registry one runtime drives: the read tools plus the write family,
-/// the writers confined to the workspace (Go `ConfineReaders`/
-/// `ConfineWriters` at boot) and the turn-exit tools every turn carries. The
-/// `ask` tool is registered whether or not an asker is installed: the schema
-/// is cache-stable, and a headless run answers "unresolved" from the tool
-/// itself rather than advertising a different surface per posture. Search
-/// lands with grep's slice; the session-store guard and managed-config hooks
-/// land with the machines that own their path sets.
+/// The registry one runtime drives. Assembly walks the frozen sixteen-step
+/// order (`reasonix_tools::assembly`), so the read/write families, the web,
+/// browser, computer, media and plan domains, the session tools and the skill
+/// tools all land at their Go positions instead of being appended by hand.
+///
+/// The `ask` tool is registered whether or not an asker is installed: the
+/// schema is cache-stable, and a headless run answers "unresolved" from the
+/// tool itself rather than advertising a different surface per posture.
+/// Steps whose tools need a process, provider or config source (extension
+/// loading, the capability proxy, the catalog gate) stay empty here and land
+/// with the slices that own those hosts.
 fn open_registry(root: &str) -> Arc<Registry> {
-    let registry = Registry::new();
-    for tool in reasonix_tools::builtin::confine_readers(&[]) {
-        registry.add(tool);
-    }
-    for tool in reasonix_tools::builtin::confine_writers(&[root.to_owned()], None, None) {
-        registry.add(tool);
-    }
-    for tool in reasonix_tools::builtin::turn_exit_tools() {
-        registry.add(tool);
-    }
-    Arc::new(registry)
+    Arc::new(reasonix_tools::wiring::assemble_registry(root))
 }
 
 #[cfg(test)]

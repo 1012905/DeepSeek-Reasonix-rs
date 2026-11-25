@@ -72,7 +72,7 @@ pub use paths::{
     reasonix_home_dir, reasonix_state_dir, repair_mutation_lock_dir, user_config_path,
     workspace_lease_dir,
 };
-pub use plugin::{PluginEntry, normalize_plugin_command_line};
+pub use plugin::{PluginEntry, PluginSource, normalize_plugin_command_line};
 pub use programs::{
     KIND_BROWSER, KIND_HOOKS, KIND_LAYA_PYTHON, KIND_LSP, KIND_RG_PATH, KIND_SHELL_PATH,
     ProgramApproval, ProgramError, ProgramFile, ProgramStore, ProjectProgram, current_digest,

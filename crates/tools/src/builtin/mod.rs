@@ -352,3 +352,83 @@ pub use web::{
     WebHost, content_type_short, import_web_image_tool, public_by_construction, render_fetch_page,
     sha256_hex, validate_image_target, vet_fetch_url, web_fetch_tool, web_host_from, web_tools,
 };
+
+// wave40-c: TOOL-049/051/053/054/057 productdocs corpus, session-data guard,
+// delete-extent classifier, file views and divergence review. Visibility
+// declarations only; registry wiring into the live session is added by the
+// integration slice.
+pub mod divergences;
+pub mod fileviews;
+pub mod productdocs;
+pub mod productdocs_retrieval;
+pub mod sessiondata;
+
+pub use divergences::{Divergence, DivergenceStatus, divergences, is_unregistered_delegator};
+pub use fileviews::FileViews;
+pub use productdocs::{Catalog, DocsTool, docs_tool, load_catalog};
+pub use sessiondata::{CODE_SCHEDULE_STATE_WRITE, CODE_TRUSTED_STATE_WRITE, SessionDataGuard};
+
+// wave40-a: TOOL-038 capability catalog/ledger/audit + routing/semantic router,
+// TOOL-039 delegation tools, TOOL-040 skill tools and wrappers. Visibility
+// declarations and seams only; registry wiring into the live session is added
+// by the integration slice.
+pub mod capability_audit;
+pub mod capability_catalog;
+pub mod capability_ledger;
+pub mod capability_router;
+pub mod delegate;
+pub mod skill;
+pub mod skill_tools;
+
+// wave40-b: TOOL-041 extension runtime tools, TOOL-042 agent/state/platform
+// cards, TOOL-043 conditional surface, TOOL-044 legacy delegation name table.
+// Card/seam declarations only; registry wiring into the live session is added
+// by the integration slice.
+pub mod agentstate;
+pub mod conditional;
+pub mod conditional_slash;
+pub mod extension;
+pub mod legacy_names;
+
+pub use agentstate::{
+    AWAIT_USER_DESCRIPTION, AWAIT_USER_NEED_LIMIT, AWAIT_USER_TOOL_NAME, AwaitTarget,
+    AwaitUserError, AwaitUserHost, AwaitUserTool, CODE_IMAGE_TOO_LARGE, CODE_IMAGE_UNFIT,
+    CODE_IMAGE_UNSUPPORTED, ReadOnlyBashBlocker, ReadOnlyBashClassifier, ReadOnlyBashTool,
+    VIEW_IMAGE_DESCRIPTION, VIEW_IMAGE_MAX_BYTES, VIEW_IMAGE_TOOL_NAME, ViewImageAsset,
+    ViewImageHost, ViewImageTool, data_url, mime_supported, readonly_bash_description,
+    readonly_block_reason, render_image, render_recorded, resolve_await_target, too_large_refusal,
+    unfit_refusal, unsupported_refusal, validate_need,
+};
+pub use conditional::{
+    BilledSink, CODE_FETCH_ALL_FAILED, CODE_FETCH_INTERNAL_ADDRESS, CODE_FETCH_PAID_NEEDS_CONSENT,
+    ConditionalSurface, FETCH_SNIP_HINT, FallbackSink, FetchBackend, FetchChain, FetchChainError,
+    FetchConsent, FetchFallback, FetchVet, MCP_CONNECT_PREFIX, MCP_TOOL_PREFIX, SearchResult,
+    SnipHint, WEB_SEARCH_DESCRIPTION, WEB_SEARCH_QUERY_MAX, WEB_SEARCH_TOOL_NAME,
+    WebSearchProvider, WebSearchTool, conditional_surfaces, mcp_connect_permission_name,
+    mcp_model_tool_name, mcp_tool_prefix, normalize_name, render_page, validate_web_query,
+};
+pub use conditional_slash::{
+    INSTALL_SOURCE_DESCRIPTION, INSTALL_SOURCE_TOOL_NAME, InstallApprover, InstallConnector,
+    InstallError, InstallReceipt, InstallRequest, InstallSourceTool, NormalizedRequest,
+    SlashCatalog, SlashCommandTool, SlashEntry, SlashGate, SlashRenderer, SlashVisibility,
+    expand_frame, list_slash_commands, normalize_install_op, normalize_kind, normalize_mode,
+    normalize_scope, normalize_slash_name, normalize_tier, normalize_transport, unticketed_apply,
+    validate_install_request,
+};
+pub use extension::{
+    CONNECT_EXTENSION_PREFIX, ExtensionCall, ExtensionDiscoveryTool, ExtensionError, ExtensionHost,
+    ExtensionPackageMetadata, ExtensionTool, MAX_TOOL_NAME_LEN, MintedExtension, RuntimeTool,
+    contract_matches, decl_digest, digest, discovery_description, discovery_tool_name,
+    extension_tool_name, mint_declared, name_offered, overlong_warning,
+};
+pub use legacy_names::{
+    FIXTURE_FLEET_ID, FIXTURE_PARALLEL_TASKS_ID, FIXTURE_READ_ONLY_TASK_ID,
+    GUIDANCE_PLAN_EXEC_DISPATCH, GUIDANCE_PLAN_EXEC_RESEARCH, GUIDANCE_PROMETHEUS_PARALLEL,
+    LEGACY_FLEET, LEGACY_PARALLEL_TASKS, LEGACY_READ_ONLY_TASK, LEGACY_TASK, NESTED_SINK_DOC,
+    READ_SUBAGENT_RESULT_DESCRIPTION, SCHEDULER_COMMENT, claude_default_description,
+    claude_spawning_tools, e2ebench_delegation_tools, is_background_task_call,
+    is_builtin_or_meta_tool, is_legacy_delegation_name, is_review_task_receipt,
+    joined_parallel_task_prompts, legacy_delegation_names, read_only_subagent_workflow_tools,
+    subagent_always_hidden_tools, subagent_hooks_fire, subagent_job_tools, subagent_meta_tools,
+    subagent_recursive_tools, task_profile_from_args,
+};

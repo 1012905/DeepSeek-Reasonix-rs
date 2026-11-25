@@ -6,6 +6,37 @@ use serde::Deserialize;
 
 use reasonix_core::shellparse::static_fields;
 
+/// Where a merged MCP entry came from (config.go MCPConfigSource). Runtime
+/// provenance only: it is never decoded from TOML or written back to a config
+/// file, matching the reference's `toml:"-" json:"-"` tags.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PluginSource {
+    /// Unset: a decode that did not run through a tagged load path.
+    #[default]
+    Unknown,
+    /// The user's own config.toml.
+    UserConfig,
+    /// A workspace reasonix.toml.
+    ProjectConfig,
+    /// The checked-in project `.mcp.json`.
+    ProjectMcpJson,
+    /// The v0.x legacy user config.json.
+    LegacyUserConfig,
+    /// A shipped plugin package.
+    PluginPackage,
+    /// `~/.claude.json`, this project's section.
+    ClaudeLocal,
+    /// `~/.claude.json`, every project.
+    ClaudeUser,
+}
+
+impl PluginSource {
+    /// True when the entry belongs to one workspace (config.go ProjectScoped).
+    pub fn is_project_scoped(self) -> bool {
+        matches!(self, Self::ProjectConfig | Self::ProjectMcpJson)
+    }
+}
+
 /// One external MCP server (plugin_entry.go). The fields mirror Claude Code's
 /// `mcpServers` spec so an entry can come from either file.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -33,6 +64,9 @@ pub struct PluginEntry {
     pub load: String,
     /// Retired startup tier; a load strips it.
     pub tier: String,
+    /// Runtime provenance; skipped on decode so a config file cannot set it.
+    #[serde(skip_deserializing, default)]
+    pub source: PluginSource,
 }
 
 impl PluginEntry {
@@ -166,7 +200,7 @@ pub fn merge_disabled_tool_policies(base: &[String], over: &[String]) -> Vec<Str
 #[cfg(test)]
 mod tests {
     use super::{
-        PluginEntry, merge_disabled_tool_policies, normalize_plugin_command_line,
+        PluginEntry, PluginSource, merge_disabled_tool_policies, normalize_plugin_command_line,
         validate_disabled_tools,
     };
 
@@ -292,5 +326,31 @@ mod tests {
             Some("plugin \"srv\": disabled_tools contains an empty tool name")
         );
         assert!(validate_disabled_tools(&PluginEntry::default()).is_none());
+    }
+
+    #[test]
+    fn source_defaults_to_unknown_and_tags_scope() {
+        assert_eq!(PluginEntry::default().source, PluginSource::Unknown);
+        assert!(!PluginSource::Unknown.is_project_scoped());
+        assert!(PluginSource::ProjectConfig.is_project_scoped());
+        assert!(PluginSource::ProjectMcpJson.is_project_scoped());
+        assert!(!PluginSource::UserConfig.is_project_scoped());
+        assert!(!PluginSource::LegacyUserConfig.is_project_scoped());
+        assert!(!PluginSource::ClaudeUser.is_project_scoped());
+    }
+
+    #[test]
+    fn source_is_not_decoded_from_a_config_file() {
+        // The reference keeps Source runtime-only (toml:"-"); a file key cannot
+        // set the provenance tag.
+        let entry: PluginEntry = toml::from_str(
+            r#"
+name = "srv"
+command = "npx"
+source = "project_mcp_json"
+"#,
+        )
+        .expect("decode");
+        assert_eq!(entry.source, PluginSource::Unknown);
     }
 }

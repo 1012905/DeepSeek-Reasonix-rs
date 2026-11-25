@@ -11,7 +11,9 @@
 use std::collections::BTreeMap;
 
 use crate::model::Config;
-use crate::plugin::{PluginEntry, merge_disabled_tool_policies, normalize_plugin_command_line};
+use crate::plugin::{
+    PluginEntry, PluginSource, merge_disabled_tool_policies, normalize_plugin_command_line,
+};
 use crate::provider::ProviderEntry;
 
 /// Which layer a provider or plugin entry came from.
@@ -105,9 +107,14 @@ pub fn merge_plugins(sources: &[(EntrySource, Vec<PluginEntry>)]) -> Vec<PluginE
     let mut merged: Vec<PluginEntry> = Vec::new();
     let mut index: BTreeMap<String, usize> = BTreeMap::new();
     let mut disabled: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (_, entries) in sources {
+    for (layer, entries) in sources {
         for entry in entries {
             let (mut entry, _) = normalize_plugin_command_line(entry);
+            // load.go tags each TOML entry by its file layer before merge.
+            entry.source = match layer {
+                EntrySource::User => PluginSource::UserConfig,
+                EntrySource::Project => PluginSource::ProjectConfig,
+            };
             let key = merge_key(&entry.name);
             if let Some(existing) = index.get(&key).copied() {
                 let base = disabled.remove(&key).unwrap_or_default();
@@ -178,7 +185,7 @@ mod tests {
         EntrySource, decode_declared_lists, isolate_providers, merge_plugins, merge_providers,
     };
     use crate::model::Config;
-    use crate::plugin::PluginEntry;
+    use crate::plugin::{PluginEntry, PluginSource};
     use crate::provider::ProviderEntry;
 
     fn provider(name: &str, base_url: &str, models: &[&str]) -> ProviderEntry {
@@ -300,6 +307,17 @@ mod tests {
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].name, "global");
         assert_eq!(merged[1].name, "local");
+    }
+
+    #[test]
+    fn plugin_entries_are_tagged_by_their_config_layer() {
+        // load.go: a user file tags UserConfig, every later layer ProjectConfig.
+        let merged = merge_plugins(&[
+            (EntrySource::User, vec![plugin("global", "npx global")]),
+            (EntrySource::Project, vec![plugin("local", "npx local")]),
+        ]);
+        assert_eq!(merged[0].source, PluginSource::UserConfig);
+        assert_eq!(merged[1].source, PluginSource::ProjectConfig);
     }
 
     #[test]

@@ -262,6 +262,22 @@ pub enum AssemblyError {
     /// catalog gate.
     #[error("proxy step {proxy:?} must precede gate step {gate:?}")]
     ProxyNotLast { proxy: u16, gate: u16 },
+    /// A conditional surface anchors to an unknown supplier id.
+    #[error("conditional surface {slug:?} anchors to unknown supplier {anchor_id:?}")]
+    ConditionalAnchorUnknown {
+        slug: &'static str,
+        anchor_id: &'static str,
+    },
+    /// The anchor step disagrees with the frozen supplier table.
+    #[error(
+        "conditional surface {slug:?} anchors step {got}, supplier {anchor_id:?} is step {want}"
+    )]
+    ConditionalStepMismatch {
+        slug: &'static str,
+        anchor_id: &'static str,
+        got: u16,
+        want: u16,
+    },
 }
 
 /// Validates the frozen table: sixteen contiguous steps, unique ids, the proxy
@@ -316,4 +332,42 @@ pub fn supplier_at(step: u16) -> Option<&'static Supplier> {
 /// Looks up a supplier by stable id.
 pub fn supplier_by_id(id: &str) -> Option<&'static Supplier> {
     BUILTIN_SUPPLIERS.iter().find(|s| s.id == id)
+}
+
+/// One conditional surface resolved against its frozen anchor supplier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConditionalAnchor<'a> {
+    /// The conditional face record.
+    pub surface: &'a crate::builtin::conditional::ConditionalSurface,
+    /// The frozen supplier it registers beside.
+    pub supplier: &'a Supplier,
+}
+
+/// Resolves each conditional surface to its anchor supplier. The guard checks
+/// the anchor id exists and its step agrees with the frozen table; the slot op
+/// itself may be a new op the integration slice appends to the anchor step's
+/// [`Supplier::ops`] list. This never rewrites the frozen order.
+pub fn resolve_conditional_anchors(
+    surfaces: &[crate::builtin::conditional::ConditionalSurface],
+) -> Result<Vec<ConditionalAnchor<'_>>, AssemblyError> {
+    surfaces
+        .iter()
+        .map(|surface| {
+            let supplier = supplier_by_id(surface.anchor_id).ok_or(
+                AssemblyError::ConditionalAnchorUnknown {
+                    slug: surface.slug,
+                    anchor_id: surface.anchor_id,
+                },
+            )?;
+            if supplier.step != surface.anchor_step as u16 {
+                return Err(AssemblyError::ConditionalStepMismatch {
+                    slug: surface.slug,
+                    anchor_id: surface.anchor_id,
+                    got: surface.anchor_step as u16,
+                    want: supplier.step,
+                });
+            }
+            Ok(ConditionalAnchor { surface, supplier })
+        })
+        .collect()
 }
