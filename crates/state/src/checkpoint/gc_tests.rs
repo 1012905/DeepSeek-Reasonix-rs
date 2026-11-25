@@ -151,6 +151,69 @@ fn pruning_keeps_shared_blobs_and_removes_orphans() {
 }
 
 #[test]
+fn gc_sweeps_unreferenced_blobs_without_expiry_or_quota_pressure() {
+    let (_temp, root, dir, store) = fixture(DEFAULT_RETAIN_CHECKPOINTS, 1024);
+    let blobs = store.blobs().unwrap();
+    let restore_reference = blobs.put(b"transaction restore").unwrap();
+    let forward_reference = blobs.put(b"transaction forward").unwrap();
+    fs::create_dir_all(dir.join("transactions")).unwrap();
+    let manifest = TransactionManifest {
+        id: "tx-live".into(),
+        targets: vec![TransactionTarget {
+            restore_blob: restore_reference.clone(),
+            forward_blob: forward_reference.clone(),
+            ..TransactionTarget::default()
+        }],
+        ..TransactionManifest::default()
+    };
+    fs::write(
+        dir.join("transactions/tx-live.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    write(root.path(), "a.txt", "checkpoint payload");
+    store.begin(0, "live", 0).unwrap();
+    store.snapshot(PreviewChange {
+        path: "a.txt".into(),
+        kind: ChangeKind::Modify,
+        old_text: "checkpoint payload".into(),
+        ..PreviewChange::default()
+    });
+    let checkpoint_reference = digest(b"checkpoint payload");
+
+    write(root.path(), "a.txt", "discarded payload");
+    store.snapshot(PreviewChange {
+        path: "./a.txt".into(),
+        kind: ChangeKind::Modify,
+        old_text: "discarded payload".into(),
+        ..PreviewChange::default()
+    });
+    let orphan_reference = digest(b"discarded payload");
+
+    assert_eq!(store.list().len(), 1);
+    assert_eq!(store.list()[0].paths.len(), 1);
+    assert!(blobs.size().unwrap() < 1024);
+    assert!(blobs.has(&checkpoint_reference));
+    assert!(blobs.has(&orphan_reference));
+
+    store.gc().unwrap();
+
+    assert!(dir.join("turn-0.json").is_file());
+    assert!(!dir.join("expired/turn-0.json").exists());
+    assert!(!store.list()[0].expired_file_payload);
+    assert!(blobs.has(&checkpoint_reference));
+    assert!(blobs.has(&restore_reference));
+    assert!(blobs.has(&forward_reference));
+    assert!(!blobs.has(&orphan_reference));
+    assert_eq!(
+        store.file_state("a.txt").unwrap().content.as_deref(),
+        Some("checkpoint payload")
+    );
+    assert!(store.unreadable_turns().is_empty());
+}
+
+#[test]
 fn transaction_manifest_references_keep_blobs_live_during_pruning() {
     let (_temp, root, dir, store) = fixture(1, DEFAULT_BLOB_QUOTA_BYTES);
     write(root.path(), "a.txt", "transaction payload");

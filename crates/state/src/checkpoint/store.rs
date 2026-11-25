@@ -656,17 +656,11 @@ impl Store {
             .collect();
         if with_files.len() > self.config.retain {
             let expire_count = with_files.len() - self.config.retain;
-            let mut expired = false;
             for turn in with_files.iter().take(expire_count) {
                 if state.protected_turns.contains(turn) {
                     continue;
                 }
-                if self.expire_payload(state, *turn).is_ok() {
-                    expired = true;
-                }
-            }
-            if expired {
-                self.prune_blobs_best_effort(state);
+                let _ = self.expire_payload(state, *turn);
             }
         }
         let mut size = match blobs.size() {
@@ -676,26 +670,26 @@ impl Store {
                 return;
             }
         };
-        if size <= self.config.blob_quota_bytes {
-            return;
+        if size > self.config.blob_quota_bytes {
+            for turn in with_files {
+                if size <= self.config.blob_quota_bytes {
+                    break;
+                }
+                if state.protected_turns.contains(&turn)
+                    || state
+                        .checkpoint_mut(turn)
+                        .is_some_and(|checkpoint| checkpoint.expired_file_payload)
+                {
+                    continue;
+                }
+                if self.expire_payload(state, turn).is_err() {
+                    continue;
+                }
+                self.prune_blobs_best_effort(state);
+                size = blobs.size().unwrap_or(size);
+            }
         }
-        for turn in with_files {
-            if size <= self.config.blob_quota_bytes {
-                break;
-            }
-            if state.protected_turns.contains(&turn)
-                || state
-                    .checkpoint_mut(turn)
-                    .is_some_and(|checkpoint| checkpoint.expired_file_payload)
-            {
-                continue;
-            }
-            if self.expire_payload(state, turn).is_err() {
-                continue;
-            }
-            self.prune_blobs_best_effort(state);
-            size = blobs.size().unwrap_or(size);
-        }
+        self.prune_blobs_best_effort(state);
     }
 
     fn expire_payload(&self, state: &mut StoreState, turn: i64) -> Result<(), StoreError> {
