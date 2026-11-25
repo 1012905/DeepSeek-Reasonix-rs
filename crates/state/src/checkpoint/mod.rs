@@ -1,6 +1,7 @@
 //! Snapshot checkpoint storage.
 
 mod atomic_json;
+mod barrier;
 mod blob;
 mod path_capture;
 mod secure_path;
@@ -8,6 +9,7 @@ mod store;
 mod types;
 
 pub use atomic_json::{read_json_file, write_json_atomic};
+pub use barrier::{BarrierError, ExclusivePermit, MutationBarrier, WritePermit};
 pub use blob::{BlobError, BlobStore, digest, valid_blob_ref};
 pub use path_capture::{
     CaptureError, Fingerprint, PathError, capture_path, compare_identity, fingerprint_path,
@@ -20,6 +22,8 @@ pub use secure_path::{
 pub use store::{Store, StoreConfig, StoreError, expired_dir, turn_path};
 pub use types::*;
 
+#[cfg(test)]
+mod barrier_tests;
 #[cfg(test)]
 mod blob_path_tests;
 #[cfg(test)]
