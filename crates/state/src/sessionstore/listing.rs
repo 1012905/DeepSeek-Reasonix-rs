@@ -223,12 +223,11 @@ pub fn list_native_sessions(dir: &Path) -> io::Result<Vec<SessionInfo>> {
     Ok(out)
 }
 
-/// Every session a list should show (Go: `ListSessions`): the native rows,
-/// then the foreign 1.x listings. The v4 listing cache is SESS-038 machinery,
-/// so this build publishes the native rows and gives the foreign half a typed
-/// empty seam.
+/// Every session a list should show (Go: `ListSessions`): native rows plus
+/// unimported 1.x v4 conversations, ordered by latest activity.
 pub fn list_sessions(dir: &Path) -> io::Result<Vec<SessionInfo>> {
-    list_native_sessions(dir)
+    let native = list_native_sessions(dir)?;
+    Ok(super::legacy_listings::with_v4_sessions(dir, native))
 }
 
 /// Where a conversation carried into a rebuilt controller keeps auto-saving
