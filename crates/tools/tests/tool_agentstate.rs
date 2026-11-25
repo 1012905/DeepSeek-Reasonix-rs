@@ -196,7 +196,7 @@ fn await_user_fails_closed_without_an_asker() {
 }
 
 #[test]
-fn await_user_records_the_current_item_with_an_asker() {
+fn await_user_renders_the_wait_notice_for_the_current_item() {
     let host = Arc::new(FakeAwaitHost {
         todos: vec![todo("open now", "in_progress", "s1")],
         plan_submission: false,
@@ -205,7 +205,10 @@ fn await_user_records_the_current_item_with_an_asker() {
     let out = tool
         .execute(&asker_ctx(), &json!({"need": "pick the target"}))
         .expect("parked");
-    assert!(out.contains("[s1] open now"));
+    assert_eq!(
+        out,
+        "Recorded: waiting on the user at [s1] open now. The turn ends here with the list untouched, and the host will not continue it — their next message does. Put what you are waiting for to them in your reply."
+    );
 }
 
 // --- view_image --------------------------------------------------------------
