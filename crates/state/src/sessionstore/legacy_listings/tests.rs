@@ -740,6 +740,68 @@ fn close_cancels_a_waiting_replay_without_waiting_for_backlog() {
 }
 
 #[test]
+fn close_waits_for_the_current_replay_and_flushes_completed_rows() {
+    let project = project();
+    let first_id = "ffffffffffffffffffffffffffff";
+    let second_id = "1123456789abcdef0123456789abcdef";
+    let first = user_source(project.path(), first_id, "completed");
+    let second = user_source(project.path(), second_id, "cancelled");
+    set_modified(
+        &first.join("events.frames"),
+        DateTime::parse_from_rfc3339("2026-10-02T12:00:00Z").expect("time"),
+    );
+    set_modified(
+        &second.join("events.frames"),
+        DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z").expect("time"),
+    );
+    let sessions = project.path().join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let replay_calls = Arc::clone(&calls);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (cancelled_tx, cancelled_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let service = LegacyListings::new(move |session, token| {
+        if replay_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return read_legacy_transcript(session, token);
+        }
+        entered_tx.send(()).expect("signal blocked replay");
+        token.wait();
+        cancelled_tx.send(()).expect("signal cancellation");
+        release_rx
+            .lock()
+            .expect("release receiver")
+            .recv()
+            .expect("release cancelled replay");
+        Err(LegacyListingError::Cancelled)
+    });
+    service.snapshot(&sessions);
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("second replay did not start");
+
+    let (closed_tx, closed_rx) = mpsc::channel();
+    let closer = service.clone();
+    std::thread::spawn(move || {
+        closer.close();
+        closed_tx.send(()).expect("report close");
+    });
+    cancelled_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("close did not cancel replay");
+    assert!(
+        closed_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "close returned before the worker finished"
+    );
+    release_tx.send(()).expect("release cancelled replay");
+    closed_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("close did not finish");
+    assert_eq!(ListingCache::load(&sessions).len(), 1);
+}
+
+#[test]
 fn completed_batches_flush_before_the_next_replay_blocks() {
     let project = project();
     for i in 0..34 {

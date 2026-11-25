@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -167,11 +167,44 @@ struct ServiceState {
     last_notice: Option<Instant>,
 }
 
+#[derive(Default)]
+struct Completion {
+    finished: Mutex<bool>,
+    wake: Condvar,
+}
+
+impl Completion {
+    fn finish(&self) {
+        let mut finished = self.finished.lock().unwrap_or_else(|err| err.into_inner());
+        *finished = true;
+        self.wake.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut finished = self.finished.lock().unwrap_or_else(|err| err.into_inner());
+        while !*finished {
+            finished = self
+                .wake
+                .wait(finished)
+                .unwrap_or_else(|err| err.into_inner());
+        }
+    }
+}
+
+struct CompletionGuard(Arc<Completion>);
+
+impl Drop for CompletionGuard {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
 struct ServiceInner {
     state: Mutex<ServiceState>,
     wake: SyncSender<()>,
     token: CancellationToken,
     closed: AtomicBool,
+    done: Arc<Completion>,
     replay: LegacyReplay,
 }
 
@@ -204,18 +237,20 @@ impl LegacyListings {
             + 'static,
     {
         let (wake, receiver) = mpsc::sync_channel(1);
+        let done = Arc::new(Completion::default());
         let inner = Arc::new(ServiceInner {
             state: Mutex::new(ServiceState::default()),
             wake,
             token: CancellationToken::new(),
             closed: AtomicBool::new(false),
+            done: Arc::clone(&done),
             replay: Arc::new(replay),
         });
         let service = Self { inner };
         let weak = Arc::downgrade(&service.inner);
         std::thread::Builder::new()
             .name("reasonix-legacy-listings".into())
-            .spawn(move || run(weak, receiver))
+            .spawn(move || run(weak, receiver, done))
             .expect("start legacy listing worker");
         service
     }
@@ -229,11 +264,10 @@ impl LegacyListings {
     }
 
     pub fn close(&self) {
-        if self.inner.closed.swap(true, Ordering::AcqRel) {
-            return;
-        }
+        self.inner.closed.swap(true, Ordering::AcqRel);
         self.inner.token.cancel();
         self.inner.signal();
+        self.inner.done.wait();
     }
 
     pub fn snapshot(&self, dir: &Path) -> (Vec<SessionInfo>, ListingStatus) {
@@ -602,7 +636,8 @@ fn update_status(directory: &mut DirectoryState) {
     directory.status.listing_revision = directory.status.listing_revision.wrapping_add(1);
 }
 
-fn run(service: Weak<ServiceInner>, receiver: Receiver<()>) {
+fn run(service: Weak<ServiceInner>, receiver: Receiver<()>, done: Arc<Completion>) {
+    let _done = CompletionGuard(done);
     while let Some(inner) = service.upgrade() {
         if inner.closed.load(Ordering::Acquire) {
             break;
