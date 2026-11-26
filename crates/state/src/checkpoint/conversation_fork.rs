@@ -2,7 +2,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use super::path_capture::lexical_clean;
+use super::path_clean::lexical_clean;
 use super::store::{Store, StoreError};
 use super::types::{Checkpoint, Coverage, SCHEMA_V2};
 
@@ -33,7 +33,7 @@ impl Store {
         if dir.as_os_str().is_empty() {
             return Err(ConversationForkError::Unavailable);
         }
-        if lexical_clean(dir) == lexical_clean(source_dir) {
+        if lexical_clean(dir).as_os_str() == lexical_clean(source_dir).as_os_str() {
             return Err(ConversationForkError::SourceIsDestination);
         }
         let checkpoints = {

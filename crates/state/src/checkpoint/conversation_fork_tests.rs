@@ -108,6 +108,18 @@ fn rejects_lexically_identical_source_and_destination() {
 
 #[test]
 #[cfg(windows)]
+fn source_destination_equality_uses_exact_cleaned_units() {
+    let source = PathBuf::from(r"C:\Case\Source");
+    let destination = PathBuf::from(r"c:\case\source");
+    let store = Store::persistence_only(source);
+
+    store
+        .copy_conversation_prefix_to(&destination, "child", 0)
+        .expect("case-distinct cleaned strings are not the same source");
+}
+
+#[test]
+#[cfg(windows)]
 fn lexical_clean_matches_go_volume_and_device_semantics() {
     use std::os::windows::ffi::OsStrExt;
 
@@ -118,7 +130,7 @@ fn lexical_clean_matches_go_volume_and_device_semantics() {
         (r"C:.\", r"C:."),
         (r"C:\..\abc", r"C:\abc"),
         (r"C:\b:\..\..\..\d", r"C:\d"),
-        (r"C:..\foo\..", r"C:\.."),
+        (r"C:..\foo\..", r"C:.."),
         (r"abc\def\..", r"abc"),
         (r"abc\def\..\..", r"."),
         (r"\abc\def\..\..", r"\"),
@@ -142,7 +154,7 @@ fn lexical_clean_matches_go_volume_and_device_semantics() {
         (r"\\a\b\..\c", r"\\a\b\c"),
         (r"//host/share/../x", r"\\host\share\x"),
         (r"//abc", r"\\abc"),
-        (r"//abc//", r"\\abc\"),
+        (r"//abc//", r"\\abc\\"),
         (r"///abc", r"\\\abc"),
         (r"\\.\C:\\a", r"\\.\C:\a"),
         (r"\\.\C:\a\..\..\..\..\bar", r"\\.\C:\bar"),
@@ -162,8 +174,8 @@ fn lexical_clean_matches_go_volume_and_device_semantics() {
 
     let mut mismatches = Vec::new();
     for (input, expected) in cases {
-        let actual = super::path_capture::lexical_clean(Path::new(input));
-        if actual.as_path() != Path::new(expected) {
+        let actual = super::path_clean::lexical_clean(Path::new(input));
+        if actual.as_os_str() != Path::new(expected).as_os_str() {
             mismatches.push(format!(
                 "{input:?}: got {actual:?} ({} units), expected {expected:?}",
                 actual.as_os_str().encode_wide().count()

@@ -7,6 +7,7 @@ mod conversation_fork;
 mod observer;
 mod ownership;
 mod path_capture;
+mod path_clean;
 mod rewind;
 mod secure_path;
 mod store;
@@ -53,6 +54,8 @@ mod gc_tests;
 mod observer_tests;
 #[cfg(test)]
 mod ownership_tests;
+#[cfg(test)]
+mod path_clean_tests;
 #[cfg(test)]
 mod rewind_tests;
 #[cfg(test)]
