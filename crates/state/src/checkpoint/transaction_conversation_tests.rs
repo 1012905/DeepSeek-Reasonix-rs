@@ -1,12 +1,83 @@
 use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::transaction_test_support::*;
 use super::*;
+
+struct PendingProbeApplier<'a> {
+    store: &'a Store,
+    pending_observations: AtomicUsize,
+}
+
+impl PendingProbeApplier<'_> {
+    fn probe(&self) {
+        if matches!(
+            self.store.invalidate_undo(),
+            Err(StoreError::UndoRecoveryPending)
+        ) {
+            self.pending_observations.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl ConversationApplier for PendingProbeApplier<'_> {
+    fn apply_conversation_truncate(
+        &self,
+        _boundary: i64,
+        _forward: &[u8],
+    ) -> Result<(), ConversationError> {
+        self.probe();
+        Ok(())
+    }
+
+    fn restore_conversation(&self, _forward: &[u8]) -> Result<(), ConversationError> {
+        self.probe();
+        Ok(())
+    }
+
+    fn truncate_checkpoints(&self, _from_turn: i64) -> Result<(), ConversationError> {
+        self.probe();
+        Ok(())
+    }
+
+    fn restore_checkpoints(&self, _backup: &[u8]) -> Result<(), ConversationError> {
+        self.probe();
+        Ok(())
+    }
+}
 
 fn conversation_plan(fixture: &Fixture, scope: RewindScope) -> RewindPlan {
     let plan = fixture.store.prepare_rewind(0, scope, 7, 5, true);
     assert!(plan.can_conversation);
     plan
+}
+
+#[test]
+fn live_commit_tracks_pending_recovery_until_terminal_state() {
+    let fixture = modify_add_delete_fixture();
+    let plan = conversation_plan(&fixture, RewindScope::Both);
+    let applier = PendingProbeApplier {
+        store: &fixture.store,
+        pending_observations: AtomicUsize::new(0),
+    };
+
+    fixture
+        .store
+        .commit_rewind(
+            &plan.plan_id,
+            7,
+            b"conversation-forward",
+            Some(&applier),
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(applier.pending_observations.load(Ordering::SeqCst), 2);
+    fixture.store.require_undo_recovery_complete().unwrap();
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Committed
+    );
 }
 
 #[test]

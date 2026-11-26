@@ -207,6 +207,12 @@ pub fn safe_path(root: &Path, path: &Path) -> Result<PathBuf, PathError> {
             path: absolute.clone(),
             root: root.clone(),
         })?;
+    if !local_components(&relative) {
+        return Err(PathError::OutsideWorkspace {
+            path: absolute,
+            root,
+        });
+    }
     let mut current = root;
     for component in relative {
         current.push(component);
@@ -261,6 +267,7 @@ pub fn normalize_rel_path(root: &Path, path: &Path) -> String {
             lexical_clean(&root.join(path))
         };
         relative_components(&root, &absolute)
+            .filter(|parts| local_components(parts))
             .map(|parts| parts.iter().collect::<PathBuf>())
             .unwrap_or_else(|| lexical_clean(path))
     } else {
@@ -275,6 +282,66 @@ pub fn normalize_rel_path(root: &Path, path: &Path) -> String {
     {
         normalized.into_owned()
     }
+}
+
+fn local_components(parts: &[OsString]) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        parts.iter().all(|part| {
+            let units: Vec<u16> = part.as_os_str().encode_wide().collect();
+            if units.is_empty() || units.contains(&(b':' as u16)) {
+                return false;
+            }
+            let base_len = units
+                .iter()
+                .position(|unit| *unit == b'.' as u16)
+                .unwrap_or(units.len());
+            let mut base = &units[..base_len];
+            while base.last() == Some(&(b' ' as u16)) {
+                base = &base[..base.len() - 1];
+            }
+            !windows_reserved_base(base)
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = parts;
+        true
+    }
+}
+
+// RtlIsDosDeviceName_U has no safe binding here; reserved bases fail closed even with extensions.
+#[cfg(windows)]
+fn windows_reserved_base(base: &[u16]) -> bool {
+    if ascii_eq_fold(base, b"CON")
+        || ascii_eq_fold(base, b"PRN")
+        || ascii_eq_fold(base, b"AUX")
+        || ascii_eq_fold(base, b"NUL")
+        || ascii_eq_fold(base, b"CONIN$")
+        || ascii_eq_fold(base, b"CONOUT$")
+    {
+        return true;
+    }
+    if base.len() != 4 || !(ascii_eq_fold(&base[..3], b"COM") || ascii_eq_fold(&base[..3], b"LPT"))
+    {
+        return false;
+    }
+    matches!(base[3], 0x0031..=0x0039 | 0x00B2 | 0x00B3 | 0x00B9)
+}
+
+#[cfg(windows)]
+fn ascii_eq_fold(units: &[u16], expected: &[u8]) -> bool {
+    units.len() == expected.len()
+        && units.iter().zip(expected).all(|(unit, byte)| {
+            let folded = if (0x0061..=0x007A).contains(unit) {
+                unit - 0x0020
+            } else {
+                *unit
+            };
+            folded == u16::from(*byte)
+        })
 }
 
 fn relative_components(root: &Path, absolute: &Path) -> Option<Vec<std::ffi::OsString>> {

@@ -982,14 +982,18 @@ RestoreSHA, RestoreMode) -> CompareIdentity conflict. InvalidateUndo persists th
 retirement BEFORE new activity (invalidateUndoLocked: TxInvalidated persisted
 `persist undo invalidation %s: %w`, current=nil); durable retirement is
 NOT reversed on cancellation. trackUndoTransaction(tx) sets pending (TxCommitting
-copy) and its finish func clears it on TxCommitted/TxAborted.
+copy), including during live commits; its finish func clears pending on
+TxCommitted/TxAborted and otherwise retains the latest nonterminal copy. If clean
+compensation cannot persist TxAborted, the transaction returns to TxCommitting so
+the pending barrier remains authoritative.
 
 Undo offer: OnUndoChange installs a content-free notify; AvailableUndo — nil
 store or barrier.HasWriters() -> nil; activeWriters>0 -> nil; returns
 RewindUndo{TransactionID, Turn, Files: len(tx.Targets)} with NO disk I/O and no
-file verification (execution re-validates); unlockUndoChange notifies outside the
-lock when the offer ID changed; undoOfferLocked = current TxCommitted &&
-pending==nil.
+file verification (execution re-validates); undoOfferLocked = current TxCommitted
+&& pending==nil. The finish function updates pending before unlockUndoChange
+compares the previously visible and newly visible offer IDs, then notifies outside
+the lock. Publishing the new current offer while pending does not notify early.
 
 ### 16.7 Crash recovery
 
@@ -1000,14 +1004,18 @@ compensates files; a committing undo first reapplies the parent rewind then
 compensates; a manifest stays committing on failure so a later startup retries
 idempotently.
 
-recoverTransactions: unreadable tx dir -> undo.pending set to a committing
-placeholder + note; pass 1 collects undoneParents (TxCommitted undo manifests'
-ParentTransaction); per manifest: read error -> note + committing placeholder;
-TxPrepared -> remove publish temps, TxAbandoned `abandoned prepared
-transaction on recovery`; TxCommitting -> recoverCommittingTransaction;
-TxCommitted/TxInvalidated/TxUndone: undo kind skipped (a terminal op must not
-expose an older undo slot), latest committed rewind by CreatedAt tracked;
-restoreUndoSlot(latest, undoneParents, recovering).
+recoverTransactions collects the transaction-directory entries all-or-error. A
+missing directory is harmless; an unreadable directory or a dangling link to one
+installs a committing placeholder in undo.pending and records a note. Real
+directories named `*.json` are ignored, while every other non-directory manifest
+entry is attempted: read failure produces a committing placeholder.
+Pass 1 collects undoneParents (TxCommitted undo manifests' ParentTransaction).
+TxPrepared -> remove publish temps, TxAborted `abandoned prepared transaction on
+recovery`; TxCommitting -> recoverCommittingTransaction, retaining any result that
+stays committing; TxCommitted/TxInvalidated/TxUndone: undo kind skipped, latest
+terminal non-undo transaction by CreatedAt tracked (including `file_revert`). The
+offer is restored only when it is committed and not undone, while any retained
+committing placeholder keeps pending set.
 
 recoverCommittingTransaction(tx, applier): needsConversation (scope
 RewindConversation|RewindBoth) && applier==nil -> note `deferred conversation
@@ -1067,8 +1075,10 @@ CopyConversationPrefixTo(dir, sessionID, messageCount): dir=='' ->
 
 It copies Checkpoint{SchemaVersion: SchemaV2, Turn, Time, Prompt, MsgIndex,
 SessionID, Files: [], Coverage: CoverageNone, ForkCopied: true} for every
-checkpoint with 0<=MsgIndex<messageCount via a fresh Store{dir} — file payloads,
-prepared plans, and undo transactions stay behind.
+checkpoint with 0<=MsgIndex<messageCount via a fresh persistence-only Store{dir} —
+file payloads, prepared plans, and undo transactions stay behind. The source may
+be an in-memory Store; the destination must be persistent and is neither loaded
+nor startup-recovered by the fork.
 
 Source/destination equality is lexical Clean equality over the original path
 units; it does not canonicalize symlinks, query the filesystem, or case-fold the
@@ -1105,7 +1115,10 @@ cleaned absolute path. An ordinary file leaves Nlink at zero; only nlink>1
 records a count and fails before the directory check.
 
 Windows path-component equality follows strings.EqualFold (Unicode simple
-folding, not full case folding or ASCII-only comparison).
+folding, not full case folding or ASCII-only comparison). The reference toolchain
+is Go 1.26.11, whose Unicode tables are 15.0.0; generated fold tables and Windows
+path-cleaner expectations are pinned to that version rather than a newer local
+Go toolchain.
 
 FingerprintPath(root, path) = CapturePath with ReadContent=true (the SHA is
 needed); a gap becomes an error `%s: %s` (reason, detail).
@@ -1220,7 +1233,12 @@ workspaceRelative uses Rel+IsLocal (root=='' -> abs + volume root); OpenRoot wal
 via splitLocalPath with Lstat per component; NotExist -> nil (future components
 are fine); a symlink component -> errSymlinkPath `workspace path contains
 symbolic link: %s`. writeNewFile: MkdirAll 0755, O_WRONLY|O_CREATE|O_EXCL,
-write+Sync+Close, remove on failure.
+write+Sync+Close, remove on failure. On Windows, IsLocal additionally rejects
+reserved device names, colon-bearing components and other non-local spellings;
+the empty relative result for Rel(root, root) remains local. Rust enforces the
+same boundary conservatively, rejecting extension-bearing reserved bases too;
+exact device-name delegation to RtlIsDosDeviceName_U has no safe binding in this
+workspace.
 
 Secure primitives differ by platform:
 - Unix (secure_path_unix.go, 162L, !windows && !plan9): secureOpenParent(root,

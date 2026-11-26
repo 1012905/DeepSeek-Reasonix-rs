@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
+#[cfg(windows)]
+use super::path_clean::lexical_clean;
 use super::*;
 
 fn blob_fixture() -> (TempDir, BlobStore) {
@@ -425,6 +427,74 @@ fn safe_path_confines_relative_and_absolute_paths() {
         normalize_rel_path(&root, &root.join("a/./b.txt")),
         "a/b.txt"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn safe_path_rejects_windows_non_local_components() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("workspace");
+    fs::create_dir_all(&root).unwrap();
+    for path in [
+        "a:b",
+        "dir/a:b.txt",
+        "dir/CON",
+        "dir/con ",
+        "dir/COM1.log",
+        "dir/LPT\u{b9}.txt",
+        "dir/CONIN$.cfg",
+        "dir/CONOUT$",
+        "dir/PRN...",
+        "dir/NUL ",
+        "dir/CON.txt.",
+    ] {
+        let result = safe_path(&root, Path::new(path));
+        assert!(
+            matches!(result, Err(PathError::OutsideWorkspace { .. })),
+            "{path:?}: {result:?}"
+        );
+    }
+    for path in ["normal.txt", "COM10", "LPT0", "CONSOLE", "dir/file"] {
+        assert_eq!(safe_path(&root, Path::new(path)).unwrap(), root.join(path));
+    }
+    assert_eq!(safe_path(&root, Path::new(".")).unwrap(), root);
+}
+
+#[cfg(windows)]
+#[test]
+fn safe_path_conservatively_rejects_extension_bearing_device_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("workspace");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("CON.txt"), b"ordinary on Windows 11").unwrap();
+    assert!(matches!(
+        safe_path(&root, Path::new("CON.txt")),
+        Err(PathError::OutsideWorkspace { .. })
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn normalize_rel_path_falls_back_for_windows_non_local_components() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("workspace");
+    fs::create_dir_all(&root).unwrap();
+    for path in ["CON.txt", "dir/a:b.txt"] {
+        let absolute = root.join(path);
+        let expected = absolute.to_string_lossy().replace('\\', "/");
+        assert_eq!(normalize_rel_path(&root, &absolute), expected);
+    }
+    assert_eq!(
+        normalize_rel_path(&root, Path::new("normal.txt")),
+        "normal.txt"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn rootless_capture_retains_go_path_semantics() {
+    let path = Path::new(r"C:\missing\a:b.txt");
+    assert_eq!(safe_path(Path::new(""), path).unwrap(), lexical_clean(path));
 }
 
 #[test]

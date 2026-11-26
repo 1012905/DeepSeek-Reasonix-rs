@@ -69,6 +69,8 @@ pub enum StoreError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("rewind recovery is pending")]
+    UndoRecoveryPending,
     #[error("persist undo invalidation {id}: {source}")]
     UndoInvalidation {
         id: String,

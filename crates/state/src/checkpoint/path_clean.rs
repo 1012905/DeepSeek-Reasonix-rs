@@ -257,6 +257,9 @@ fn windows_volume_name_len(path: &[CleanUnit]) -> usize {
     if path.is_empty() || !is_path_separator(path[0]) {
         return 0;
     }
+    if windows_has_prefix_fold(path, br"\\.\UNC") {
+        return windows_unc_len(path, 8);
+    }
     if windows_has_prefix_fold(path, br"\\.")
         || windows_has_prefix_fold(path, br"\\?")
         || windows_has_prefix_fold(path, br"\??")
@@ -264,17 +267,13 @@ fn windows_volume_name_len(path: &[CleanUnit]) -> usize {
         if path.len() == 3 {
             return 3;
         }
-        if windows_has_prefix_fold(&path[4..], b"UNC") {
-            return valid_windows_volume_name_len(path, windows_unc_len(path, 8));
-        }
-        let (_, rest, found) = windows_cut_path(&path[4..]);
-        if !found {
-            return valid_windows_volume_name_len(path, path.len());
-        }
-        return valid_windows_volume_name_len(path, path.len() - rest.len() - 1);
+        return path[4..]
+            .iter()
+            .position(|unit| is_path_separator(*unit))
+            .map_or(path.len(), |index| index + 4);
     }
     if path.len() >= 2 && is_path_separator(path[1]) {
-        return valid_windows_volume_name_len(path, windows_unc_len(path, 2));
+        return windows_unc_len(path, 2);
     }
     0
 }
@@ -299,14 +298,6 @@ fn windows_has_prefix_fold(path: &[CleanUnit], prefix: &[u8]) -> bool {
 }
 
 #[cfg(windows)]
-fn windows_cut_path(path: &[CleanUnit]) -> (&[CleanUnit], &[CleanUnit], bool) {
-    let Some(index) = path.iter().position(|&unit| is_path_separator(unit)) else {
-        return (path, &[], false);
-    };
-    (&path[..index], &path[index + 1..], true)
-}
-
-#[cfg(windows)]
 fn windows_unc_len(path: &[CleanUnit], prefix_len: usize) -> usize {
     let mut separators = 0;
     for (index, &unit) in path.iter().enumerate().skip(prefix_len) {
@@ -318,20 +309,4 @@ fn windows_unc_len(path: &[CleanUnit], prefix_len: usize) -> usize {
         }
     }
     path.len()
-}
-
-#[cfg(windows)]
-fn valid_windows_volume_name_len(path: &[CleanUnit], len: usize) -> usize {
-    let mut rest = &path[..len];
-    while !rest.is_empty() {
-        let (part, after, found) = windows_cut_path(rest);
-        if part.len() == 2 && part[0] == DOT && part[1] == DOT {
-            return 0;
-        }
-        if !found {
-            break;
-        }
-        rest = after;
-    }
-    len
 }

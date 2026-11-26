@@ -58,7 +58,7 @@ fn read_turn(dir: &Path, turn: i64) -> Value {
 }
 
 #[test]
-fn rejects_unavailable_sources_and_empty_destinations() {
+fn rejects_empty_destinations() {
     let (_temp, root, _dir, store) = fixture();
     let destination = root.join("child.ckpt");
 
@@ -73,10 +73,52 @@ fn rejects_unavailable_sources_and_empty_destinations() {
 
     let memory = Store::new(None, &root);
     let error = memory
-        .copy_conversation_prefix_to(&destination, "child", 1)
+        .copy_conversation_prefix_to(Path::new(""), "child", 1)
         .unwrap_err();
     assert!(matches!(&error, ConversationForkError::Unavailable));
     assert!(!destination.exists());
+}
+
+#[test]
+fn copies_conversation_prefix_from_an_in_memory_source() {
+    let (_temp, root, _dir, _) = fixture();
+    let memory = Store::new(None, &root);
+    memory.set_session_id("source");
+    memory.begin(0, "first", 0).unwrap();
+    memory.begin(1, "second", 2).unwrap();
+    let destination = root.join("child.ckpt");
+
+    memory
+        .copy_conversation_prefix_to(&destination, "child", 3)
+        .unwrap();
+
+    let child = Store::new(Some(&destination), &root);
+    let copied = child.list();
+    assert_eq!(
+        copied.iter().map(|meta| meta.turn).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(
+        copied.iter().map(|meta| meta.msg_index).collect::<Vec<_>>(),
+        vec![0, 2]
+    );
+    let stored: Checkpoint =
+        serde_json::from_slice(&fs::read(turn_path(&destination, 1, false)).unwrap()).unwrap();
+    assert_eq!(stored.session_id, "child");
+    assert!(stored.files.is_empty());
+    assert_eq!(stored.coverage, Coverage::None);
+    assert!(stored.fork_copied);
+}
+
+#[test]
+fn rejects_current_directory_as_destination_for_an_in_memory_source() {
+    let (_temp, root, _dir, _) = fixture();
+    let memory = Store::new(None, &root);
+
+    let error = memory
+        .copy_conversation_prefix_to(Path::new("."), "child", 1)
+        .unwrap_err();
+    assert!(matches!(&error, ConversationForkError::SourceIsDestination));
 }
 
 #[test]
@@ -147,9 +189,9 @@ fn lexical_clean_matches_go_volume_and_device_semantics() {
         (r"\a\..\??\c:\x", r"\.\??\c:\x"),
         (r"/a/../??/a", r"\.\??\a"),
         (r"\??\c:\x", r"\??\c:\x"),
-        (r"\\i\..\c$", r"\c$"),
-        (r"\\..\..\a", r"\a"),
-        (r"//../../a", r"\a"),
+        (r"\\i\..\c$", r"\\i\..\c$"),
+        (r"\\..\..\a", r"\\..\..\a"),
+        (r"//../../a", r"\\..\..\a"),
         (r"\\host\share\foo\..", r"\\host\share\"),
         (r"\\a\b\..\c", r"\\a\b\c"),
         (r"//host/share/../x", r"\\host\share\x"),
@@ -161,15 +203,9 @@ fn lexical_clean_matches_go_volume_and_device_semantics() {
         (r"\\?\C:\foo\..", r"\\?\C:\"),
         (r"\\?\C:\a", r"\\?\C:\a"),
         (r"\\?\C:", r"\\?\C:"),
-        (r"\\?\UNC\host\share\foo\..", r"\\?\UNC\host\share\"),
-        (
-            r"\\?\UNC\host\share\foo\..\..\..\..\bar",
-            r"\\?\UNC\host\share\bar",
-        ),
-        (
-            r"\??\UNC\host\share\foo\..\..\..\..\bar",
-            r"\??\UNC\host\share\bar",
-        ),
+        (r"\\?\UNC\host\share\foo\..", r"\\?\UNC\host\share"),
+        (r"\\?\UNC\host\share\foo\..\..\..\..\bar", r"\\?\UNC\bar"),
+        (r"\??\UNC\host\share\foo\..\..\..\..\bar", r"\??\UNC\bar"),
     ];
 
     let mut mismatches = Vec::new();

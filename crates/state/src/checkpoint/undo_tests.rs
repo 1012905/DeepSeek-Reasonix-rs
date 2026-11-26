@@ -31,6 +31,57 @@ fn committed_rewind_records_an_internal_offer_without_advertising_undo() {
 }
 
 #[test]
+fn tracked_offer_notification_observes_cleared_pending() {
+    let (fixture, _) = committed_fixture();
+    let store = Arc::new(Store::new(Some(&fixture.dir), fixture.root.path()));
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let callback_notifications = notifications.clone();
+    let callback_store = Arc::downgrade(&store);
+    store.on_undo_change(move || {
+        let store = callback_store.upgrade().expect("callback owns the store");
+        store.require_undo_recovery_complete().unwrap();
+        assert!(store.current_undo_offer().is_some());
+        callback_notifications.fetch_add(1, Ordering::Relaxed);
+    });
+    let mut transaction = store.current_undo_offer().unwrap();
+    transaction.id = "next".to_owned();
+
+    let tracked = store.track_undo_transaction(&mut transaction).unwrap();
+    assert!(store.current_undo_offer().is_none());
+    store.publish_undo_offer(&tracked);
+    assert_eq!(notifications.load(Ordering::Relaxed), 0);
+    drop(tracked);
+    assert_eq!(notifications.load(Ordering::Relaxed), 1);
+    assert_eq!(store.current_undo_offer().unwrap().id, "next");
+}
+
+#[test]
+fn restoring_a_hidden_offer_does_not_notify() {
+    let (fixture, _) = committed_fixture();
+    let store = Store::new(Some(&fixture.dir), fixture.root.path());
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let callback_notifications = notifications.clone();
+    store.on_undo_change(move || {
+        callback_notifications.fetch_add(1, Ordering::Relaxed);
+    });
+    let transaction = store.current_undo_offer().unwrap();
+    let mut tracked_transaction = transaction.clone();
+    let tracked = store
+        .track_undo_transaction(&mut tracked_transaction)
+        .unwrap();
+    let pending = TransactionManifest {
+        state: TransactionState::Committing,
+        ..TransactionManifest::default()
+    };
+
+    store.restore_undo_slot(Some(transaction), vec![pending]);
+
+    assert!(store.current_undo_offer().is_none());
+    assert_eq!(notifications.load(Ordering::Relaxed), 0);
+    drop(tracked);
+}
+
+#[test]
 fn invalidation_is_durable_and_survives_reload() {
     let (fixture, result) = committed_fixture();
     fixture.store.invalidate_undo().unwrap();

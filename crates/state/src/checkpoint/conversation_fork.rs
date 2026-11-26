@@ -27,12 +27,10 @@ impl Store {
         session_id: &str,
         message_count: i64,
     ) -> Result<(), ConversationForkError> {
-        let Some(source_dir) = self.dir.as_deref() else {
-            return Err(ConversationForkError::Unavailable);
-        };
         if dir.as_os_str().is_empty() {
             return Err(ConversationForkError::Unavailable);
         }
+        let source_dir = self.dir.as_deref().unwrap_or_else(|| Path::new(""));
         if lexical_clean(dir).as_os_str() == lexical_clean(source_dir).as_os_str() {
             return Err(ConversationForkError::SourceIsDestination);
         }

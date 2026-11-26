@@ -371,6 +371,7 @@ pub(super) fn fail(
     transaction.error = cause.to_string();
     transaction.updated_at = CreatedAt::now();
     if let Err(error) = persist_manifest(store, transaction, TransactionPhase::PersistAborted) {
+        transaction.state = TransactionState::Committing;
         return Err(TransactionError::CompensationPending {
             cause: Box::new(cause),
             compensation: Box::new(error),

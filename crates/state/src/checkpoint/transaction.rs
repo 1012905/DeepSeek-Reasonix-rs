@@ -463,6 +463,7 @@ impl Store {
             }
         }
 
+        self.require_undo_recovery_complete()?;
         let mut transaction = super::transaction_prepare::prepare(
             self,
             &plan,

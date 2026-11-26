@@ -20,6 +20,18 @@ pub(super) fn commit(
     applier: Option<&dyn ConversationApplier>,
     injection: Option<&TransactionInjection>,
 ) -> Result<RewindResult, TransactionError> {
+    let mut transaction = store.track_undo_transaction(transaction)?;
+    let result = publish(store, &mut transaction, applier, injection);
+    drop(transaction);
+    result
+}
+
+fn publish(
+    store: &Store,
+    transaction: &mut TransactionManifest,
+    applier: Option<&dyn ConversationApplier>,
+    injection: Option<&TransactionInjection>,
+) -> Result<RewindResult, TransactionError> {
     transaction.state = TransactionState::Committing;
     transaction.updated_at = CreatedAt::now();
     if injection.is_some_and(|value| value.fails(TransactionPhase::PersistCommitting)) {

@@ -26,10 +26,11 @@ fn assert_clean(input: &str, expected: &str) {
 
 #[cfg(windows)]
 #[test]
-fn windows_lazy_buffer_regressions_match_installed_go() {
+fn windows_lazy_buffer_regressions_match_go_1_26_11() {
     let mut mismatches = Vec::new();
     for (input, expected) in [
         ("/", r"\"),
+        (r"\\server\..\share\file", r"\\server\..\share\file"),
         ("/??/a", "/??/a."),
         ("C:..", "C:.."),
         (r"C:..\foo\..", "C:.."),
@@ -82,7 +83,7 @@ fn decode_units(encoded: &str) -> Vec<u16> {
 
 #[cfg(windows)]
 #[test]
-fn windows_clean_matches_go_generated_oracle_corpus() {
+fn windows_clean_matches_go_1_26_11_generated_oracle_corpus() {
     const CORPUS: &str = include_str!("testdata/path_clean_windows.tsv");
     let mut count = 0;
     let mut mismatch_count = 0;

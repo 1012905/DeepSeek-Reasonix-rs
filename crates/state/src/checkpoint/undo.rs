@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
 use crate::sessionstore::eventlog::record::CreatedAt;
@@ -17,10 +18,91 @@ impl fmt::Debug for UndoCallback {
 }
 
 #[derive(Debug, Default)]
+struct UndoOffers {
+    current: Option<TransactionManifest>,
+    pending: Option<TransactionManifest>,
+}
+
+#[derive(Debug, Default)]
 pub(super) struct UndoRuntime {
     operation: Mutex<()>,
-    current: Mutex<Option<TransactionManifest>>,
+    offers: Mutex<UndoOffers>,
     on_change: Mutex<Option<UndoCallback>>,
+}
+
+pub(super) struct UndoTransaction<'store, 'transaction> {
+    store: &'store Store,
+    transaction: &'transaction mut TransactionManifest,
+    previous_offer: Option<String>,
+}
+
+impl UndoOffers {
+    fn visible_offer(&self) -> Option<&TransactionManifest> {
+        if self.pending.is_none()
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|transaction| transaction.state == TransactionState::Committed)
+        {
+            self.current.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+impl Deref for UndoTransaction<'_, '_> {
+    type Target = TransactionManifest;
+
+    fn deref(&self) -> &Self::Target {
+        self.transaction
+    }
+}
+
+impl DerefMut for UndoTransaction<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.transaction
+    }
+}
+
+impl Drop for UndoTransaction<'_, '_> {
+    fn drop(&mut self) {
+        let changed = {
+            let _operation = self
+                .store
+                .runtime
+                .undo
+                .operation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut offers = self
+                .store
+                .runtime
+                .undo
+                .offers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if offers
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.id != self.transaction.id)
+            {
+                return;
+            }
+            if matches!(
+                self.transaction.state,
+                TransactionState::Committed | TransactionState::Aborted
+            ) {
+                offers.pending = None;
+            } else {
+                offers.pending = Some(self.transaction.clone());
+            }
+            self.previous_offer.as_deref() != offers.visible_offer().map(|offer| offer.id.as_str())
+        };
+        if changed {
+            self.store.notify_undo_change();
+        }
+    }
 }
 
 impl Store {
@@ -40,10 +122,57 @@ impl Store {
     pub(crate) fn current_undo_offer(&self) -> Option<TransactionManifest> {
         self.runtime
             .undo
-            .current
+            .offers
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .clone()
+            .visible_offer()
+            .cloned()
+    }
+
+    pub(super) fn require_undo_recovery_complete(&self) -> Result<(), StoreError> {
+        if self
+            .runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .is_some()
+        {
+            Err(StoreError::UndoRecoveryPending)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn track_undo_transaction<'store, 'transaction>(
+        &'store self,
+        transaction: &'transaction mut TransactionManifest,
+    ) -> Result<UndoTransaction<'store, 'transaction>, StoreError> {
+        let _operation = self
+            .runtime
+            .undo
+            .operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut offers = self
+            .runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if offers.pending.is_some() {
+            return Err(StoreError::UndoRecoveryPending);
+        }
+        let previous_offer = offers.visible_offer().map(|offer| offer.id.clone());
+        let mut pending = transaction.clone();
+        pending.state = TransactionState::Committing;
+        offers.pending = Some(pending);
+        Ok(UndoTransaction {
+            store: self,
+            transaction,
+            previous_offer,
+        })
     }
 
     pub fn invalidate_undo(&self) -> Result<(), StoreError> {
@@ -54,13 +183,16 @@ impl Store {
                 .operation
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let mut current = self
+            let mut offers = self
                 .runtime
                 .undo
-                .current
+                .offers
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let Some(offer) = current.as_ref() else {
+            if offers.pending.is_some() {
+                return Err(StoreError::UndoRecoveryPending);
+            }
+            let Some(offer) = offers.current.as_ref() else {
                 return Ok(());
             };
             let mut invalidated = offer.clone();
@@ -76,7 +208,7 @@ impl Store {
                 })?;
             }
             let previous = invalidated.id;
-            *current = None;
+            offers.current = None;
             previous
         };
         self.notify_undo_change();
@@ -86,6 +218,26 @@ impl Store {
 
     pub(super) fn publish_undo_offer(&self, transaction: &TransactionManifest) {
         debug_assert_eq!(transaction.state, TransactionState::Committed);
+        let _operation = self
+            .runtime
+            .undo
+            .operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut offers = self
+            .runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        offers.current = Some(transaction.clone());
+    }
+
+    pub(super) fn restore_undo_slot(
+        &self,
+        latest: Option<TransactionManifest>,
+        recovering: Vec<TransactionManifest>,
+    ) {
         let changed = {
             let _operation = self
                 .runtime
@@ -93,38 +245,27 @@ impl Store {
                 .operation
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let mut current = self
+            let mut offers = self
                 .runtime
                 .undo
-                .current
+                .offers
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let changed =
-                current.as_ref().map(|offer| offer.id.as_str()) != Some(transaction.id.as_str());
-            if changed {
-                *current = Some(transaction.clone());
-            }
+            let restored = UndoOffers {
+                current: latest
+                    .filter(|transaction| transaction.state == TransactionState::Committed),
+                pending: recovering
+                    .into_iter()
+                    .find(|transaction| transaction.state == TransactionState::Committing),
+            };
+            let changed = offers.visible_offer().map(|offer| offer.id.as_str())
+                != restored.visible_offer().map(|offer| offer.id.as_str());
+            *offers = restored;
             changed
         };
         if changed {
             self.notify_undo_change();
         }
-    }
-
-    pub(super) fn restore_undo_offer(&self, transaction: Option<TransactionManifest>) {
-        let _operation = self
-            .runtime
-            .undo
-            .operation
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        *self
-            .runtime
-            .undo
-            .current
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) =
-            transaction.filter(|transaction| transaction.state == TransactionState::Committed);
     }
 
     fn notify_undo_change(&self) {
