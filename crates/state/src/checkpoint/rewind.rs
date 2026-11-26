@@ -34,6 +34,7 @@ pub(super) struct PreparedRewind {
 #[derive(Debug, Default)]
 pub(super) struct PlanRegistry {
     pub(super) entries: BTreeMap<String, PreparedRewind>,
+    pub(super) files: super::file_revert::FilePlanRegistry,
 }
 
 impl PlanRegistry {
@@ -48,13 +49,14 @@ impl PlanRegistry {
         Ok(prepared.plan.clone())
     }
 
-    fn drop_stale(&mut self, now: CreatedAt) {
+    pub(super) fn drop_stale(&mut self, now: CreatedAt) {
         self.entries
             .retain(|_, prepared| !is_expired(prepared.prepared_at, now));
+        self.files.drop_stale(now);
     }
 }
 
-fn is_expired(prepared_at: CreatedAt, now: CreatedAt) -> bool {
+pub(super) fn is_expired(prepared_at: CreatedAt, now: CreatedAt) -> bool {
     now.get().signed_duration_since(prepared_at.get()) > Duration::minutes(10)
 }
 
@@ -307,7 +309,7 @@ impl Store {
         conflicts
     }
 
-    fn plans(&self) -> MutexGuard<'_, PlanRegistry> {
+    pub(super) fn plans(&self) -> MutexGuard<'_, PlanRegistry> {
         self.runtime
             .plans
             .lock()
@@ -370,7 +372,7 @@ fn coverage_from_turn(
     }
 }
 
-fn new_plan_id(created_at: CreatedAt) -> String {
+pub(super) fn new_plan_id(created_at: CreatedAt) -> String {
     let timestamp = created_at.get().timestamp_nanos_opt().unwrap_or_default();
     let suffix = digest(timestamp.to_string().as_bytes());
     format!("plan-{timestamp}-{}", &suffix[..8])

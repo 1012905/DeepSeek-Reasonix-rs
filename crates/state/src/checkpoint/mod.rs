@@ -5,6 +5,7 @@ mod barrier;
 mod blob;
 mod checkpoint_backup;
 mod conversation_fork;
+mod file_revert;
 mod observer;
 mod ownership;
 mod path_capture;
@@ -26,6 +27,7 @@ pub use atomic_json::{read_json_file, write_json_atomic};
 pub use barrier::{BarrierError, ExclusivePermit, MutationBarrier, WritePermit};
 pub use blob::{BlobError, BlobStore, digest, valid_blob_ref};
 pub use conversation_fork::ConversationForkError;
+pub use file_revert::{FileRevertDisabledReason, FileRevertError, FileRevertRejection};
 pub use observer::{BeginWriteError, MutationObserver, ObserverOptions};
 pub use path_capture::{
     CaptureError, Fingerprint, PathError, capture_path, compare_identity, fingerprint_path,
@@ -50,6 +52,8 @@ mod barrier_tests;
 mod blob_path_tests;
 #[cfg(test)]
 mod conversation_fork_tests;
+#[cfg(test)]
+mod file_revert_tests;
 #[cfg(test)]
 mod gc_tests;
 #[cfg(test)]

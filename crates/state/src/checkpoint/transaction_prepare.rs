@@ -22,29 +22,8 @@ pub(super) fn prepare(
     with_checkpoint_backup: bool,
     injection: Option<&TransactionInjection>,
 ) -> Result<TransactionManifest, TransactionError> {
-    let created_at = crate::sessionstore::eventlog::record::CreatedAt::now();
-    let mut transaction = TransactionManifest {
-        schema_version: SCHEMA_V2,
-        id: new_transaction_id(plan, created_at),
-        session_id: store.state().session_id.clone(),
-        workspace_root: store.root.to_string_lossy().into_owned(),
-        state: TransactionState::Prepared,
-        kind: "rewind".to_owned(),
-        turn: plan.turn,
-        scope: plan.scope,
-        created_at,
-        updated_at: created_at,
-        session_revision: plan.session_revision,
-        workspace_token: plan.workspace_token.clone(),
-        coverage: plan.coverage,
-        coverage_gaps: plan.coverage_gaps.clone(),
-        conversation_forward: conversation_forward.to_vec(),
-        boundary_index: plan.boundary_index,
-        has_boundary: plan.has_boundary,
-        truncate_from: plan.turn,
-        ..TransactionManifest::default()
-    };
-
+    let mut transaction = new_manifest(store, plan, "rewind");
+    transaction.conversation_forward = conversation_forward.to_vec();
     let result = (|| {
         build_targets(store, plan, &mut transaction)?;
         if with_checkpoint_backup
@@ -65,6 +44,57 @@ pub(super) fn prepare(
     Ok(transaction)
 }
 
+pub(super) fn prepare_file_revert(
+    store: &Store,
+    plan: &RewindPlan,
+    revision: &FileRevision,
+    injection: Option<&TransactionInjection>,
+) -> Result<TransactionManifest, TransactionError> {
+    let mut transaction = new_manifest(store, plan, "file_revert");
+    transaction.scope = RewindScope::Code;
+    transaction.path = plan.path.clone();
+    transaction.truncate_from = 0;
+    let result = (|| {
+        let target = build_target(store, &transaction, &revision.path, revision, 0)?;
+        transaction.targets.push(target);
+        if injection.is_some_and(|value| value.fails(TransactionPhase::PersistPrepared)) {
+            return Err(TransactionError::injected(
+                TransactionPhase::PersistPrepared,
+            ));
+        }
+        persist_manifest(store, &transaction, TransactionPhase::PersistPrepared)
+    })();
+    if let Err(cause) = result {
+        let _ = cleanup_temps(store, &transaction.targets);
+        return Err(cause);
+    }
+    Ok(transaction)
+}
+
+fn new_manifest(store: &Store, plan: &RewindPlan, kind: &str) -> TransactionManifest {
+    let created_at = crate::sessionstore::eventlog::record::CreatedAt::now();
+    TransactionManifest {
+        schema_version: SCHEMA_V2,
+        id: new_transaction_id(plan, created_at),
+        session_id: store.state().session_id.clone(),
+        workspace_root: store.root.to_string_lossy().into_owned(),
+        state: TransactionState::Prepared,
+        kind: kind.to_owned(),
+        turn: plan.turn,
+        scope: plan.scope,
+        created_at,
+        updated_at: created_at,
+        session_revision: plan.session_revision,
+        workspace_token: plan.workspace_token.clone(),
+        coverage: plan.coverage,
+        coverage_gaps: plan.coverage_gaps.clone(),
+        boundary_index: plan.boundary_index,
+        has_boundary: plan.has_boundary,
+        truncate_from: plan.turn,
+        ..TransactionManifest::default()
+    }
+}
+
 fn build_targets(
     store: &Store,
     plan: &RewindPlan,
@@ -74,18 +104,32 @@ fn build_targets(
         return Ok(());
     }
     for (index, (path, revision)) in store.earliest_revisions(plan.turn).into_iter().enumerate() {
-        let absolute = safe_path(&store.root, Path::new(&path))
-            .map_err(|error| TransactionError::at(TransactionPhase::Prepare, error.into()))?;
-        let forward = fingerprint_path(&store.root, &absolute).map_err(|error| {
-            TransactionError::at(TransactionPhase::Prepare, TransactionError::Capture(error))
-        })?;
-        let (publish_tmp, backup_path) = sibling_paths(&absolute, &transaction.id, index)?;
+        let target = build_target(store, transaction, &path, &revision, index)?;
+        transaction.targets.push(target);
+    }
+    Ok(())
+}
+
+fn build_target(
+    store: &Store,
+    transaction: &TransactionManifest,
+    path: &str,
+    revision: &FileRevision,
+    index: usize,
+) -> Result<TransactionTarget, TransactionError> {
+    let absolute = safe_path(&store.root, Path::new(path))
+        .map_err(|error| TransactionError::at(TransactionPhase::Prepare, error.into()))?;
+    let forward = fingerprint_path(&store.root, &absolute).map_err(|error| {
+        TransactionError::at(TransactionPhase::Prepare, TransactionError::Capture(error))
+    })?;
+    let (publish_tmp, backup_path) = sibling_paths(&absolute, &transaction.id, index)?;
+    let result = (|| {
         let restore_data = revision
             .existed
-            .then(|| restore_bytes(store, &revision, &forward, &path))
+            .then(|| restore_bytes(store, revision, &forward, path))
             .transpose()?;
         let mut target = TransactionTarget {
-            path,
+            path: path.to_owned(),
             abs_path: absolute.to_string_lossy().into_owned(),
             restore_existed: revision.existed,
             restore_mode: revision.mode,
@@ -94,7 +138,7 @@ fn build_targets(
             restore_encoding: revision.encoding,
             forward_existed: forward.existed,
             forward_mode: forward.mode,
-            forward_sha: forward.sha256,
+            forward_sha: forward.sha256.clone(),
             backup_path: backup_path.to_string_lossy().into_owned(),
             ..TransactionTarget::default()
         };
@@ -106,7 +150,13 @@ fn build_targets(
             } else {
                 revision.mode
             };
-            if target.restore_blob.is_empty() {
+            let recorded_blob = !revision.blob_ref.is_empty()
+                && store
+                    .blobs
+                    .as_ref()
+                    .is_some_and(|blobs| blobs.has(&revision.blob_ref));
+            if !recorded_blob {
+                target.restore_blob.clear();
                 if let Some(blobs) = &store.blobs {
                     target.restore_blob = blobs.put(&data).map_err(|error| {
                         TransactionError::at(TransactionPhase::Prepare, error.into())
@@ -122,25 +172,28 @@ fn build_targets(
             target.action = "delete".to_owned();
         }
         if forward.existed {
-            let data = forward.content.as_deref().unwrap_or_default();
+            let data =
+                forward
+                    .content
+                    .as_deref()
+                    .ok_or_else(|| TransactionError::MissingPayload {
+                        path: path.to_owned(),
+                        reference: forward.sha256.clone(),
+                    })?;
             if let Some(blobs) = &store.blobs {
-                match blobs.put(data) {
-                    Ok(reference) => target.forward_blob = reference,
-                    Err(error) => {
-                        let _ = secure_path::remove(&store.root, &publish_tmp);
-                        return Err(TransactionError::at(
-                            TransactionPhase::Prepare,
-                            error.into(),
-                        ));
-                    }
-                }
+                target.forward_blob = blobs.put(data).map_err(|error| {
+                    TransactionError::at(TransactionPhase::Prepare, error.into())
+                })?;
             } else {
                 target.forward_inline = Some(data.to_vec());
             }
         }
-        transaction.targets.push(target);
+        Ok(target)
+    })();
+    if result.is_err() {
+        let _ = secure_path::remove(&store.root, &publish_tmp);
     }
-    Ok(())
+    result
 }
 
 fn restore_bytes(
@@ -152,7 +205,11 @@ fn restore_bytes(
     if !revision.blob_ref.is_empty()
         && let Some(blobs) = &store.blobs
     {
-        return load_blob(blobs, &revision.blob_ref, path);
+        match load_blob(blobs, &revision.blob_ref, path) {
+            Ok(data) => return Ok(data),
+            Err(_) if revision.content.is_some() => {}
+            Err(error) => return Err(error),
+        }
     }
     if let Some(text) = revision.content.as_deref() {
         let kind = revision
