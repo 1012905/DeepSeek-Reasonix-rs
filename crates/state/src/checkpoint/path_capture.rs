@@ -167,6 +167,16 @@ impl Default for Fingerprint {
     }
 }
 
+pub(super) fn same_fingerprint(left: &Fingerprint, right: &Fingerprint) -> bool {
+    left.existed == right.existed
+        && left.is_dir == right.is_dir
+        && left.is_symlink == right.is_symlink
+        && left.nlink == right.nlink
+        && left.mode == right.mode
+        && left.size == right.size
+        && left.sha256 == right.sha256
+}
+
 pub fn safe_path(root: &Path, path: &Path) -> Result<PathBuf, PathError> {
     if path.as_os_str().is_empty() {
         return Err(PathError::Io {

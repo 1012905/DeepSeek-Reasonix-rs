@@ -7,6 +7,8 @@ use crate::sessionstore::eventlog::record::CreatedAt;
 use super::transaction_test_support::*;
 use super::*;
 
+type PreviewChange = fn(&mut Fingerprint);
+
 fn commit(
     store: &Store,
     plan_id: &str,
@@ -49,6 +51,7 @@ fn single_file(before: Option<&str>, after_existed: bool, after: &[u8]) -> Fixtu
 #[test]
 fn file_revert_clean_keep_current_commits_one_code_target() {
     let fixture = single_file(Some("before"), true, b"after");
+    fixture.store.set_session_id("session-1");
     write(fixture.root.path(), "unrelated.txt", "untouched");
     let plan = fixture.store.prepare_file_revert("a.txt", 7);
 
@@ -58,6 +61,8 @@ fn file_revert_clean_keep_current_commits_one_code_target() {
     assert_eq!(plan.files, vec!["a.txt".to_owned()]);
     assert_eq!(plan.file_count, 1);
     assert_eq!(plan.session_revision, 7);
+    assert_eq!(plan.coverage, Coverage::Complete);
+    assert!(!plan.workspace_token.is_empty());
     assert!(!plan.can_conversation);
 
     let result = commit(
@@ -78,6 +83,11 @@ fn file_revert_clean_keep_current_commits_one_code_target() {
     assert_eq!(durable.scope, RewindScope::Code);
     assert_eq!(durable.targets.len(), 1);
     assert_eq!(durable.targets[0].path, "a.txt");
+    assert!(durable.session_id.is_empty());
+    assert_eq!(durable.session_revision, 0);
+    assert!(durable.workspace_token.is_empty());
+    assert_eq!(durable.coverage, Coverage::Unspecified);
+    assert!(durable.coverage_gaps.is_empty());
     assert!(durable.checkpoint_backup.is_empty());
     assert!(durable.conversation_forward.is_empty());
     assert!(!durable.has_boundary);
@@ -178,6 +188,80 @@ fn file_revert_rejects_stale_preview_even_with_old_overwrite_approval() {
 }
 
 #[test]
+fn file_revert_preview_uses_go_fingerprint_identity_fields() {
+    let fixture = single_file(Some("before"), true, b"after");
+    write(fixture.root.path(), "other.txt", "other");
+    let plan = fixture.store.prepare_file_revert("a.txt", 7);
+    {
+        let mut registry = fixture.store.runtime.plans.lock().unwrap();
+        let preview = registry
+            .files
+            .entries
+            .get_mut(&plan.plan_id)
+            .unwrap()
+            .preview
+            .as_mut()
+            .unwrap();
+        preview.abs_path = fixture.root.path().join("other.txt");
+        preview.encoding = match preview.encoding {
+            reasonix_core::fileencoding::Kind::Utf8 => reasonix_core::fileencoding::Kind::Gb18030,
+            _ => reasonix_core::fileencoding::Kind::Utf8,
+        };
+        preview.content = Some(b"not-part-of-identity".to_vec());
+    }
+
+    assert!(
+        commit(
+            &fixture.store,
+            &plan.plan_id,
+            ConflictResolution::OverwriteCheckpoint,
+        )
+        .unwrap()
+        .ok
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"before");
+
+    let changes: [(&str, PreviewChange); 7] = [
+        ("existed", |preview| preview.existed = false),
+        ("is_dir", |preview| preview.is_dir = true),
+        ("is_symlink", |preview| preview.is_symlink = true),
+        ("nlink", |preview| preview.nlink = 2),
+        ("mode", |preview| preview.mode = 0o444),
+        ("size", |preview| preview.size += 1),
+        ("sha256", |preview| preview.sha256 = "0".repeat(64)),
+    ];
+    for (field, change) in changes {
+        let fixture = single_file(Some("before"), true, b"after");
+        let plan = fixture.store.prepare_file_revert("a.txt", 7);
+        {
+            let mut registry = fixture.store.runtime.plans.lock().unwrap();
+            let preview = registry
+                .files
+                .entries
+                .get_mut(&plan.plan_id)
+                .unwrap()
+                .preview
+                .as_mut()
+                .unwrap();
+            change(preview);
+        }
+        let (reason, _) = rejected(
+            commit(
+                &fixture.store,
+                &plan.plan_id,
+                ConflictResolution::OverwriteCheckpoint,
+            )
+            .unwrap_err(),
+        );
+        assert!(
+            matches!(reason, FileRevertRejection::PreviewChanged { .. }),
+            "{field}"
+        );
+        assert_eq!(read(fixture.root.path(), "a.txt"), b"after");
+    }
+}
+
+#[test]
 fn file_revert_refuses_legacy_checkpoint_without_ownership_fingerprint() {
     let mut fixture = single_file(Some("before"), true, b"after");
     let mut legacy = checkpoint(0, vec![owned_file("a.txt", Some("before"), None, "", 0)]);
@@ -191,7 +275,14 @@ fn file_revert_refuses_legacy_checkpoint_without_ownership_fingerprint() {
     assert!(plan.legacy);
     assert_eq!(plan.coverage, Coverage::Legacy);
     assert_eq!(plan.disabled_reason, DISABLED_LEGACY);
-    assert_eq!(plan.conflicts[0].reason, CONFLICT_COVERAGE_LEGACY);
+    assert!(plan.conflicts.is_empty());
+    assert_eq!(plan.coverage_gaps.len(), 1);
+    assert_eq!(plan.coverage_gaps[0].reason, GAP_LEGACY_UNVERIFIED);
+    assert_eq!(
+        plan.coverage_gaps[0].detail,
+        "v1 checkpoint cannot verify later manual edits"
+    );
+    assert!(plan.coverage_gaps[0].path.is_empty());
     for resolution in [
         ConflictResolution::KeepCurrent,
         ConflictResolution::OverwriteCheckpoint,
@@ -227,7 +318,43 @@ fn file_revert_refuses_incomplete_present_ownership_fingerprint() {
     assert!(plan.legacy);
     assert_eq!(plan.coverage, Coverage::Legacy);
     assert_eq!(plan.disabled_reason, DISABLED_LEGACY);
+    assert!(plan.conflicts.is_empty());
+    assert!(plan.coverage_gaps.is_empty());
     assert_eq!(read(fixture.root.path(), "a.txt"), b"after");
+}
+
+#[test]
+fn file_revert_incomplete_ownership_preserves_existing_gaps_only() {
+    let mut fixture = single_file(Some("before"), true, b"after");
+    let mut incomplete = checkpoint(
+        0,
+        vec![owned_file(
+            "a.txt",
+            Some("before"),
+            Some(true),
+            "",
+            live_mode(),
+        )],
+    );
+    incomplete.coverage = Coverage::Partial;
+    incomplete.coverage_gaps.push(CoverageGap {
+        reason: GAP_HOOK_WRITE.to_owned(),
+        detail: "hook changed another file".to_owned(),
+        path: "other.txt".to_owned(),
+        ..CoverageGap::default()
+    });
+    let expected_gaps = incomplete.coverage_gaps.clone();
+    fixture.store = load(fixture.root.path(), &fixture.dir, &[incomplete]);
+
+    let plan = fixture.store.prepare_file_revert("a.txt", 7);
+
+    assert!(plan.plan_id.is_empty());
+    assert!(!plan.can_files);
+    assert!(plan.legacy);
+    assert_eq!(plan.coverage, Coverage::Legacy);
+    assert_eq!(plan.disabled_reason, DISABLED_LEGACY);
+    assert!(plan.conflicts.is_empty());
+    assert_eq!(plan.coverage_gaps, expected_gaps);
 }
 
 #[test]
@@ -255,6 +382,8 @@ fn file_revert_requires_latest_ownership_fingerprint() {
     assert!(plan.legacy);
     assert_eq!(plan.coverage, Coverage::Legacy);
     assert_eq!(plan.disabled_reason, DISABLED_LEGACY);
+    assert!(plan.conflicts.is_empty());
+    assert!(plan.coverage_gaps.is_empty());
     assert_eq!(read(fixture.root.path(), "a.txt"), b"after");
 }
 
@@ -298,6 +427,50 @@ fn file_revert_uses_earliest_preimage_and_latest_valid_ownership() {
         .ok
     );
     assert_eq!(read(fixture.root.path(), "a.txt"), b"first");
+}
+
+#[test]
+fn file_revert_selects_exact_case_checkpoint() {
+    let mut fixture = fixture();
+    write(fixture.root.path(), "case.txt", "after");
+    let checkpoints = [
+        checkpoint(
+            0,
+            vec![owned_file(
+                "Case.txt",
+                Some("wrong-case"),
+                Some(true),
+                &digest(b"after"),
+                live_mode(),
+            )],
+        ),
+        checkpoint(
+            1,
+            vec![owned_file(
+                "case.txt",
+                Some("right-case"),
+                Some(true),
+                &digest(b"after"),
+                live_mode(),
+            )],
+        ),
+    ];
+    fixture.store = load(fixture.root.path(), &fixture.dir, &checkpoints);
+
+    let plan = fixture.store.prepare_file_revert("case.txt", 7);
+
+    assert!(plan.can_files, "{plan:?}");
+    assert_eq!(plan.path, "case.txt");
+    assert!(
+        commit(
+            &fixture.store,
+            &plan.plan_id,
+            ConflictResolution::OverwriteCheckpoint,
+        )
+        .unwrap()
+        .ok
+    );
+    assert_eq!(read(fixture.root.path(), "case.txt"), b"right-case");
 }
 
 #[test]
@@ -493,7 +666,7 @@ fn file_revert_rechecks_active_writers_under_barrier() {
     assert!(matches!(reason, FileRevertRejection::ActiveWriters));
     assert!(!result.ok);
     assert_eq!(result.conflicts.len(), 1);
-    assert_eq!(result.conflicts[0].path, "a.txt");
+    assert!(result.conflicts[0].path.is_empty());
     assert_eq!(result.conflicts[0].reason, CONFLICT_BUSY_WRITER);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"after");
     assert_no_manifest(&fixture.dir);
@@ -775,7 +948,7 @@ fn file_revert_inline_fallback_uses_current_encoding() {
 }
 
 #[test]
-fn file_revert_resolves_cleaned_absolute_path_and_preserves_recorded_spelling() {
+fn file_revert_resolves_cleaned_absolute_path_and_projects_normalized_path() {
     let mut fixture = fixture();
     write(fixture.root.path(), "a.txt", "after");
     let checkpoints = [checkpoint(
@@ -793,7 +966,7 @@ fn file_revert_resolves_cleaned_absolute_path_and_preserves_recorded_spelling() 
     let plan = fixture.store.prepare_file_revert(&caller, 7);
 
     assert!(plan.can_files, "{plan:?}");
-    assert_eq!(plan.path, "nested/../a.txt");
+    assert_eq!(plan.path, "a.txt");
     assert_eq!(plan.file_count, 1);
     assert!(
         commit(
@@ -805,14 +978,11 @@ fn file_revert_resolves_cleaned_absolute_path_and_preserves_recorded_spelling() 
         .ok
     );
     assert_eq!(read(fixture.root.path(), "a.txt"), b"before");
-    assert_eq!(
-        single_manifest(&fixture.dir).0.targets[0].path,
-        "nested/../a.txt"
-    );
+    assert_eq!(single_manifest(&fixture.dir).0.targets[0].path, "a.txt");
 }
 
 #[test]
-fn file_revert_unsafe_path_is_disabled_with_typed_conflict() {
+fn file_revert_unsafe_non_owned_path_is_unregistered() {
     let mut fixture = fixture();
     let outside = fixture._temp.path().join("outside.txt");
     fs::write(&outside, b"outside").unwrap();
@@ -831,21 +1001,16 @@ fn file_revert_unsafe_path_is_disabled_with_typed_conflict() {
     let plan = fixture.store.prepare_file_revert(&outside, 7);
 
     assert!(!plan.can_files);
-    assert_eq!(plan.disabled_reason, "path unsafe");
-    assert_eq!(plan.conflicts[0].reason, CONFLICT_PATH_UNSAFE);
-    let (reason, result) = rejected(
+    assert_eq!(plan.disabled_reason, "file is not session-owned");
+    assert!(plan.conflicts.is_empty());
+    assert!(matches!(
         commit(
             &fixture.store,
             &plan.plan_id,
             ConflictResolution::OverwriteCheckpoint,
-        )
-        .unwrap_err(),
-    );
-    assert!(matches!(
-        reason,
-        FileRevertRejection::Disabled(FileRevertDisabledReason::PathUnsafe)
+        ),
+        Err(FileRevertError::UnknownOrExpiredPlan)
     ));
-    assert_eq!(result.conflicts[0].reason, CONFLICT_PATH_UNSAFE);
     assert_eq!(fs::read(&outside).unwrap(), b"outside");
     assert_no_manifest(&fixture.dir);
 }
@@ -892,15 +1057,103 @@ fn file_revert_prepare_propagates_current_capture_error_as_coverage_gap() {
 
     let plan = fixture.store.prepare_file_revert("a.txt", 7);
 
-    assert!(plan.plan_id.is_empty());
+    assert!(!plan.plan_id.is_empty());
     assert!(!plan.can_files);
     assert_eq!(plan.coverage, Coverage::Partial);
+    assert_eq!(
+        plan.disabled_reason,
+        FileRevertDisabledReason::CurrentIdentityUnavailable.to_string()
+    );
+    assert_eq!(plan.conflicts.len(), 1);
+    assert_eq!(plan.conflicts[0].reason, CONFLICT_EXTERNAL_CHANGE);
     assert!(
         plan.coverage_gaps
             .iter()
             .any(|gap| { gap.reason == GAP_OVERSIZED && gap.path == "a.txt" })
     );
-    assert!(!plan.disabled_reason.is_empty());
+    let (reason, result) = rejected(
+        commit(
+            &fixture.store,
+            &plan.plan_id,
+            ConflictResolution::OverwriteCheckpoint,
+        )
+        .unwrap_err(),
+    );
+    assert!(matches!(
+        reason,
+        FileRevertRejection::Disabled(FileRevertDisabledReason::CurrentIdentityUnavailable)
+    ));
+    assert!(!result.ok);
+    assert_eq!(result.conflicts.len(), 1);
+    assert_eq!(result.conflicts[0].reason, CONFLICT_EXTERNAL_CHANGE);
+    assert!(matches!(
+        commit(
+            &fixture.store,
+            &plan.plan_id,
+            ConflictResolution::KeepCurrent,
+        ),
+        Err(FileRevertError::UnknownOrExpiredPlan)
+    ));
+    assert_no_manifest(&fixture.dir);
+}
+
+#[test]
+fn file_revert_capture_failure_keeps_missing_payload_disabled_plan() {
+    let mut fixture = single_file(Some("before"), true, b"after");
+    let missing = checkpoint(
+        0,
+        vec![FileSnap {
+            sha256: "0".repeat(64),
+            after_existed: Some(true),
+            after_sha256: digest(b"after"),
+            after_mode: live_mode(),
+            ..owned_file("a.txt", None, Some(true), &digest(b"after"), live_mode())
+        }],
+    );
+    fixture.store = load(fixture.root.path(), &fixture.dir, &[missing]);
+    fixture.store.config.max_file_bytes = 4;
+    write(fixture.root.path(), "a.txt", "too-large");
+
+    let plan = fixture.store.prepare_file_revert("a.txt", 7);
+
+    assert!(!plan.plan_id.is_empty());
+    assert!(!plan.can_files);
+    assert_eq!(plan.coverage, Coverage::Partial);
+    assert_eq!(
+        plan.disabled_reason,
+        FileRevertDisabledReason::MissingPayload.to_string()
+    );
+    assert_eq!(plan.conflicts.len(), 2);
+    assert_eq!(plan.conflicts[0].reason, CONFLICT_EXTERNAL_CHANGE);
+    assert_eq!(plan.conflicts[1].reason, CONFLICT_MISSING_PAYLOAD);
+    assert!(
+        plan.coverage_gaps
+            .iter()
+            .any(|gap| { gap.reason == GAP_OVERSIZED && gap.path == "a.txt" })
+    );
+    let (reason, result) = rejected(
+        commit(
+            &fixture.store,
+            &plan.plan_id,
+            ConflictResolution::OverwriteCheckpoint,
+        )
+        .unwrap_err(),
+    );
+    assert!(matches!(
+        reason,
+        FileRevertRejection::Disabled(FileRevertDisabledReason::MissingPayload)
+    ));
+    assert!(!result.ok);
+    assert_eq!(result.conflicts.len(), 2);
+    assert_eq!(result.conflicts[1].reason, CONFLICT_MISSING_PAYLOAD);
+    assert!(matches!(
+        commit(
+            &fixture.store,
+            &plan.plan_id,
+            ConflictResolution::KeepCurrent,
+        ),
+        Err(FileRevertError::UnknownOrExpiredPlan)
+    ));
     assert_no_manifest(&fixture.dir);
 }
 

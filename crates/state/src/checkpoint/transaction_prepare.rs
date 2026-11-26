@@ -11,7 +11,7 @@ use super::secure_path::{self, SecureError};
 use super::store::Store;
 use super::transaction::{TransactionError, TransactionInjection, TransactionPhase};
 use super::types::{
-    Checkpoint, FileRevision, RewindPlan, RewindScope, SCHEMA_V2, TransactionManifest,
+    Checkpoint, Coverage, FileRevision, RewindPlan, RewindScope, SCHEMA_V2, TransactionManifest,
     TransactionState, TransactionTarget, transaction_dir,
 };
 
@@ -51,6 +51,11 @@ pub(super) fn prepare_file_revert(
     injection: Option<&TransactionInjection>,
 ) -> Result<TransactionManifest, TransactionError> {
     let mut transaction = new_manifest(store, plan, "file_revert");
+    transaction.session_id.clear();
+    transaction.session_revision = 0;
+    transaction.workspace_token.clear();
+    transaction.coverage = Coverage::Unspecified;
+    transaction.coverage_gaps.clear();
     transaction.scope = RewindScope::Code;
     transaction.path = plan.path.clone();
     transaction.truncate_from = 0;

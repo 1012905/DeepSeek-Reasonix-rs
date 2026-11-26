@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-#[cfg(windows)]
-use reasonix_core::simple_fold::equal_os_str;
 use thiserror::Error;
 
 use crate::sessionstore::eventlog::record::CreatedAt;
 
-use super::path_capture::{CaptureError, Fingerprint, capture_path, compare_identity, safe_path};
+use super::path_capture::{
+    CaptureError, Fingerprint, capture_path, compare_identity, normalize_rel_path, safe_path,
+    same_fingerprint,
+};
 use super::rewind::{is_expired, new_plan_id};
 use super::store::Store;
 use super::transaction::{TransactionError, TransactionInjection, TransactionPhase};
@@ -15,8 +16,8 @@ use super::types::{
     CONFLICT_BOUNDARY_INVALID, CONFLICT_BUSY_WRITER, CONFLICT_COVERAGE_LEGACY, CONFLICT_EXPIRED,
     CONFLICT_EXTERNAL_CHANGE, CONFLICT_MISSING_PAYLOAD, CONFLICT_PATH_UNSAFE, CONFLICT_STALE_PLAN,
     CaptureOptions, ConflictResolution, Coverage, CoverageGap, DISABLED_EXPIRED, DISABLED_LEGACY,
-    EXPIRED_DETAIL, FileRevision, GAP_EXPIRED_PAYLOAD, GAP_LEGACY_UNVERIFIED, RewindConflict,
-    RewindPlan, RewindResult, RewindScope, SCHEMA_V2,
+    EXPIRED_DETAIL, FileRevision, GAP_EXPIRED_PAYLOAD, RewindConflict, RewindPlan, RewindResult,
+    RewindScope, SCHEMA_V2,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -123,6 +124,11 @@ impl Store {
             file_count: 1,
             ..RewindPlan::default()
         };
+        if self.file_state(path).is_none() {
+            plan.can_files = false;
+            plan.disabled_reason = FileRevertDisabledReason::NotSessionOwned.to_string();
+            return plan;
+        }
         let absolute = match safe_path(&self.root, path) {
             Ok(absolute) => absolute,
             Err(_) => {
@@ -164,10 +170,30 @@ impl Store {
             plan.coverage = Coverage::Partial;
         }
 
-        let current = match capture_current(self, &absolute) {
-            Ok(current) => current,
+        let mut preview = None;
+        let mut disabled = None;
+        match capture_current(self, &absolute) {
+            Ok(current) => {
+                if let Some(reason) = compare_identity(
+                    &current,
+                    &selection.revision.after_sha256,
+                    selection.revision.after_existed,
+                    selection.revision.after_mode,
+                ) {
+                    plan.can_files = true;
+                    plan.disabled_reason = "conflict requires explicit resolution".to_owned();
+                    plan.conflicts.push(identity_conflict(
+                        &plan.files[0],
+                        &selection.revision,
+                        &current,
+                        reason,
+                    ));
+                } else {
+                    plan.can_files = true;
+                }
+                preview = Some(current);
+            }
             Err(error) => {
-                plan.plan_id.clear();
                 plan.can_files = false;
                 plan.coverage = Coverage::Partial;
                 plan.disabled_reason =
@@ -181,42 +207,23 @@ impl Store {
                 let mut gap = error.gap();
                 gap.path = plan.path.clone();
                 plan.coverage_gaps.push(gap);
-                return plan;
+                disabled = Some(FileRevertDisabledReason::CurrentIdentityUnavailable);
             }
-        };
-        if let Some(reason) = compare_identity(
-            &current,
-            &selection.revision.after_sha256,
-            selection.revision.after_existed,
-            selection.revision.after_mode,
-        ) {
-            plan.can_files = true;
-            plan.disabled_reason = "conflict requires explicit resolution".to_owned();
-            plan.conflicts.push(identity_conflict(
-                &plan.files[0],
-                &selection.revision,
-                &current,
-                reason,
-            ));
-        } else {
-            plan.can_files = true;
         }
 
-        let disabled = if selection.expired {
+        if selection.expired {
             plan.can_files = false;
             plan.disabled_reason = DISABLED_EXPIRED.to_owned();
             plan.conflicts.push(conflict(&plan.path, CONFLICT_EXPIRED));
-            Some(FileRevertDisabledReason::ExpiredPayload)
+            disabled = Some(FileRevertDisabledReason::ExpiredPayload);
         } else if !payload_available(self, &selection.revision) {
             plan.can_files = false;
             plan.disabled_reason = FileRevertDisabledReason::MissingPayload.to_string();
             plan.conflicts
                 .push(conflict(&plan.path, CONFLICT_MISSING_PAYLOAD));
-            Some(FileRevertDisabledReason::MissingPayload)
-        } else {
-            None
-        };
-        self.store_file_plan(plan.clone(), Some(current), disabled);
+            disabled = Some(FileRevertDisabledReason::MissingPayload);
+        }
+        self.store_file_plan(plan.clone(), preview, disabled);
         plan
     }
 
@@ -289,11 +296,8 @@ impl Store {
                 Vec::new(),
             ));
         }
-        let mut writer_conflicts = self.active_writer_conflicts();
+        let writer_conflicts = self.active_writer_conflicts();
         if !writer_conflicts.is_empty() {
-            for conflict in &mut writer_conflicts {
-                conflict.path = plan.path.clone();
-            }
             return Err(reject(
                 &plan,
                 FileRevertRejection::ActiveWriters,
@@ -321,7 +325,7 @@ impl Store {
                 Vec::new(),
             ));
         };
-        let absolute = safe_path(&self.root, &preview.abs_path).map_err(|error| {
+        let absolute = safe_path(&self.root, Path::new(&plan.path)).map_err(|error| {
             reject(
                 &plan,
                 FileRevertRejection::PathUnsafe(error),
@@ -339,7 +343,7 @@ impl Store {
                 gaps,
             )
         })?;
-        if preview != current {
+        if !same_fingerprint(&preview, &current) {
             return Err(reject(
                 &plan,
                 FileRevertRejection::PreviewChanged {
@@ -440,7 +444,7 @@ impl Store {
                 let Ok(recorded) = safe_path(&self.root, Path::new(&revision.path)) else {
                     continue;
                 };
-                if same_path(&recorded, &absolute) {
+                if recorded == absolute {
                     matches.push((checkpoint, revision));
                 }
             }
@@ -448,6 +452,7 @@ impl Store {
         let (first_checkpoint, first_revision) = matches.first()?;
         let (_, last_revision) = matches.last()?;
         let mut revision = first_revision.clone();
+        revision.path = normalize_rel_path(&self.root, Path::new(&revision.path));
         revision.after_existed = last_revision.after_existed;
         revision.after_sha256 = last_revision.after_sha256.clone();
         revision.after_mode = last_revision.after_mode;
@@ -465,16 +470,6 @@ impl Store {
             gaps: first_checkpoint.coverage_gaps.clone(),
         })
     }
-}
-
-#[cfg(windows)]
-fn same_path(left: &Path, right: &Path) -> bool {
-    equal_os_str(left.as_os_str(), right.as_os_str())
-}
-
-#[cfg(not(windows))]
-fn same_path(left: &Path, right: &Path) -> bool {
-    left == right
 }
 
 fn capture_current(store: &Store, absolute: &Path) -> Result<Fingerprint, CaptureError> {
@@ -523,14 +518,6 @@ fn refuse_unverified(plan: &mut RewindPlan) {
     plan.legacy = true;
     plan.coverage = Coverage::Legacy;
     plan.disabled_reason = DISABLED_LEGACY.to_owned();
-    plan.conflicts
-        .push(conflict(&plan.path, CONFLICT_COVERAGE_LEGACY));
-    add_gap(
-        &mut plan.coverage_gaps,
-        GAP_LEGACY_UNVERIFIED,
-        DISABLED_LEGACY,
-        &plan.path,
-    );
 }
 
 fn add_gap(gaps: &mut Vec<CoverageGap>, reason: &str, detail: &str, path: &str) {
