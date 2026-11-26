@@ -286,24 +286,19 @@ fn publish_undo(
 }
 
 fn restore_original_rewind(
-    store: &Store,
+    _store: &Store,
     original: &TransactionManifest,
     applier: Option<&dyn ConversationApplier>,
 ) -> Result<(), TransactionError> {
+    let Some(applier) = applier else {
+        return Ok(());
+    };
     if !matches!(
         original.scope,
         RewindScope::Conversation | RewindScope::Both
     ) {
         return Ok(());
     }
-    let Some(applier) = applier else {
-        return store
-            .truncate_from(original.truncate_from)
-            .map_err(|source| TransactionError::Conversation {
-                phase: ConversationPhase::TruncateCheckpoints,
-                source: ConversationError::external(ConversationPhase::TruncateCheckpoints, source),
-            });
-    };
     let mut errors = Vec::new();
     if original.has_boundary
         && let Err(source) = applier

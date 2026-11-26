@@ -160,6 +160,59 @@ fn startup_preserves_external_edit_and_writes_forward_recovery_copy() {
 }
 
 #[test]
+fn external_modification_retry_keeps_identity_and_existing_recovery_copy() {
+    let fixture = published_intent();
+    write(fixture.root.path(), "a.txt", "external-edit");
+    let before = single_manifest(&fixture.dir).0;
+    let target = &before.targets[0];
+    let suffix = target.restore_sha.get(..8).unwrap_or("unknown");
+    let recovery = PathBuf::from(format!("{}.reasonix-recovery-{suffix}", target.abs_path));
+
+    let recovered = restart(&fixture);
+    assert_eq!(fs::read(&recovery).unwrap(), b"a-after");
+    let pending = single_manifest(&fixture.dir).0;
+    assert_eq!(pending.state, TransactionState::Committing);
+    fs::write(&recovery, b"existing recovery copy").unwrap();
+
+    let mut stages = Vec::new();
+    let error = transaction_compensate::compensate(&recovered, &pending.targets, &mut stages, None)
+        .unwrap_err();
+    let TransactionError::Compensation(errors) = error else {
+        panic!("expected compensation errors");
+    };
+    assert_eq!(errors.len(), 1);
+    let TransactionError::ExternalModification {
+        path,
+        recovery: actual_recovery,
+    } = &errors[0]
+    else {
+        panic!("expected external modification identity: {:?}", errors[0]);
+    };
+    assert_eq!(path, &target.path);
+    assert_eq!(actual_recovery.as_ref(), Some(&recovery));
+    assert_eq!(fs::read(&recovery).unwrap(), b"existing recovery copy");
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"external-edit");
+    assert!(stages.iter().any(|stage| {
+        stage.path == target.path
+            && !stage.compensated
+            && stage
+                .comp_error
+                .contains(&recovery.to_string_lossy().to_string())
+    }));
+
+    let retried = restart(&fixture);
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Committing
+    );
+    assert_eq!(fs::read(&recovery).unwrap(), b"existing recovery copy");
+    assert!(retried.recovery_notes().iter().any(|note| {
+        note.phase == RecoveryPhase::CompensationPending
+            && note.message.contains(&format!("{recovery:?}"))
+    }));
+}
+
+#[test]
 fn failed_compensation_stays_committing_and_startup_retry_completes() {
     let (fixture, plan_id) = prepared();
     let injection = TransactionInjection::fail_after(TransactionPhase::PublishFile, 1)

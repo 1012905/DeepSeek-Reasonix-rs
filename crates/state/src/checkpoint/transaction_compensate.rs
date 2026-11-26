@@ -105,15 +105,12 @@ fn compensate_published(store: &Store, target: &TransactionTarget) -> Result<(),
             target.restore_mode,
         ) {
             let recovery = recovery_path(target);
-            secure_path::write_new_file(
+            let _ = secure_path::write_new_file(
                 &store.root,
                 &recovery,
                 &forward,
                 effective_mode(target.forward_mode),
-            )
-            .map_err(|error| {
-                TransactionError::at(TransactionPhase::CompensateFile, error.into())
-            })?;
+            );
             return Err(TransactionError::ExternalModification {
                 path: target.path.clone(),
                 recovery: Some(recovery),

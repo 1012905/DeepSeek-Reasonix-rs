@@ -253,7 +253,7 @@ pub enum TransactionError {
     MissingBackupPath { path: String },
     #[error("transaction publish temp is missing for {path}")]
     MissingPublishTemp { path: String },
-    #[error("external modification after publish for {path}")]
+    #[error("external modification after publish for {path}{}", .recovery.as_ref().map(|path| format!("; recovery copy at {}", path.display())).unwrap_or_default())]
     ExternalModification {
         path: String,
         recovery: Option<PathBuf>,

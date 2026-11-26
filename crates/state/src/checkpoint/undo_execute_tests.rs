@@ -2,9 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use super::transaction_test_support::{
-    ConversationCall, Fixture, MockApplier, active_writer, committed_fixture, fixture, load,
-    manifest_path, modify_add_delete_fixture, plan, read, single_manifest, transaction_paths,
-    write, write_bytes,
+    ConversationCall, Fixture, MockApplier, active_writer, checkpoint, committed_fixture, fixture,
+    load, manifest_path, modify_add_delete_fixture, plan, read, save_manifest, single_manifest,
+    transaction_paths, write, write_bytes,
 };
 use super::*;
 
@@ -239,20 +239,45 @@ fn undo_rewind_rejects_permission_only_change() {
 }
 
 #[test]
-fn undo_rewind_rejects_unknown_or_noncommitted_transaction() {
-    let (fixture, rewind) = committed_fixture();
+fn undo_rewind_rejects_missing_transaction() {
+    let (fixture, _) = committed_fixture();
 
-    for id in ["missing", &rewind.transaction_id] {
-        if id == "missing" {
-            let error = undo(&fixture.store, id).unwrap_err();
-            assert!(matches!(
-                error,
-                TransactionError::UndoNotAvailable { transaction_id } if transaction_id == id
-            ));
-        }
-    }
+    let error = undo(&fixture.store, "missing").unwrap_err();
+
+    assert!(matches!(
+        error,
+        TransactionError::UndoNotAvailable { transaction_id } if transaction_id == "missing"
+    ));
+    assert!(fixture.store.available_undo().is_some());
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+}
+
+#[test]
+fn undo_rewind_rejects_invalidated_transaction() {
+    let (fixture, rewind) = committed_fixture();
     fixture.store.invalidate_undo().unwrap();
+
     let error = undo(&fixture.store, &rewind.transaction_id).unwrap_err();
+
+    assert!(matches!(
+        error,
+        TransactionError::UndoNotAvailable { transaction_id } if transaction_id == rewind.transaction_id
+    ));
+    assert!(fixture.store.available_undo().is_none());
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+}
+
+#[test]
+fn undo_rewind_rejects_noncommitted_current_offer() {
+    let (fixture, rewind) = committed_fixture();
+    let mut offer = fixture.store.current_undo_offer().unwrap();
+    offer.state = TransactionState::Prepared;
+    fixture.store.set_current_undo_offer(offer);
+
+    assert!(fixture.store.available_undo().is_none());
+    assert_eq!(fixture.store.last_undo_transaction_id(), "");
+    let error = undo(&fixture.store, &rewind.transaction_id).unwrap_err();
+
     assert!(matches!(
         error,
         TransactionError::UndoNotAvailable { transaction_id } if transaction_id == rewind.transaction_id
@@ -514,6 +539,73 @@ fn store_only_undo_restores_checkpoint_backup() {
     let reloaded = load(fixture.root.path(), &fixture.dir, &[]);
     assert_eq!(reloaded.list().len(), 1);
     assert_eq!(reloaded.list()[0].turn, 0);
+}
+
+#[test]
+fn store_only_checkpoint_restore_failure_does_not_truncate_new_checkpoints() {
+    let fixture = modify_add_delete_fixture();
+    let rewind = fixture
+        .store
+        .prepare_rewind(0, RewindScope::Both, 7, 5, true);
+    let applier = StoreTruncatingApplier {
+        store: &fixture.store,
+    };
+    let committed = fixture
+        .store
+        .commit_rewind(
+            &rewind.plan_id,
+            7,
+            b"conversation-forward",
+            Some(&applier),
+            None,
+        )
+        .unwrap();
+    assert!(fixture.store.list().is_empty());
+
+    let mut original = single_manifest(&fixture.dir).0;
+    original.checkpoint_backup = b"invalid checkpoint backup".to_vec();
+    save_manifest(&fixture.dir, &original);
+    let store = load(
+        fixture.root.path(),
+        &fixture.dir,
+        &[checkpoint(0, Vec::new()), checkpoint(1, Vec::new())],
+    );
+    assert_eq!(
+        store
+            .list()
+            .iter()
+            .map(|checkpoint| checkpoint.turn)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+
+    let error = store
+        .undo_rewind(&committed.transaction_id, None, None)
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            TransactionError::Conversation {
+                phase: ConversationPhase::RestoreCheckpoints,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        store
+            .list()
+            .iter()
+            .map(|checkpoint| checkpoint.turn)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert!(turn_path(&fixture.dir, 0, false).is_file());
+    assert!(turn_path(&fixture.dir, 1, false).is_file());
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    assert!(!fixture.root.path().join("b.txt").exists());
+    assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");
 }
 
 #[test]

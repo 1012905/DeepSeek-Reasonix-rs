@@ -163,6 +163,16 @@ impl Store {
             .cloned()
     }
 
+    #[cfg(test)]
+    pub(super) fn set_current_undo_offer(&self, offer: TransactionManifest) {
+        self.runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .current = Some(offer);
+    }
+
     pub(super) fn undo_offer(
         &self,
         transaction_id: &str,
