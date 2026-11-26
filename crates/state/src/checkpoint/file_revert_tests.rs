@@ -982,6 +982,48 @@ fn file_revert_resolves_cleaned_absolute_path_and_projects_normalized_path() {
 }
 
 #[test]
+fn file_revert_missing_payload_conflict_preserves_caller_path() {
+    let mut fixture = fixture();
+    write(fixture.root.path(), "a.txt", "after");
+    let missing = checkpoint(
+        0,
+        vec![FileSnap {
+            sha256: "0".repeat(64),
+            after_existed: Some(true),
+            after_sha256: digest(b"after"),
+            after_mode: live_mode(),
+            ..owned_file(
+                "nested/../a.txt",
+                None,
+                Some(true),
+                &digest(b"after"),
+                live_mode(),
+            )
+        }],
+    );
+    fixture.store = load(fixture.root.path(), &fixture.dir, &[missing]);
+    let caller = fixture
+        .root
+        .path()
+        .join("a.txt")
+        .to_string_lossy()
+        .into_owned();
+
+    let plan = fixture.store.prepare_file_revert(&caller, 7);
+
+    assert_eq!(plan.path, "a.txt");
+    assert_eq!(plan.files, vec![caller.clone()]);
+    assert!(!plan.can_files);
+    assert_eq!(
+        plan.disabled_reason,
+        FileRevertDisabledReason::MissingPayload.to_string()
+    );
+    assert_eq!(plan.conflicts.len(), 1);
+    assert_eq!(plan.conflicts[0].reason, CONFLICT_MISSING_PAYLOAD);
+    assert_eq!(plan.conflicts[0].path, caller);
+}
+
+#[test]
 fn file_revert_unsafe_non_owned_path_is_unregistered() {
     let mut fixture = fixture();
     let outside = fixture._temp.path().join("outside.txt");

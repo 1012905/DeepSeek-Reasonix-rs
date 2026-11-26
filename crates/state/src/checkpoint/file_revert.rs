@@ -136,11 +136,6 @@ impl Store {
                 plan.disabled_reason = FileRevertDisabledReason::PathUnsafe.to_string();
                 plan.conflicts
                     .push(conflict(&plan.path, CONFLICT_PATH_UNSAFE));
-                self.store_file_plan(
-                    plan.clone(),
-                    None,
-                    Some(FileRevertDisabledReason::PathUnsafe),
-                );
                 return plan;
             }
         };
@@ -220,7 +215,7 @@ impl Store {
             plan.can_files = false;
             plan.disabled_reason = FileRevertDisabledReason::MissingPayload.to_string();
             plan.conflicts
-                .push(conflict(&plan.path, CONFLICT_MISSING_PAYLOAD));
+                .push(conflict(&plan.files[0], CONFLICT_MISSING_PAYLOAD));
             disabled = Some(FileRevertDisabledReason::MissingPayload);
         }
         self.store_file_plan(plan.clone(), preview, disabled);
