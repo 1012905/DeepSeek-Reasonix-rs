@@ -1241,6 +1241,8 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 

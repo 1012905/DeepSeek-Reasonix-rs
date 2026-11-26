@@ -6,6 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::sessionstore::eventlog::record::CreatedAt;
+use reasonix_contract::gojson;
 use reasonix_core::fileencoding;
 use reasonix_core::filelock::{self, FileLockError, FileLockGuard};
 use reasonix_core::fileutil::atomic_write_file_strict;
@@ -14,6 +15,8 @@ use tracing::warn;
 
 use super::blob::{BlobError, BlobStore, digest, valid_blob_ref};
 use super::path_capture::{CaptureError, capture_path, normalize_rel_path, safe_path};
+use super::rewind::PlanRegistry;
+use super::secure_path::SecureError;
 use super::types::{
     ActiveWriter, CONFLICT_BUSY_WRITER, CaptureAfterOpts, CaptureBeforeOpts, CaptureOptions,
     CaptureSource, ChangeKind, Checkpoint, Coverage, CoverageGap, DEFAULT_BLOB_QUOTA_BYTES,
@@ -66,22 +69,30 @@ pub enum StoreError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("rewind recovery is pending")]
+    UndoRecoveryPending,
+    #[error("persist undo invalidation {id}: {source}")]
+    UndoInvalidation {
+        id: String,
+        #[source]
+        source: SecureError,
+    },
 }
 
 #[derive(Debug, Default)]
-struct StoreState {
-    done: Vec<Checkpoint>,
-    current: Option<Checkpoint>,
-    seen: HashSet<String>,
-    session_id: String,
-    active_writers: Vec<ActiveWriter>,
-    mutation_seq: i64,
-    protected_turns: BTreeSet<i64>,
-    unreadable: BTreeSet<i64>,
+pub(super) struct StoreState {
+    pub(super) done: Vec<Checkpoint>,
+    pub(super) current: Option<Checkpoint>,
+    pub(super) seen: HashSet<String>,
+    pub(super) session_id: String,
+    pub(super) active_writers: Vec<ActiveWriter>,
+    pub(super) mutation_seq: i64,
+    pub(super) protected_turns: BTreeSet<i64>,
+    pub(super) unreadable: BTreeSet<i64>,
 }
 
 impl StoreState {
-    fn all(&self) -> Vec<Checkpoint> {
+    pub(super) fn all(&self) -> Vec<Checkpoint> {
         let mut checkpoints = self.done.clone();
         if let Some(current) = &self.current {
             checkpoints.push(current.clone());
@@ -90,7 +101,7 @@ impl StoreState {
         checkpoints
     }
 
-    fn checkpoint_mut(&mut self, turn: i64) -> Option<&mut Checkpoint> {
+    pub(super) fn checkpoint_mut(&mut self, turn: i64) -> Option<&mut Checkpoint> {
         if self
             .current
             .as_ref()
@@ -103,7 +114,7 @@ impl StoreState {
             .find(|checkpoint| checkpoint.turn == turn)
     }
 
-    fn next_turn(&self) -> i64 {
+    pub(super) fn next_turn(&self) -> i64 {
         let known = self
             .all()
             .iter()
@@ -121,18 +132,38 @@ impl StoreState {
     }
 }
 
+#[derive(Debug, Default)]
+pub(super) struct StoreRuntime {
+    pub(super) barrier: super::barrier::MutationBarrier,
+    pub(super) plans: Mutex<PlanRegistry>,
+    pub(super) recovery_notes: Mutex<Vec<super::transaction::RecoveryNote>>,
+    pub(super) undo: super::undo::UndoRuntime,
+}
+
 #[derive(Debug)]
 pub struct Store {
-    dir: Option<PathBuf>,
-    root: PathBuf,
-    blobs: Option<BlobStore>,
-    config: StoreConfig,
-    state: Mutex<StoreState>,
+    pub(super) dir: Option<PathBuf>,
+    pub(super) root: PathBuf,
+    pub(super) blobs: Option<BlobStore>,
+    pub(super) config: StoreConfig,
+    pub(super) runtime: StoreRuntime,
+    pub(super) state: Mutex<StoreState>,
 }
 
 impl Store {
     pub fn new(dir: Option<&Path>, root: &Path) -> Self {
         Self::new_with_config(dir, root, StoreConfig::default())
+    }
+
+    pub(super) fn persistence_only(dir: PathBuf) -> Self {
+        Self {
+            dir: Some(dir),
+            root: PathBuf::new(),
+            blobs: None,
+            config: StoreConfig::default(),
+            runtime: StoreRuntime::default(),
+            state: Mutex::new(StoreState::default()),
+        }
     }
 
     pub fn new_with_config(dir: Option<&Path>, root: &Path, config: StoreConfig) -> Self {
@@ -146,17 +177,24 @@ impl Store {
         };
         let blobs = dir.as_ref().map(|path| BlobStore::new(path.join("blobs")));
         let state = dir.as_deref().map(load_state).unwrap_or_default();
-        Self {
+        let store = Self {
             dir,
             root,
             blobs,
             config,
+            runtime: StoreRuntime::default(),
             state: Mutex::new(state),
-        }
+        };
+        store.recover_file_transactions_on_startup();
+        store
     }
 
     pub fn blobs(&self) -> Option<&BlobStore> {
         self.blobs.as_ref()
+    }
+
+    pub fn barrier(&self) -> &super::barrier::MutationBarrier {
+        &self.runtime.barrier
     }
 
     pub fn load(&self) -> Result<(), StoreError> {
@@ -168,6 +206,7 @@ impl Store {
 
     pub fn begin(&self, turn: i64, prompt: &str, msg_index: i64) -> Result<(), StoreError> {
         let _disk = self.lock_disk()?;
+        self.invalidate_undo()?;
         let mut state = self.state();
         if let Some(current) = state.current.take() {
             let mut current = current;
@@ -775,14 +814,16 @@ impl Store {
         }
     }
 
-    fn persist_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
+    pub(super) fn persist_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let Some(dir) = &self.dir else {
             return Ok(());
         };
-        let bytes = serde_json::to_vec(checkpoint).map_err(|source| StoreError::Json {
-            path: turn_path(dir, checkpoint.turn, checkpoint.expired_file_payload),
-            source,
-        })?;
+        let bytes = gojson::marshal(checkpoint)
+            .map_err(|source| StoreError::Json {
+                path: turn_path(dir, checkpoint.turn, checkpoint.expired_file_payload),
+                source,
+            })?
+            .into_bytes();
         let path = turn_path(dir, checkpoint.turn, checkpoint.expired_file_payload);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| StoreError::Io {
@@ -798,7 +839,7 @@ impl Store {
         })
     }
 
-    fn lock_existing_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
+    pub(super) fn lock_existing_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
         let Some(dir) = &self.dir else {
             return Ok(None);
         };
@@ -813,7 +854,7 @@ impl Store {
         }
     }
 
-    fn lock_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
+    pub(super) fn lock_disk(&self) -> Result<Option<FileLockGuard>, StoreError> {
         let Some(dir) = &self.dir else {
             return Ok(None);
         };
@@ -827,7 +868,7 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    fn state(&self) -> MutexGuard<'_, StoreState> {
+    pub(super) fn state(&self) -> MutexGuard<'_, StoreState> {
         self.state.lock().unwrap_or_else(|error| error.into_inner())
     }
 }
@@ -855,14 +896,28 @@ fn load_state(dir: &Path) -> StoreState {
         let mut entries: Vec<_> = entries.flatten().collect();
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
-            if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
-                continue;
-            }
             let Some(turn) = parse_turn_file(entry.file_name().to_string_lossy().as_ref()) else {
                 continue;
             };
             if seen.contains(&turn) {
                 continue;
+            }
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => continue,
+                Ok(kind) if kind.is_file() => {}
+                Ok(_) => {
+                    warn!(
+                        ?entry,
+                        "checkpoint: non-regular turn file stays reserved without following it"
+                    );
+                    state.unreadable.insert(turn);
+                    continue;
+                }
+                Err(error) => {
+                    warn!(%error, ?entry, "checkpoint: turn file type unreadable; its number stays reserved");
+                    state.unreadable.insert(turn);
+                    continue;
+                }
             }
             let path = entry.path();
             let decoded = match fileencoding::read_file_utf8(&path) {

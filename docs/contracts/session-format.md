@@ -852,16 +852,20 @@ PrepareRewind(turn, scope, sessionRev, boundary, hasBound) -> RewindPlan:
 PlanID = newID("plan"); WorkspaceToken = barrier.Generation() as string; active
 writers -> CanFiles/CanConversation=false, DisabledReason `active background
 writer`, one ConflictBusyWriter per writer; wantConv without hasBound ->
-`conversation boundary unavailable`; wantFiles: zero files && RewindBoth ->
-CanFiles=true (the file half of a combined rewind is an atomic no-op);
-CoverageNone -> `no file captures`; expired -> `file recovery payload
-expired` + ConflictExpired; legacy -> CanFiles=false `legacy checkpoint
-cannot verify later manual edits` + ConflictCoverageLegacy (batch overwrite
-without a prompt is forbidden); else conflicts = precheckFiles(turn), CanFiles =
-no conflicts && files>0; RewindBoth needs both sides. Plans are stored in
-s.plans[planID] with a creation time; dropStalePlansLocked evicts prepares older
-than 10 MINUTES (a cancelled confirm leaves its entry; a single-file prepare is
-reachable from every diff card).
+`conversation boundary unavailable`.
+
+wantFiles: zero files && RewindBoth -> CanFiles=true (the file half of a combined
+rewind is an atomic no-op); CoverageNone -> `no file captures`; expired -> `file
+recovery payload expired` + ConflictExpired; legacy -> CanFiles=false `legacy
+checkpoint cannot verify later manual edits` + ConflictCoverageLegacy (batch
+overwrite without a prompt is forbidden); else conflicts = precheckFiles(turn),
+CanFiles = no conflicts && files>0; RewindBoth needs both sides.
+
+Plans are stored in s.plans[planID] with a creation time; dropStalePlansLocked
+evicts prepares older than 10 MINUTES (a cancelled confirm leaves its entry; a
+single-file prepare is reachable from every diff card). The active-writer branch
+returns before that registration, so its PlanID is immediately unknown to
+lookup/take/validation.
 
 precheckFiles(fromTurn): per earliest revision — safePath failure ->
 ConflictPathUnsafe; missing payload -> ConflictMissingPayload; FingerprintPath
@@ -887,15 +891,19 @@ then prepareTransaction + commitTransaction.
 prepareTransaction: requireUndoRecoveryComplete; tx kind `rewind`,
 TruncateFrom=plan.Turn; file scope: earliestRevisions(plan.Turn) (earliest
 preimage per path, carrying forward the FINAL after-identity — a missing final
-identity deliberately clears an older proof), paths sorted for determinism;
+identity deliberately clears an older proof), paths sorted for determinism.
+
 forward image via CapturePath; restore payload: blob bytes or re-encoded inline
 content (revisionEncoding falls back to the current file's encoding for legacy
 v1 snapshots that omit Encoding); missing payload -> `missing restore payload
 for %s`; blobs.Put when RestoreBlob is empty (else RestoreInline clone); the
-publish temp is written BEFORE persisting; delete targets get a BackupPath only;
-forward blob Put when the file existed; conversation scope:
-backupCheckpointsFrom(plan.Turn) = json.Marshal of future checkpoints ->
-tx.CheckpointBackup; persistTransaction.
+publish temp is written BEFORE persisting.
+
+delete targets get a BackupPath only; forward blob Put when the file existed;
+conversation scope: with a non-nil applier, backupCheckpointsFrom(plan.Turn) =
+json.Marshal of future checkpoints -> tx.CheckpointBackup; with a nil applier
+there is no CheckpointBackup and the commit truncates Store checkpoints directly;
+persistTransaction.
 
 transactionSiblingPaths(absPath, txID, index): staging paths in the target's own
 directory, `.<base>.reasonix-<txID>-<index>.tmp` and `.bak`.
@@ -933,6 +941,10 @@ persisted (startup recovery retries idempotently; marking it aborted would stran
 a half-applied workspace permanently); clean -> abortTransaction (TxAborted +
 error). persistTransaction: writeJSONAtomic(txDir()/id.json); txDir =
 <ckptdir>/transactions (in-memory store: os.TempDir()/reasonix-ckpt-tx).
+A prepare failure removes staged publish temps even when the initial manifest
+persistence itself fails. Store checkpoints and checkpoint backups use compact
+json.Marshal; transaction manifests and undo state use two-space MarshalIndent.
+Both Go encoders HTML-escape `<`, `>`, `&`, U+2028 and U+2029.
 
 coverageFromTurnLocked: legacy when any checkpoint has schemaVersion 0 or
 <SchemaV2 or the Legacy flag; expired when any ExpiredFilePayload (CoveragePartial
@@ -970,14 +982,18 @@ RestoreSHA, RestoreMode) -> CompareIdentity conflict. InvalidateUndo persists th
 retirement BEFORE new activity (invalidateUndoLocked: TxInvalidated persisted
 `persist undo invalidation %s: %w`, current=nil); durable retirement is
 NOT reversed on cancellation. trackUndoTransaction(tx) sets pending (TxCommitting
-copy) and its finish func clears it on TxCommitted/TxAborted.
+copy), including during live commits; its finish func clears pending on
+TxCommitted/TxAborted and otherwise retains the latest nonterminal copy. If clean
+compensation cannot persist TxAborted, the transaction returns to TxCommitting so
+the pending barrier remains authoritative.
 
 Undo offer: OnUndoChange installs a content-free notify; AvailableUndo — nil
 store or barrier.HasWriters() -> nil; activeWriters>0 -> nil; returns
 RewindUndo{TransactionID, Turn, Files: len(tx.Targets)} with NO disk I/O and no
-file verification (execution re-validates); unlockUndoChange notifies outside the
-lock when the offer ID changed; undoOfferLocked = current TxCommitted &&
-pending==nil.
+file verification (execution re-validates); undoOfferLocked = current TxCommitted
+&& pending==nil. The finish function updates pending before unlockUndoChange
+compares the previously visible and newly visible offer IDs, then notifies outside
+the lock. Publishing the new current offer while pending does not notify early.
 
 ### 16.7 Crash recovery
 
@@ -988,14 +1004,18 @@ compensates files; a committing undo first reapplies the parent rewind then
 compensates; a manifest stays committing on failure so a later startup retries
 idempotently.
 
-recoverTransactions: unreadable tx dir -> undo.pending set to a committing
-placeholder + note; pass 1 collects undoneParents (TxCommitted undo manifests'
-ParentTransaction); per manifest: read error -> note + committing placeholder;
-TxPrepared -> remove publish temps, TxAbandoned `abandoned prepared
-transaction on recovery`; TxCommitting -> recoverCommittingTransaction;
-TxCommitted/TxInvalidated/TxUndone: undo kind skipped (a terminal op must not
-expose an older undo slot), latest committed rewind by CreatedAt tracked;
-restoreUndoSlot(latest, undoneParents, recovering).
+recoverTransactions collects the transaction-directory entries all-or-error. A
+missing directory is harmless; an unreadable directory or a dangling link to one
+installs a committing placeholder in undo.pending and records a note. Real
+directories named `*.json` are ignored, while every other non-directory manifest
+entry is attempted: read failure produces a committing placeholder.
+Pass 1 collects undoneParents (TxCommitted undo manifests' ParentTransaction).
+TxPrepared -> remove publish temps, TxAborted `abandoned prepared transaction on
+recovery`; TxCommitting -> recoverCommittingTransaction, retaining any result that
+stays committing; TxCommitted/TxInvalidated/TxUndone: undo kind skipped, latest
+terminal non-undo transaction by CreatedAt tracked (including `file_revert`). The
+offer is restored only when it is committed and not undone, while any retained
+committing placeholder keeps pending set.
 
 recoverCommittingTransaction(tx, applier): needsConversation (scope
 RewindConversation|RewindBoth) && applier==nil -> note `deferred conversation
@@ -1051,11 +1071,18 @@ detectCurrentEncoding(abs) else UTF8.
 
 CopyConversationPrefixTo(dir, sessionID, messageCount): dir=='' ->
 `conversation checkpoint destination unavailable`; Clean(dir)==Clean(s.dir)
--> `conversation checkpoint destination is the source`; copies
-Checkpoint{SchemaVersion: SchemaV2, Turn, Time, Prompt, MsgIndex, SessionID,
-Files: [], Coverage: CoverageNone, ForkCopied: true} for every checkpoint with
-0<=MsgIndex<messageCount via a fresh Store{dir} — file payloads, prepared plans,
-and undo transactions stay behind.
+-> `conversation checkpoint destination is the source`.
+
+It copies Checkpoint{SchemaVersion: SchemaV2, Turn, Time, Prompt, MsgIndex,
+SessionID, Files: [], Coverage: CoverageNone, ForkCopied: true} for every
+checkpoint with 0<=MsgIndex<messageCount via a fresh persistence-only Store{dir} —
+file payloads, prepared plans, and undo transactions stay behind. The source may
+be an in-memory Store; the destination must be persistent and is neither loaded
+nor startup-recovered by the fork.
+
+Source/destination equality is lexical Clean equality over the original path
+units; it does not canonicalize symlinks, query the filesystem, or case-fold the
+names.
 
 ### 16.10 Blob store (blob.go, 185L)
 
@@ -1072,14 +1099,26 @@ Size; Digest = sha256 hex.
 
 Fingerprint{AbsPath, Existed, IsDir, IsSymlink, Nlink, Mode, Size, SHA256,
 EncodingKind, Content}; CaptureOptions{MaxBytes (0=DefaultMaxFileBytes),
-ReadContent, WorkspaceRoot}. CapturePath: a relative path without a root ->
-`relative path without workspace root`; safePath fail ->
-GapOutsideWorkspace or GapSymlink; secureOpenWorkspaceFile NotExist ->
-{Existed:false}; open fail -> GapUnreadable; nlink>1 -> GapHardlink `hard
-link nlink=%d` + `hardlink not supported: %s`; directory ->
-GapCaptureFailed `path is a directory`; size>max -> GapOversized `size
-%d exceeds limit %d` + `file too large: %s`; reads via LimitReader
-max+1; sets Content/SHA256/Detect encoding.
+ReadContent, WorkspaceRoot}.
+
+CapturePath: a relative path without a root -> `relative path without workspace
+root`; safePath fail -> GapOutsideWorkspace or GapSymlink;
+secureOpenWorkspaceFile NotExist -> {Existed:false}; open fail -> GapUnreadable.
+
+nlink>1 -> GapHardlink `hard link nlink=%d` + `hardlink not supported: %s`;
+directory -> GapCaptureFailed `path is a directory`; size>max -> GapOversized
+`size %d exceeds limit %d` + `file too large: %s`; reads via LimitReader max+1;
+sets Content/SHA256/Detect encoding.
+
+Every CoverageGap.Path preserves the caller's original path argument, not the
+cleaned absolute path. An ordinary file leaves Nlink at zero; only nlink>1
+records a count and fails before the directory check.
+
+Windows path-component equality follows strings.EqualFold (Unicode simple
+folding, not full case folding or ASCII-only comparison). The reference toolchain
+is Go 1.26.11, whose Unicode tables are 15.0.0; generated fold tables and Windows
+path-cleaner expectations are pinned to that version rather than a newer local
+Go toolchain.
 
 FingerprintPath(root, path) = CapturePath with ReadContent=true (the SHA is
 needed); a gap becomes an error `%s: %s` (reason, detail).
@@ -1093,6 +1132,11 @@ ConflictModeChange (permission-only changes are conflicts per plan); SHA mismatc
 
 NormalizeRelPath(root, path): slash-cleaned workspace-relative (Windows
 backslash->slash), falls back to Clean(path).
+
+Rust keeps a bounded preview read even when ReadContent=false; Go's analogous
+preview read is unbounded. Rust's error-only capture API also cannot return the
+partially populated fingerprint that Go returns beside an error. These are
+recorded residuals, not reasons to weaken the resource bound or fabricate state.
 
 ### 16.12 Mutation barrier (barrier.go, 190L)
 
@@ -1177,6 +1221,11 @@ number stays reserved` / `checkpoint: turn file is not a checkpoint; its
 number stays reserved`. unreadableFloor = one past the highest reserved turn;
 UnreadableTurns returns them ascending.
 
+Go's loader skips directories but attempts every other numbered `.json` entry,
+including symlinks and junctions. Rust reserves those non-regular entries without
+following or loading their targets; an actual numbered directory remains ignored,
+and a readable expired copy still takes precedence over the root reservation.
+
 ### 16.16 Path validation, secure open, atomic JSON
 
 paths.go (121L): safePath(root, p) = join + clean + validateWorkspacePath;
@@ -1184,7 +1233,12 @@ workspaceRelative uses Rel+IsLocal (root=='' -> abs + volume root); OpenRoot wal
 via splitLocalPath with Lstat per component; NotExist -> nil (future components
 are fine); a symlink component -> errSymlinkPath `workspace path contains
 symbolic link: %s`. writeNewFile: MkdirAll 0755, O_WRONLY|O_CREATE|O_EXCL,
-write+Sync+Close, remove on failure.
+write+Sync+Close, remove on failure. On Windows, IsLocal additionally rejects
+reserved device names, colon-bearing components and other non-local spellings;
+the empty relative result for Rel(root, root) remains local. Rust enforces the
+same boundary conservatively, rejecting extension-bearing reserved bases too;
+exact device-name delegation to RtlIsDosDeviceName_U has no safe binding in this
+workspace.
 
 Secure primitives differ by platform:
 - Unix (secure_path_unix.go, 162L, !windows && !plan9): secureOpenParent(root,
@@ -1213,9 +1267,20 @@ Secure primitives differ by platform:
   not expose Windows link counts; returning one avoids rejecting ordinary files
   while the path/symlink guards still protect restore targets.
 
+Rust CapturePath opens entries descriptor-relatively with no-follow semantics on
+Windows as well as Unix, including junction/reparse-point refusal.
+
+The general secure-path mutation primitives still use the documented Windows
+validate-then-plain fallback; capture's stronger open does not upgrade that
+fallback into a race-confinement claim.
+
 atomic_json.go (35L): writeJSONAtomic = MarshalIndent 2-space + MkdirAll 0755 +
 AtomicWriteFileStrict 0o644; readJSONFile = ReadFile + Unmarshal `decode %s:
 %w`.
+
+Rust matches the bytes and typed failures, but std::fs::File has no fallible
+close step after fsync and its temp chmod remains path-based; those two Go error
+paths stay explicit residuals.
 
 ### 16.17 Evidence (internal/state/checkpoint tests, 85)
 

@@ -26,6 +26,51 @@ fn read_turn(dir: &Path, turn: i64) -> Value {
 }
 
 #[test]
+fn checkpoint_persistence_uses_compact_go_json_bytes() {
+    let (_temp, _root, dir, store) = fixture();
+    let sensitive = "<>&\u{2028}\u{2029}";
+    let escaped = "\\u003c\\u003e\\u0026\\u2028\\u2029";
+    let checkpoint = Checkpoint {
+        schema_version: SCHEMA_V2,
+        turn: 3,
+        time: serde_json::from_value::<Checkpoint>(json!({
+            "turn": 0,
+            "time": "2026-02-03T04:05:06.123456789Z"
+        }))
+        .unwrap()
+        .time,
+        prompt: format!("prompt {sensitive}"),
+        msg_index: 4,
+        session_id: format!("session {sensitive}"),
+        files: vec![FileSnap {
+            path: format!("dir/{sensitive}/file.txt"),
+            content: Some(format!("content {sensitive}")),
+            mode: 0o640,
+            ..FileSnap::default()
+        }],
+        coverage: Coverage::Complete,
+        ..Checkpoint::default()
+    };
+
+    store.persist_checkpoint(&checkpoint).unwrap();
+
+    let bytes = fs::read(turn_path(&dir, checkpoint.turn, false)).unwrap();
+    let expected = format!(
+        r#"{{"schemaVersion":2,"turn":3,"time":"2026-02-03T04:05:06.123456789Z","prompt":"prompt {escaped}","msgIndex":4,"sessionId":"session {escaped}","files":[{{"path":"dir/{escaped}/file.txt","content":"content {escaped}","mode":416}}],"coverage":"complete"}}"#
+    );
+    assert_eq!(bytes.as_slice(), expected.as_bytes());
+    assert!(!bytes.contains(&b'\n'));
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(
+        !text
+            .chars()
+            .any(|character| matches!(character, '<' | '>' | '&' | '\u{2028}' | '\u{2029}'))
+    );
+    let decoded: Checkpoint = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, checkpoint);
+}
+
+#[test]
 fn v1_load_marks_legacy_and_preserves_inline_preimage() {
     let (temp, root, dir, _) = fixture();
     fs::create_dir_all(&dir).unwrap();
@@ -102,6 +147,156 @@ fn expired_copy_loads_without_payload_and_keeps_boundary() {
     assert_eq!(store.bounds().get(&3), Some(&12));
     assert!(store.unreadable_turns().is_empty());
     assert_eq!(store.next_turn(), 4);
+    drop(temp);
+}
+
+#[cfg(windows)]
+fn create_non_regular_turn(link: &Path, target: &Path) {
+    fs::create_dir(target).unwrap();
+    let comspec = std::env::var_os("COMSPEC").expect("Windows COMSPEC is required");
+    let system_root = std::env::var_os("SystemRoot").expect("Windows SystemRoot is required");
+    let output = std::process::Command::new(comspec)
+        .env("SystemRoot", system_root)
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "mklink /J failed: {output:?}");
+}
+
+#[cfg(unix)]
+fn create_non_regular_turn(link: &Path, target: &Path) {
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+fn assert_non_regular_turn_reserved(root: &Path, dir: &Path, link: &Path, turn: i64) {
+    let link_target = fs::read_link(link).unwrap();
+    let check = |store: &Store| {
+        assert_eq!(
+            (store.unreadable_turns(), store.next_turn()),
+            (vec![turn], turn + 1),
+            "non-regular turn entry must be reserved without loading its target"
+        );
+        assert!(store.list().is_empty());
+        assert_eq!(fs::read_link(link).unwrap(), link_target);
+    };
+    check(&Store::new(Some(dir), root));
+    check(&Store::new(Some(dir), root));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_junction_turn_is_reserved_without_following() {
+    let (temp, root, dir, _) = fixture();
+    fs::create_dir_all(&dir).unwrap();
+    let link = dir.join("turn-7.json");
+    let target = temp.path().join("junction-target");
+    create_non_regular_turn(&link, &target);
+    fs::write(target.join("marker"), b"keep").unwrap();
+
+    assert_non_regular_turn_reserved(root.path(), &dir, &link, 7);
+
+    assert_eq!(fs::read(target.join("marker")).unwrap(), b"keep");
+    drop(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_symlink_turn_is_reserved_without_following() {
+    let (temp, root, dir, _) = fixture();
+    fs::create_dir_all(&dir).unwrap();
+    let link = dir.join("turn-7.json");
+    let target = temp.path().join("checkpoint-target.json");
+    let payload = json!({
+        "schemaVersion": 2,
+        "turn": 7,
+        "time": "2026-01-02T03:04:05Z",
+        "prompt": "linked payload",
+        "msgIndex": 4,
+        "files": [{"path": "a.txt", "content": "do not load"}],
+        "coverage": "complete"
+    })
+    .to_string();
+    fs::write(&target, &payload).unwrap();
+    create_non_regular_turn(&link, &target);
+
+    assert_non_regular_turn_reserved(root.path(), &dir, &link, 7);
+
+    assert_eq!(fs::read(&target).unwrap(), payload.as_bytes());
+    drop(temp);
+}
+
+#[test]
+fn readable_expired_copy_clears_non_regular_root_reservation() {
+    let (temp, root, dir, _) = fixture();
+    fs::create_dir_all(dir.join("expired")).unwrap();
+    let link = dir.join("turn-7.json");
+    let target = temp.path().join("non-regular-target");
+    create_non_regular_turn(&link, &target);
+    let link_target = fs::read_link(&link).unwrap();
+    let store = Store::new(Some(&dir), root.path());
+    assert_eq!(store.unreadable_turns(), vec![7]);
+    assert_eq!(store.next_turn(), 8);
+    assert!(store.list().is_empty());
+
+    fs::write(
+        dir.join("expired/turn-7.json"),
+        json!({
+            "schemaVersion": 2,
+            "turn": 7,
+            "time": "2026-01-02T03:04:05Z",
+            "prompt": "readable expired copy",
+            "msgIndex": 1,
+            "files": [{"path": "a.txt", "content": "stale", "blobRef": digest(b"stale")}],
+            "coverage": "complete"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    store.load().unwrap();
+
+    assert!(store.unreadable_turns().is_empty());
+    assert_eq!(store.list().len(), 1);
+    let meta = &store.list()[0];
+    assert!(meta.expired_file_payload);
+    assert_eq!(meta.coverage, Coverage::Partial);
+    assert_eq!(meta.disabled_reason, "file recovery payload expired");
+    assert!(
+        meta.coverage_gaps
+            .iter()
+            .any(|gap| gap.reason == GAP_EXPIRED_PAYLOAD)
+    );
+    assert!(store.file_state("a.txt").is_none());
+    assert_eq!(store.bounds().get(&7), Some(&1));
+    assert_eq!(store.next_turn(), 8);
+    assert_eq!(fs::read_link(&link).unwrap(), link_target);
+
+    let reloaded = Store::new(Some(&dir), root.path());
+    assert!(reloaded.unreadable_turns().is_empty());
+    assert!(reloaded.list()[0].expired_file_payload);
+    assert_eq!(reloaded.next_turn(), 8);
+    assert_eq!(fs::read_link(&link).unwrap(), link_target);
+    drop(temp);
+}
+
+#[test]
+fn numbered_turn_directory_is_ignored() {
+    let (temp, root, dir, _) = fixture();
+    let turn_dir = dir.join("turn-7.json");
+    fs::create_dir_all(&turn_dir).unwrap();
+    fs::write(turn_dir.join("marker"), b"keep").unwrap();
+
+    let store = Store::new(Some(&dir), root.path());
+    assert!(store.unreadable_turns().is_empty());
+    assert!(store.list().is_empty());
+    assert_eq!(store.next_turn(), 0);
+
+    let reloaded = Store::new(Some(&dir), root.path());
+    assert!(reloaded.unreadable_turns().is_empty());
+    assert!(reloaded.list().is_empty());
+    assert_eq!(reloaded.next_turn(), 0);
+    assert_eq!(fs::read(turn_dir.join("marker")).unwrap(), b"keep");
     drop(temp);
 }
 
@@ -332,16 +527,25 @@ fn outside_workspace_after_is_a_gap_not_a_failure() {
     let meta = &store.list()[0];
     assert_eq!(meta.coverage, Coverage::None);
     assert_eq!(meta.coverage_gaps[0].reason, GAP_OUTSIDE_WORKSPACE);
+    assert_eq!(meta.coverage_gaps[0].path, outside.to_string_lossy());
+    let error = capture_path(
+        &outside,
+        &CaptureOptions {
+            workspace_root: root.path().to_path_buf(),
+            read_content: true,
+            ..CaptureOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert!(error.is_outside_workspace());
     assert!(matches!(
-        capture_path(
-            &outside,
-            &CaptureOptions {
-                workspace_root: root.path().to_path_buf(),
-                read_content: true,
-                ..CaptureOptions::default()
-            }
-        ),
-        Err(CaptureError::Path(PathError::OutsideWorkspace { .. }))
+        error,
+        CaptureError::AtPath { path, source }
+            if path == outside
+                && matches!(
+                    source.as_ref(),
+                    CaptureError::Path(PathError::OutsideWorkspace { .. })
+                )
     ));
 }
 

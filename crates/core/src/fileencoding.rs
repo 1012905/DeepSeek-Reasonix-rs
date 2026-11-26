@@ -1,10 +1,7 @@
-//! Byte-level detection and decoding for user-authored text files.
+//! Byte-level detection, decoding, and encoding for user-authored text files.
 //!
-//! Port of internal/base/fileutil/encoding: the cascade (BOM, BOM-less
-//! UTF-16 heuristic, strict UTF-8, GB18030, GBK, lossy pass-through) keeps
-//! CJK Windows files readable without silently mangling their bytes. This
-//! module covers the decode side; the encode side (UnencodableError) and
-//! streaming decode of process output belong to the file-tools slice.
+//! The BOM, BOM-less UTF-16, strict UTF-8, GB18030, GBK, and lossy cascade
+//! keeps CJK Windows files readable without silently changing their bytes.
 
 use std::borrow::Cow;
 use std::fs;
@@ -335,6 +332,168 @@ pub fn read_file_utf8(path: &Path) -> io::Result<Vec<u8>> {
     Ok(decode_to_utf8(&data).into_owned())
 }
 
+/// The identity of a write holding a character the file's encoding cannot represent.
+pub const ERR_UNENCODABLE: &str = "character not representable in the file's encoding";
+
+/// The first character a legacy charset cannot represent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnencodableError {
+    pub charset: &'static str,
+    pub rune: char,
+    /// Byte offset of `rune` in the text being written.
+    pub offset: usize,
+    /// Go `%q` of the rune (strconv.Quote on a one-rune string).
+    pub quote: String,
+}
+
+impl UnencodableError {
+    /// Go's `Unwrap` identity, exposed for typed matching.
+    pub fn is_unencodable(&self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Display for UnencodableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} (U+{:04X}) at byte {} cannot be written in {}, the file's encoding",
+            self.quote, self.rune as u32, self.offset, self.charset
+        )
+    }
+}
+
+impl std::error::Error for UnencodableError {}
+
+/// Encodes UTF-8 text back into the detected file encoding.
+pub fn encode(text: &str, kind: Kind) -> Result<Vec<u8>, UnencodableError> {
+    encode_bytes(text.as_bytes(), kind)
+}
+
+/// Encodes bytes, preserving invalid bytes for the lossy pass-through kind.
+pub fn encode_bytes(text: &[u8], kind: Kind) -> Result<Vec<u8>, UnencodableError> {
+    match kind {
+        Kind::Utf8Bom => {
+            let mut out = Vec::with_capacity(text.len() + 3);
+            out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+            out.extend_from_slice(text);
+            Ok(out)
+        }
+        Kind::Utf16Le => encode_utf16(text, true, true),
+        Kind::Utf16Be => encode_utf16(text, false, true),
+        Kind::Utf16LeNoBom => encode_utf16(text, true, false),
+        Kind::Utf16BeNoBom => encode_utf16(text, false, false),
+        Kind::Gb18030 => encode_charset(text, encoding_rs::GB18030, "GB18030"),
+        Kind::Gbk => encode_charset(text, encoding_rs::GBK, "GBK"),
+        Kind::Utf8 | Kind::LossyUtf8 => Ok(text.to_vec()),
+    }
+}
+
+fn encode_utf16(text: &[u8], little: bool, with_bom: bool) -> Result<Vec<u8>, UnencodableError> {
+    let body = std::str::from_utf8(text).map_err(|_| unreachable_lossy(text))?;
+    let mut out = Vec::with_capacity(body.len() * 2 + 2);
+    if with_bom {
+        out.extend_from_slice(if little { &[0xFF, 0xFE] } else { &[0xFE, 0xFF] });
+    }
+    for unit in body.encode_utf16() {
+        if little {
+            out.extend_from_slice(&unit.to_le_bytes());
+        } else {
+            out.extend_from_slice(&unit.to_be_bytes());
+        }
+    }
+    Ok(out)
+}
+
+fn unreachable_lossy(text: &[u8]) -> UnencodableError {
+    let lossy = String::from_utf8_lossy(text).into_owned();
+    let offset = lossy
+        .chars()
+        .take_while(|c| *c != char::REPLACEMENT_CHARACTER)
+        .map(char::len_utf8)
+        .sum();
+    UnencodableError {
+        charset: "UTF-16",
+        rune: char::REPLACEMENT_CHARACTER,
+        offset,
+        quote: go_quote_char(char::REPLACEMENT_CHARACTER),
+    }
+}
+
+fn encode_charset(
+    text: &[u8],
+    enc: &'static encoding_rs::Encoding,
+    name: &'static str,
+) -> Result<Vec<u8>, UnencodableError> {
+    let body = std::str::from_utf8(text).map_err(|_| unreachable_lossy(text))?;
+    let (cow, _had_bom, had_errors) = enc.encode(body);
+    if !had_errors {
+        return Ok(cow.into_owned());
+    }
+    let mut offset = 0usize;
+    let mut out = Vec::with_capacity(body.len());
+    for c in body.chars() {
+        let mut buf = String::with_capacity(4);
+        buf.push(c);
+        let (part, _enc, errs) = enc.encode(&buf);
+        if errs {
+            return Err(UnencodableError {
+                charset: name,
+                rune: c,
+                offset,
+                quote: go_quote_char(c),
+            });
+        }
+        out.extend_from_slice(&part);
+        offset += c.len_utf8();
+    }
+    Ok(out)
+}
+
+fn go_quote_char(c: char) -> String {
+    let mut s = String::with_capacity(8);
+    s.push('"');
+    go_quote_into(c, &mut s);
+    s.push('"');
+    s
+}
+
+fn go_quote_into(c: char, out: &mut String) {
+    match c {
+        '\\' => out.push_str("\\\\"),
+        '"' => out.push_str("\\\""),
+        '\n' => out.push_str("\\n"),
+        '\r' => out.push_str("\\r"),
+        '\t' => out.push_str("\\t"),
+        '\x07' => out.push_str("\\a"),
+        '\x08' => out.push_str("\\b"),
+        '\x0b' => out.push_str("\\v"),
+        '\x0c' => out.push_str("\\f"),
+        c if is_go_printable(c) => out.push(c),
+        c if (c as u32) < 0x100 => out.push_str(&format!("\\x{:02x}", c as u32)),
+        c if (c as u32) < 0x10000 => out.push_str(&format!("\\u{:04x}", c as u32)),
+        c => out.push_str(&format!("\\U{:08x}", c as u32)),
+    }
+}
+
+fn is_go_printable(c: char) -> bool {
+    if c == ' ' {
+        return true;
+    }
+    !c.is_control() && !c.is_whitespace() && !is_unprintable_format(c)
+}
+
+fn is_unprintable_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +579,53 @@ mod tests {
         fs::write(&path, "const x = 1\n").unwrap();
         assert_eq!(read_file_utf8(&path).unwrap(), b"const x = 1\n");
         fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn core_encode_round_trips_utf8_utf16_and_bom() {
+        let cases = [
+            (Kind::Utf8, "plain €".as_bytes().to_vec()),
+            (Kind::Utf8Bom, b"\xEF\xBB\xBFtitle".to_vec()),
+            (Kind::Utf16Le, b"\xFF\xFEh\x00i\x00".to_vec()),
+            (Kind::Utf16Be, b"\xFE\xFF\x00h\x00i".to_vec()),
+        ];
+        for (kind, expected) in cases {
+            let text = decode(&expected, kind);
+            assert_eq!(encode_bytes(&text, kind).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn core_encode_gbk_restores_cp936_euro() {
+        let data = [0xC4, 0xE3, 0x80, 0x80, 0x80];
+        let text = decode(&data, Kind::Gbk);
+        assert_eq!(encode_bytes(&text, Kind::Gbk).unwrap(), data);
+    }
+
+    #[test]
+    fn core_unencodable_error_preserves_identity_and_first_rune() {
+        let error = encode("a😀b", Kind::Gbk).unwrap_err();
+        assert!(error.is_unencodable());
+        assert_eq!(error.charset, "GBK");
+        assert_eq!(error.rune, '😀');
+        assert_eq!(error.offset, 1);
+        assert_eq!(error.quote, "\"😀\"");
+        assert_eq!(
+            ERR_UNENCODABLE,
+            "character not representable in the file's encoding"
+        );
+    }
+
+    #[test]
+    fn core_encode_bytes_preserves_lossy_input() {
+        let data = [b'a', 0xFF, b'\n'];
+        assert_eq!(encode_bytes(&data, Kind::LossyUtf8).unwrap(), data);
+    }
+
+    #[test]
+    fn core_go_quote_char_matches_go_escapes() {
+        assert_eq!(go_quote_char('\n'), "\"\\n\"");
+        assert_eq!(go_quote_char('\u{1F600}'), "\"😀\"");
+        assert_eq!(go_quote_char('\u{200B}'), "\"\\u200b\"");
     }
 }

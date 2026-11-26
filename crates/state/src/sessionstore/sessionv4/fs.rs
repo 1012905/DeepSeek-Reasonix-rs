@@ -10,6 +10,8 @@ use cap_std::ambient_authority;
 #[cfg(windows)]
 use cap_std::fs::OpenOptionsExt as _;
 use cap_std::fs::{Dir, File as CapFile, OpenOptions};
+#[cfg(windows)]
+use reasonix_core::simple_fold::equal_os_str;
 
 use super::error::V4Error;
 
@@ -363,23 +365,13 @@ fn component_eq(left: &Component<'_>, right: &Component<'_>) -> bool {
                         Prefix::UNC(left_server, left_share),
                         Prefix::VerbatimUNC(right_server, right_share),
                     ) => {
-                        left_server
-                            .to_string_lossy()
-                            .eq_ignore_ascii_case(&right_server.to_string_lossy())
-                            && left_share
-                                .to_string_lossy()
-                                .eq_ignore_ascii_case(&right_share.to_string_lossy())
+                        equal_os_str(left_server, right_server)
+                            && equal_os_str(left_share, right_share)
                     }
-                    _ => left
-                        .as_os_str()
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy()),
+                    _ => equal_os_str(left.as_os_str(), right.as_os_str()),
                 }
             }
-            _ => left
-                .as_os_str()
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy()),
+            _ => equal_os_str(left.as_os_str(), right.as_os_str()),
         }
     }
     #[cfg(not(windows))]
@@ -397,4 +389,31 @@ pub(crate) fn child_name(name: &str) -> bool {
             .components()
             .next()
             .is_some_and(|part| matches!(part, Component::Normal(_)))
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolute_relative_uses_go_simple_fold() {
+        let parts =
+            absolute_relative(Path::new("C:\\Root-K"), Path::new("c:\\root-k\\file.txt")).unwrap();
+        assert!(matches!(parts.as_slice(), [PathPart::Normal(name)] if name == "file.txt"));
+        assert!(
+            absolute_relative(Path::new("C:\\Root-ß"), Path::new("C:\\root-ss\\file.txt"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn absolute_relative_fails_closed_for_distinct_invalid_utf16() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let left = OsString::from_wide(&[0xd800]);
+        let right = OsString::from_wide(&[0xd801]);
+        let root = PathBuf::from("C:\\").join(left);
+        let target = PathBuf::from("C:\\").join(right).join("file.txt");
+        assert!(absolute_relative(&root, &target).is_none());
+    }
 }
