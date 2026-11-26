@@ -3,7 +3,9 @@ use std::fs;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use super::disk_tests::support;
 use super::*;
+use crate::store::naming::session_inbox_dir;
 
 fn open_store() -> (tempfile::TempDir, Store) {
     let temp = tempfile::tempdir().unwrap();
@@ -149,6 +151,39 @@ fn owned_ids_are_exact_and_an_empty_slice_owns_nothing() {
 }
 
 #[test]
+fn recovery_accumulates_below_the_live_item_cap() {
+    let (_temp, store) = open_store();
+    let first = enqueue(&store, "first");
+    let second = enqueue(&store, "second");
+    store
+        .set_state(&first, STATE_RUNNING.clone(), "running")
+        .unwrap();
+    store
+        .set_state(&second, STATE_RUNNING.clone(), "running")
+        .unwrap();
+
+    assert_eq!(
+        store
+            .recover_orphaned_in_flight(std::slice::from_ref(&first))
+            .unwrap(),
+        1
+    );
+    let after_first = store.snapshot();
+    assert_eq!(after_first.recovered_n, 1);
+    assert_eq!(after_first.capacity.items, 2);
+
+    store
+        .set_state(&first, STATE_RUNNING.clone(), "running again")
+        .unwrap();
+    assert_eq!(store.recover_orphaned_in_flight(&[]).unwrap(), 1);
+    let after_second = store.snapshot();
+    assert_eq!(after_second.recovered_n, 2);
+    assert_eq!(after_second.capacity.items, 2);
+    let disk = decode_manifest(&fs::read(store.dir().join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(disk.recovered_n, 2);
+}
+
+#[test]
 fn recovery_refreshes_the_manifest_and_re_resolves_ownership_for_every_item() {
     let (temp, store) = open_store();
     let running = enqueue(&store, "running");
@@ -268,6 +303,35 @@ fn an_initial_candidate_still_checks_store_mutability() {
         store.recover_orphaned_in_flight(&[]),
         Err(Error::Closed)
     ));
+}
+
+#[test]
+fn a_newer_schema_active_candidate_is_readonly_and_never_rewritten() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut manifest = empty_manifest(process_run_id());
+    manifest.schema_version = SCHEMA_VERSION + 1;
+    manifest.revision = 12;
+    manifest
+        .items
+        .push(support::item("future-running", STATE_RUNNING.as_str()));
+    support::write_manifest(temp.path(), "session", &manifest);
+    let path = session_inbox_dir(&temp.path().join("session.jsonl")).join("manifest.json");
+    let before = fs::read(&path).unwrap();
+
+    let store = Store::open(&temp.path().join("session.jsonl"), Limits::default()).unwrap();
+    let snapshot = store.snapshot();
+    assert!(snapshot.readonly);
+    assert!(snapshot.paused);
+    assert!(!snapshot.recovered);
+    assert_eq!(snapshot.recovered_n, 0);
+    assert_eq!(snapshot.items.as_ref().unwrap()[0].state, STATE_RUNNING);
+
+    assert!(matches!(
+        store.recover_orphaned_in_flight(&[]),
+        Err(Error::SchemaReadonly)
+    ));
+    assert_eq!(store.snapshot(), snapshot);
+    assert_eq!(fs::read(path).unwrap(), before);
 }
 
 #[test]

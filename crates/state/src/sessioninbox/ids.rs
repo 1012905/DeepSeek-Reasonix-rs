@@ -11,13 +11,16 @@ pub fn process_run_id() -> &'static str {
 }
 
 pub(crate) fn new_random_id() -> String {
-    random_id_with(|bytes| getrandom::fill(bytes).is_ok())
+    random_id_with(|bytes| getrandom::fill(bytes).is_ok(), fallback_random_id)
 }
 
-pub(super) fn random_id_with(mut random: impl FnMut(&mut [u8; 16]) -> bool) -> String {
+pub(super) fn random_id_with(
+    mut random: impl FnMut(&mut [u8; 16]) -> bool,
+    fallback: impl FnOnce(&[u8; 16]) -> String,
+) -> String {
     let mut bytes = [0u8; 16];
     if !random(&mut bytes) {
-        return fallback_random_id(&bytes);
+        return fallback(&bytes);
     }
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;

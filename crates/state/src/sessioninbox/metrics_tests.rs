@@ -3,6 +3,14 @@ use std::collections::BTreeSet;
 use super::*;
 
 #[test]
+fn default_metrics_serialize_exactly_like_go() {
+    assert_eq!(
+        serde_json::to_string(&MetricsSnapshot::default()).unwrap(),
+        r#"{"enqueue":0,"enqueueBytes":0,"recovered":0,"paused":0,"steerAccepted":0,"steerRejected":0,"capacityReject":0,"uncertain":0,"txFail":0}"#
+    );
+}
+
+#[test]
 fn metrics_use_process_global_deltas_and_the_exact_go_json_names() {
     let before = metrics();
     note_enqueue(7);

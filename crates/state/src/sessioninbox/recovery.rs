@@ -11,7 +11,6 @@ use super::types::{
 use crate::sessionstore::eventlog::record::CreatedAt;
 
 impl Store {
-    /// Recovers active items whose exact ids are absent from the owned set.
     pub fn recover_orphaned_in_flight(&self, owned_ids: &[String]) -> Result<i64> {
         let owned: BTreeSet<&str> = owned_ids
             .iter()
