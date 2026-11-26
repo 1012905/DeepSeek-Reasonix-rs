@@ -458,6 +458,25 @@ fn startup_ignores_terminal_transaction_manifests() {
 }
 
 #[test]
+fn startup_aborted_newer_transaction_does_not_hide_committed_undo_offer() {
+    let (fixture, original) = committed_fixture();
+    let (mut newer, _) = single_manifest(&fixture.dir);
+    newer.id = "newer-aborted".to_owned();
+    newer.state = TransactionState::Aborted;
+    newer.created_at = crate::sessionstore::eventlog::record::CreatedAt::from_datetime(
+        newer.created_at.get() + chrono::Duration::seconds(1),
+    );
+    save_manifest(&fixture.dir, &newer);
+
+    let recovered = restart(&fixture);
+
+    assert_eq!(
+        recovered.current_undo_offer().unwrap().id,
+        original.transaction_id
+    );
+}
+
+#[test]
 fn unreadable_manifest_and_recovery_directory_produce_notes() {
     let fixture = fixture();
     fs::create_dir_all(transaction_dir(&fixture.dir)).unwrap();
