@@ -10,7 +10,6 @@ use super::manifest::valid_sha256;
 use super::sha256_hex;
 use super::types::{Error, PromptEnvelope};
 
-#[cfg(test)]
 pub(crate) fn encode_envelope(env: &PromptEnvelope) -> Result<(Vec<u8>, String, i64)> {
     let data = marshal(env)?.into_bytes();
     let checksum = sha256_hex(&data);

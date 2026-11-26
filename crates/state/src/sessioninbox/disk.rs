@@ -137,7 +137,6 @@ impl Store {
         Ok(transaction)
     }
 
-    #[cfg(test)]
     pub(super) fn notify_locked(&self, state: &StoreState, snapshot: InboxSnapshot) {
         if state.listeners.is_empty() {
             return;
@@ -150,7 +149,7 @@ impl Store {
         });
     }
 
-    fn lock_state(&self) -> MutexGuard<'_, StoreState> {
+    pub(super) fn lock_state(&self) -> MutexGuard<'_, StoreState> {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

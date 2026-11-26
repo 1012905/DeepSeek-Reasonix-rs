@@ -1,5 +1,4 @@
-//! Durable session-inbox wire types, manifest validation, and disk ownership.
-//! Queue and admission operations are intentionally absent.
+//! Durable session-inbox wire types, manifest validation, and queue ownership.
 
 mod blob;
 mod disk;
@@ -7,17 +6,18 @@ mod disk_blob;
 mod disk_fs;
 mod disk_manifest;
 mod disk_recovery;
+mod enqueue;
+mod idempotency;
 mod ids;
 mod manifest;
+mod operations;
 mod types;
 
 pub use disk::{Store, remove_dir};
 pub use ids::{preview_text, process_run_id, sha256_hex};
 pub use types::*;
 
-#[cfg(test)]
-pub(crate) use blob::encode_envelope;
-pub(crate) use blob::idempotency_request_hash;
+pub(crate) use blob::{encode_envelope, idempotency_request_hash};
 
 pub use manifest::{
     IDEMPOTENCY_RECEIPT_TTL, IdempotencyReceipt, MAX_IDEMPOTENCY_KEY_BYTES,
@@ -37,5 +37,7 @@ mod disk_tests;
 mod ids_tests;
 #[cfg(test)]
 mod manifest_tests;
+#[cfg(test)]
+mod operations_tests;
 #[cfg(test)]
 mod types_tests;

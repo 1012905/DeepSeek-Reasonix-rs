@@ -59,7 +59,6 @@ impl super::disk::Store {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(super) fn read_manifest_without_transaction(&self, state: &mut StoreState) -> Result<()> {
         let inbox = match super::disk_fs::validate_private_dir(&state.binding.dir) {
             Ok(inbox) => inbox,
@@ -94,7 +93,6 @@ impl super::disk::Store {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(super) fn commit_manifest_locked(
         &self,
         state: &mut StoreState,
@@ -173,7 +171,6 @@ impl super::disk::Store {
         }
     }
 
-    #[cfg(test)]
     pub(super) fn mutable_locked(&self, state: &StoreState) -> Result<()> {
         if state.lifecycle.closed {
             return Err(Error::Closed);

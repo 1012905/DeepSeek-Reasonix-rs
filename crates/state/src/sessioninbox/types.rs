@@ -151,6 +151,14 @@ pub fn valid_inbox_state(state: &InboxState) -> bool {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub struct ReadItemError {
+    pub meta: Box<InboxItemMeta>,
+    #[source]
+    pub source: Error,
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("session inbox item limit reached")]
     CapacityItems,
@@ -223,6 +231,11 @@ pub enum Error {
     InvalidRequestFingerprint,
     #[error("invalid idempotency receipt")]
     InvalidIdempotencyReceipt,
+    #[error("sessioninbox: read queue: {read} (transaction: {transaction})")]
+    QueueRead {
+        read: Box<Error>,
+        transaction: Box<Error>,
+    },
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
