@@ -1,4 +1,6 @@
-// Ported from Go filepathlite/path.go and path_windows.go (BSD-3-Clause).
+// Copyright 2010, 2024 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the NOTICE file.
 
 use std::ffi::OsString;
 #[cfg(unix)]
