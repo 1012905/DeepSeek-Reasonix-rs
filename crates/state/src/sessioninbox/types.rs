@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::io;
+use std::path::PathBuf;
 
 use base64::Engine;
 use base64::alphabet;
@@ -166,6 +168,25 @@ pub enum Error {
     SchemaReadonly,
     #[error("inbox is closed")]
     Closed,
+    #[error("empty session path")]
+    EmptySessionPath,
+    #[error("refusing non-regular session inbox entry: {path}")]
+    NotRegularFile { path: PathBuf },
+    #[error("session inbox file changed while opening: {path}")]
+    FileChanged { path: PathBuf },
+    #[error("session inbox file {path} exceeds {max_bytes} bytes")]
+    TooLarge { path: PathBuf, max_bytes: u64 },
+    #[error("session inbox blob checksum mismatch")]
+    ChecksumMismatch,
+    #[error("session inbox transaction lock timed out: {path}")]
+    LockTimeout { path: PathBuf },
+    #[error("session inbox {op} {path}: {source}")]
+    Io {
+        op: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("inbox item body is empty")]
     Empty,
     #[error("inbox is paused")]
@@ -198,6 +219,8 @@ pub enum Error {
     MissingIdempotencyRequestHash,
     #[error("invalid idempotency request hash")]
     InvalidIdempotencyRequestHash,
+    #[error("unsupported or invalid inbox request fingerprint; automatic replay is disabled")]
+    InvalidRequestFingerprint,
     #[error("invalid idempotency receipt")]
     InvalidIdempotencyReceipt,
     #[error(transparent)]
