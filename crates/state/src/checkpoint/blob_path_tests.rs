@@ -322,11 +322,14 @@ fn capture_path_rejects_unix_directories_as_directories_not_hardlinks() {
     let root = temp.path().to_path_buf();
     let directory = root.join("dir");
     fs::create_dir(&directory).unwrap();
-    assert!(fs::metadata(&directory).unwrap().nlink() > 1);
-    assert!(matches!(
-        fingerprint_path(&root, &directory),
-        Err(CaptureError::Directory { .. })
-    ));
+    let nlink = fs::metadata(&directory).unwrap().nlink();
+    assert!(nlink > 1);
+    let error = fingerprint_path(&root, &directory).unwrap_err();
+    match &error {
+        CaptureError::Hardlink { nlink: actual, .. } => assert_eq!(*actual, nlink),
+        other => panic!("expected hardlink error, got {other:?}"),
+    }
+    assert_eq!(error.gap().reason, GAP_HARDLINK);
 }
 
 #[cfg(unix)]

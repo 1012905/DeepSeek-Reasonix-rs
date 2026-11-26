@@ -321,14 +321,14 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
         size: metadata.len(),
         ..Fingerprint::default()
     };
-    if fingerprint.is_dir {
-        return Err(CaptureError::Directory { path: absolute });
-    }
     if fingerprint.nlink > 1 {
         return Err(CaptureError::Hardlink {
             path: absolute,
             nlink: fingerprint.nlink,
         });
+    }
+    if fingerprint.is_dir {
+        return Err(CaptureError::Directory { path: absolute });
     }
     if !opts.read_content {
         return Ok(fingerprint);
