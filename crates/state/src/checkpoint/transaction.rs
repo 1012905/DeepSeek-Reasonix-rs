@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -136,8 +137,43 @@ pub enum RecoveryPhase {
     PersistAborted,
     Compensated,
     CompensationPending,
+    ConversationPending,
     DeferredConversation,
     UnsupportedKind,
+}
+
+#[derive(Debug, Default)]
+pub struct RecoveryReport {
+    pub notes: Vec<RecoveryNote>,
+    pub errors: Vec<RecoveryError>,
+}
+
+#[derive(Debug, Error)]
+pub enum RecoveryError {
+    #[error("read transaction recovery directory {path}: {source}")]
+    ReadDirectory {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("read transaction manifest {path}: {source}")]
+    ReadManifest {
+        path: PathBuf,
+        #[source]
+        source: SecureError,
+    },
+    #[error("transaction manifest is not a regular file: {path}")]
+    InvalidManifest { path: PathBuf },
+    #[error("unsupported transaction kind {kind}")]
+    UnsupportedKind { kind: String },
+    #[error("transaction {transaction_id}: missing forward conversation payload")]
+    MissingForwardConversation { transaction_id: String },
+    #[error("transaction {transaction_id}: {source}")]
+    Transaction {
+        transaction_id: String,
+        #[source]
+        source: TransactionError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

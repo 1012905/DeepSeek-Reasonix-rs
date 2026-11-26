@@ -350,6 +350,75 @@ impl Store {
         }
     }
 
+    pub(super) fn pending_undo_transaction(&self) -> Option<TransactionManifest> {
+        self.runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .clone()
+    }
+
+    pub(super) fn finish_pending_undo_recovery(&self, transaction: &TransactionManifest) {
+        let changed = {
+            let _operation = self
+                .runtime
+                .undo
+                .operation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut offers = self
+                .runtime
+                .undo
+                .offers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if offers
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.id != transaction.id)
+            {
+                return;
+            }
+            let previous = offers.visible_offer().map(|offer| offer.id.clone());
+            if transaction.state == TransactionState::Aborted {
+                offers.pending = None;
+            } else {
+                offers.pending = Some(transaction.clone());
+            }
+            previous != offers.visible_offer().map(|offer| offer.id.clone())
+        };
+        if changed {
+            self.notify_undo_change();
+        }
+    }
+
+    pub(super) fn block_undo_recovery(&self, pending: TransactionManifest) {
+        let changed = {
+            let _operation = self
+                .runtime
+                .undo
+                .operation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut offers = self
+                .runtime
+                .undo
+                .offers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let previous = offers.visible_offer().map(|offer| offer.id.clone());
+            if offers.pending.is_none() {
+                offers.pending = Some(pending);
+            }
+            previous != offers.visible_offer().map(|offer| offer.id.clone())
+        };
+        if changed {
+            self.notify_undo_change();
+        }
+    }
+
     pub(super) fn restore_undo_slot(
         &self,
         latest: Option<TransactionManifest>,

@@ -38,8 +38,8 @@ pub use secure_path::{
 };
 pub use store::{Store, StoreConfig, StoreError, expired_dir, turn_path};
 pub use transaction::{
-    ConversationApplier, ConversationError, ConversationPhase, RecoveryNote, RecoveryPhase,
-    TransactionError, TransactionInjection, TransactionPhase,
+    ConversationApplier, ConversationError, ConversationPhase, RecoveryError, RecoveryNote,
+    RecoveryPhase, RecoveryReport, TransactionError, TransactionInjection, TransactionPhase,
 };
 pub use types::*;
 pub use writer_admission::{RegisteredWriter, WriterError, WriterErrorKind};

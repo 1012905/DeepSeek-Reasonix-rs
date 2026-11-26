@@ -16,8 +16,8 @@ use super::transaction_prepare::{
 };
 use super::transaction_publish::{cleanup_committed, publish_files, start_publish};
 use super::types::{
-    CONFLICT_MANUAL_EDIT, Coverage, FileStage, RewindConflict, RewindPlan, RewindResult,
-    RewindScope, SCHEMA_V2, TransactionManifest, TransactionState, TransactionTarget,
+    CONFLICT_MANUAL_EDIT, Coverage, FileStage, RewindConflict, RewindPlan, RewindResult, SCHEMA_V2,
+    TransactionManifest, TransactionState, TransactionTarget,
 };
 
 impl Store {
@@ -253,7 +253,8 @@ fn publish_undo(
                 phase: ConversationPhase::RestoreConversation,
                 source,
             };
-            let compensation = restore_original_rewind(store, original, Some(applier)).err();
+            let compensation =
+                transaction_compensate::reapply_rewind(original, Some(applier)).err();
             return fail_undo(store, undo, stages, cause, compensation, injection);
         }
         result.conversation_ok = true;
@@ -278,48 +279,11 @@ fn publish_undo(
                 })
         };
         if let Err(cause) = restored {
-            let compensation = restore_original_rewind(store, original, applier).err();
+            let compensation = transaction_compensate::reapply_rewind(original, applier).err();
             return fail_undo(store, undo, stages, cause, compensation, injection);
         }
     }
     finish_undo(store, undo, original, applier, result, stages, injection)
-}
-
-fn restore_original_rewind(
-    _store: &Store,
-    original: &TransactionManifest,
-    applier: Option<&dyn ConversationApplier>,
-) -> Result<(), TransactionError> {
-    let Some(applier) = applier else {
-        return Ok(());
-    };
-    if !matches!(
-        original.scope,
-        RewindScope::Conversation | RewindScope::Both
-    ) {
-        return Ok(());
-    }
-    let mut errors = Vec::new();
-    if original.has_boundary
-        && let Err(source) = applier
-            .apply_conversation_truncate(original.boundary_index, &original.conversation_forward)
-    {
-        errors.push(TransactionError::Conversation {
-            phase: ConversationPhase::ApplyConversationTruncate,
-            source,
-        });
-    }
-    if let Err(source) = applier.truncate_checkpoints(original.truncate_from) {
-        errors.push(TransactionError::Conversation {
-            phase: ConversationPhase::TruncateCheckpoints,
-            source,
-        });
-    }
-    match errors.len() {
-        0 => Ok(()),
-        1 => Err(errors.pop().expect("single compensation error")),
-        _ => Err(TransactionError::Compensation(errors)),
-    }
 }
 
 fn finish_undo(
@@ -333,12 +297,12 @@ fn finish_undo(
 ) -> Result<RewindResult, TransactionError> {
     if injection.is_some_and(|value| value.fails(TransactionPhase::SyncRestoredOwnership)) {
         let cause = TransactionError::injected(TransactionPhase::SyncRestoredOwnership);
-        let compensation = restore_original_rewind(store, original, applier).err();
+        let compensation = transaction_compensate::reapply_rewind(original, applier).err();
         return fail_undo(store, undo, stages, cause, compensation, injection);
     }
     if let Err(error) = store.sync_restored_ownership(&undo.targets) {
         let cause = TransactionError::at(TransactionPhase::SyncRestoredOwnership, error.into());
-        let compensation = restore_original_rewind(store, original, applier).err();
+        let compensation = transaction_compensate::reapply_rewind(original, applier).err();
         return fail_undo(store, undo, stages, cause, compensation, injection);
     }
     if injection
@@ -350,7 +314,7 @@ fn finish_undo(
     }
     if injection.is_some_and(|value| value.fails(TransactionPhase::Finalize)) {
         let cause = TransactionError::injected(TransactionPhase::Finalize);
-        let compensation = restore_original_rewind(store, original, applier).err();
+        let compensation = transaction_compensate::reapply_rewind(original, applier).err();
         return fail_undo(store, undo, stages, cause, compensation, injection);
     }
 
@@ -358,11 +322,11 @@ fn finish_undo(
     undo.updated_at = CreatedAt::now();
     if injection.is_some_and(|value| value.fails(TransactionPhase::PersistCommitted)) {
         let cause = TransactionError::injected(TransactionPhase::PersistCommitted);
-        let compensation = restore_original_rewind(store, original, applier).err();
+        let compensation = transaction_compensate::reapply_rewind(original, applier).err();
         return fail_undo(store, undo, stages, cause, compensation, injection);
     }
     if let Err(cause) = persist_manifest(store, undo, TransactionPhase::PersistCommitted) {
-        let compensation = restore_original_rewind(store, original, applier).err();
+        let compensation = transaction_compensate::reapply_rewind(original, applier).err();
         return fail_undo(store, undo, stages, cause, compensation, injection);
     }
     cleanup_committed(store, &undo.targets);

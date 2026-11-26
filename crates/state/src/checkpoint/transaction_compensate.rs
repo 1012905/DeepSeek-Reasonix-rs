@@ -288,6 +288,40 @@ fn mark_stage(
     stage.comp_error = error.map(ToString::to_string).unwrap_or_default();
 }
 
+pub(super) fn reapply_rewind(
+    transaction: &TransactionManifest,
+    applier: Option<&dyn ConversationApplier>,
+) -> Result<(), TransactionError> {
+    if !matches!(
+        transaction.scope,
+        RewindScope::Conversation | RewindScope::Both
+    ) {
+        return Ok(());
+    }
+    let Some(applier) = applier else {
+        return Ok(());
+    };
+    let mut errors = Vec::new();
+    if transaction.has_boundary
+        && let Err(source) = applier.apply_conversation_truncate(
+            transaction.boundary_index,
+            &transaction.conversation_forward,
+        )
+    {
+        errors.push(conversation_error(
+            ConversationPhase::ApplyConversationTruncate,
+            source,
+        ));
+    }
+    if let Err(source) = applier.truncate_checkpoints(transaction.truncate_from) {
+        errors.push(conversation_error(
+            ConversationPhase::TruncateCheckpoints,
+            source,
+        ));
+    }
+    combine_errors(errors)
+}
+
 pub(super) fn restore_conversation(
     transaction: &TransactionManifest,
     applier: Option<&dyn ConversationApplier>,

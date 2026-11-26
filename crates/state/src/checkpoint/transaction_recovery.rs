@@ -1,13 +1,16 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::sessionstore::eventlog::record::CreatedAt;
 
 use super::atomic_json::read_json_file;
 use super::store::Store;
-use super::transaction::{RecoveryNote, RecoveryPhase, TransactionPhase};
+use super::transaction::{
+    ConversationApplier, RecoveryError, RecoveryNote, RecoveryPhase, RecoveryReport,
+    TransactionPhase,
+};
 use super::transaction_compensate;
 use super::transaction_prepare::{cleanup_temps, persist_manifest};
 use super::types::{RewindScope, TransactionManifest, TransactionState, transaction_dir};
@@ -21,40 +24,66 @@ impl Store {
             .clone()
     }
 
-    pub(super) fn recover_file_transactions_on_startup(&self) {
+    /// Runs startup recovery; conversation work is deferred when `applier` is `None`.
+    pub fn recover_transactions_with_applier(
+        &self,
+        applier: Option<&dyn ConversationApplier>,
+    ) -> RecoveryReport {
         let Some(dir) = self.dir.as_deref() else {
-            return;
+            return self.recover_in_memory_undo(applier);
         };
+        self.recover_disk_transactions(dir, applier)
+    }
+
+    fn recover_disk_transactions(
+        &self,
+        dir: &Path,
+        applier: Option<&dyn ConversationApplier>,
+    ) -> RecoveryReport {
+        let mut report = RecoveryReport::default();
         let directory = transaction_dir(dir);
-        let entries = match fs::read_dir(&directory) {
+        let mut entries: Vec<PathBuf> = match fs::read_dir(&directory) {
             Ok(entries) => match entries.collect::<Result<Vec<_>, _>>() {
-                Ok(entries) => entries,
-                Err(error) => {
-                    self.record_recovery_note(
+                Ok(entries) => entries.into_iter().map(|entry| entry.path()).collect(),
+                Err(source) => {
+                    let error = RecoveryError::ReadDirectory {
+                        path: directory.clone(),
+                        source,
+                    };
+                    let message = error.to_string();
+                    self.record_note(
+                        &mut report,
                         RecoveryPhase::ReadDirectory,
-                        directory.clone(),
-                        error.to_string(),
+                        directory,
+                        message.clone(),
                     );
-                    self.restore_undo_slot(None, vec![pending_manifest(error.to_string())]);
-                    return;
+                    report.errors.push(error);
+                    self.block_undo_recovery(pending_manifest(message));
+                    return report;
                 }
             },
-            Err(error) => {
+            Err(source) => {
                 if fs::symlink_metadata(&directory)
-                    .is_err_and(|source| source.kind() == io::ErrorKind::NotFound)
+                    .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
                 {
-                    return;
+                    return report;
                 }
-                self.record_recovery_note(
+                let error = RecoveryError::ReadDirectory {
+                    path: directory.clone(),
+                    source,
+                };
+                let message = error.to_string();
+                self.record_note(
+                    &mut report,
                     RecoveryPhase::ReadDirectory,
                     directory,
-                    error.to_string(),
+                    message.clone(),
                 );
-                self.restore_undo_slot(None, vec![pending_manifest(error.to_string())]);
-                return;
+                report.errors.push(error);
+                self.block_undo_recovery(pending_manifest(message));
+                return report;
             }
         };
-        let mut entries: Vec<PathBuf> = entries.into_iter().map(|entry| entry.path()).collect();
         entries.sort();
         let mut latest: Option<TransactionManifest> = None;
         let mut undone_parents = HashSet::new();
@@ -67,21 +96,55 @@ impl Store {
                 Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => continue,
                 Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
                 Ok(_) => {
-                    recovering.push(self.record_pending_manifest(
-                        path,
-                        "transaction manifest is not a regular file".to_owned(),
-                    ));
+                    let error = RecoveryError::InvalidManifest { path: path.clone() };
+                    let message = error.to_string();
+                    self.record_note(
+                        &mut report,
+                        RecoveryPhase::ReadManifest,
+                        path.clone(),
+                        message.clone(),
+                    );
+                    report.errors.push(error);
+                    recovering.push(pending_manifest_for_path(&path, message));
                     continue;
                 }
-                Err(error) => {
-                    recovering.push(self.record_pending_manifest(path, error.to_string()));
+                Err(source) => {
+                    let error = RecoveryError::ReadManifest {
+                        path: path.clone(),
+                        source: super::secure_path::SecureError::io(
+                            "stat transaction manifest",
+                            &path,
+                            source,
+                        ),
+                    };
+                    let message = error.to_string();
+                    self.record_note(
+                        &mut report,
+                        RecoveryPhase::ReadManifest,
+                        path.clone(),
+                        message.clone(),
+                    );
+                    report.errors.push(error);
+                    recovering.push(pending_manifest_for_path(&path, message));
                     continue;
                 }
             }
             let transaction: TransactionManifest = match read_json_file(&path) {
                 Ok(transaction) => transaction,
-                Err(error) => {
-                    recovering.push(self.record_pending_manifest(path, error.to_string()));
+                Err(source) => {
+                    let error = RecoveryError::ReadManifest {
+                        path: path.clone(),
+                        source,
+                    };
+                    let message = error.to_string();
+                    self.record_note(
+                        &mut report,
+                        RecoveryPhase::ReadManifest,
+                        path.clone(),
+                        message.clone(),
+                    );
+                    report.errors.push(error);
+                    recovering.push(pending_manifest_for_path(&path, message));
                     continue;
                 }
             };
@@ -104,10 +167,10 @@ impl Store {
             {
                 latest = Some(transaction.clone());
             }
-            if transaction.state == TransactionState::Committing {
-                recovering.push(self.recover_transaction(transaction));
-            } else {
-                self.recover_transaction(transaction);
+            let committing = transaction.state == TransactionState::Committing;
+            let transaction = self.recover_transaction(transaction, applier, &mut report);
+            if committing {
+                recovering.push(transaction);
             }
         }
         let offer = latest.filter(|transaction| {
@@ -115,9 +178,25 @@ impl Store {
                 && !undone_parents.contains(&transaction.id)
         });
         self.restore_undo_slot(offer, recovering);
+        report
     }
 
-    fn recover_transaction(&self, mut transaction: TransactionManifest) -> TransactionManifest {
+    fn recover_in_memory_undo(&self, applier: Option<&dyn ConversationApplier>) -> RecoveryReport {
+        let mut report = RecoveryReport::default();
+        let Some(transaction) = self.pending_undo_transaction() else {
+            return report;
+        };
+        let transaction = self.recover_transaction(transaction, applier, &mut report);
+        self.finish_pending_undo_recovery(&transaction);
+        report
+    }
+
+    fn recover_transaction(
+        &self,
+        mut transaction: TransactionManifest,
+        applier: Option<&dyn ConversationApplier>,
+        report: &mut RecoveryReport,
+    ) -> TransactionManifest {
         match transaction.state {
             TransactionState::Prepared => {
                 let cleanup = cleanup_temps(self, &transaction.targets);
@@ -131,42 +210,32 @@ impl Store {
                             .unwrap_or_else(|error| {
                                 format!("aborted prepared transaction; {error}")
                             }),
-                        Err(error) => {
-                            self.record_recovery_note(
+                        Err(source) => {
+                            let error = RecoveryError::Transaction {
+                                transaction_id: transaction.id.clone(),
+                                source,
+                            };
+                            let message =
+                                format!("could not persist prepared transaction abort; {error}");
+                            self.record_note(
+                                report,
                                 RecoveryPhase::PersistAborted,
                                 self.transaction_manifest_path(&transaction.id),
                                 error.to_string(),
                             );
-                            format!("could not persist prepared transaction abort; {error}")
+                            report.errors.push(error);
+                            message
                         }
                     };
-                self.record_recovery_note(
+                self.record_note(
+                    report,
                     RecoveryPhase::AbortPrepared,
                     self.transaction_manifest_path(&transaction.id),
                     message,
                 );
             }
             TransactionState::Committing => {
-                if matches!(
-                    transaction.scope,
-                    RewindScope::Conversation | RewindScope::Both
-                ) {
-                    self.record_recovery_note(
-                        RecoveryPhase::DeferredConversation,
-                        self.transaction_manifest_path(&transaction.id),
-                        "conversation-aware recovery requires SESS-051".to_owned(),
-                    );
-                    return transaction;
-                }
-                if transaction.kind != "rewind" && transaction.kind != "undo" {
-                    self.record_recovery_note(
-                        RecoveryPhase::UnsupportedKind,
-                        self.transaction_manifest_path(&transaction.id),
-                        format!("unsupported transaction kind {}", transaction.kind),
-                    );
-                    return transaction;
-                }
-                return self.recover_committing_file_transaction(transaction);
+                return self.recover_committing_transaction(transaction, applier, report);
             }
             TransactionState::Committed
             | TransactionState::Aborted
@@ -176,45 +245,175 @@ impl Store {
         transaction
     }
 
-    fn recover_committing_file_transaction(
+    fn recover_committing_transaction(
         &self,
         mut transaction: TransactionManifest,
+        applier: Option<&dyn ConversationApplier>,
+        report: &mut RecoveryReport,
+    ) -> TransactionManifest {
+        let needs_conversation = matches!(
+            transaction.scope,
+            RewindScope::Conversation | RewindScope::Both
+        );
+        if needs_conversation && applier.is_none() {
+            self.record_note(
+                report,
+                RecoveryPhase::DeferredConversation,
+                self.transaction_manifest_path(&transaction.id),
+                format!("deferred conversation recovery {}", transaction.id),
+            );
+            return transaction;
+        }
+        if !matches!(transaction.kind.as_str(), "rewind" | "undo" | "file_revert") {
+            let error = RecoveryError::UnsupportedKind {
+                kind: transaction.kind.clone(),
+            };
+            self.record_note(
+                report,
+                RecoveryPhase::UnsupportedKind,
+                self.transaction_manifest_path(&transaction.id),
+                error.to_string(),
+            );
+            report.errors.push(error);
+            return transaction;
+        }
+        if needs_conversation {
+            let applier = applier.expect("conversation applier was checked above");
+            if transaction.kind != "undo"
+                && transaction.has_boundary
+                && transaction.conversation_forward.is_empty()
+            {
+                let error = RecoveryError::MissingForwardConversation {
+                    transaction_id: transaction.id.clone(),
+                };
+                self.retain_conversation_pending(&mut transaction, error, report);
+                return transaction;
+            }
+            let restored = if transaction.kind == "undo" {
+                transaction_compensate::reapply_rewind(&transaction, Some(applier))
+            } else {
+                transaction_compensate::restore_conversation(&transaction, Some(applier))
+            };
+            if let Err(source) = restored {
+                let error = RecoveryError::Transaction {
+                    transaction_id: transaction.id.clone(),
+                    source,
+                };
+                self.retain_conversation_pending(&mut transaction, error, report);
+                return transaction;
+            }
+        }
+        self.recover_committing_files(transaction, report)
+    }
+
+    fn retain_conversation_pending(
+        &self,
+        transaction: &mut TransactionManifest,
+        error: RecoveryError,
+        report: &mut RecoveryReport,
+    ) {
+        let path = self.transaction_manifest_path(&transaction.id);
+        let cause = match &error {
+            RecoveryError::MissingForwardConversation { .. } => {
+                "missing forward conversation payload".to_owned()
+            }
+            RecoveryError::Transaction { source, .. } => source.to_string(),
+            _ => error.to_string(),
+        };
+        transaction.state = TransactionState::Committing;
+        transaction.error = format!("crash recovery conversation compensation pending: {cause}");
+        transaction.updated_at = CreatedAt::now();
+        self.record_note(
+            report,
+            RecoveryPhase::ConversationPending,
+            path.clone(),
+            format!("conversation recovery {} pending: {cause}", transaction.id),
+        );
+        report.errors.push(error);
+        if let Err(source) = persist_manifest(self, transaction, TransactionPhase::PersistAborted) {
+            let message = source.to_string();
+            let error = RecoveryError::Transaction {
+                transaction_id: transaction.id.clone(),
+                source,
+            };
+            transaction.error = format!("{}; {message}", transaction.error);
+            self.record_note(
+                report,
+                RecoveryPhase::PersistAborted,
+                path,
+                error.to_string(),
+            );
+            report.errors.push(error);
+        }
+    }
+
+    fn recover_committing_files(
+        &self,
+        mut transaction: TransactionManifest,
+        report: &mut RecoveryReport,
     ) -> TransactionManifest {
         let path = self.transaction_manifest_path(&transaction.id);
         let mut stages = Vec::new();
         match transaction_compensate::compensate(self, &transaction.targets, &mut stages, None) {
             Ok(()) => {
                 transaction.state = TransactionState::Aborted;
-                if transaction.error.is_empty() {
-                    transaction.error = "compensated committing transaction on recovery".to_owned();
-                }
+                transaction.error = "compensated after crash during commit".to_owned();
                 transaction.updated_at = CreatedAt::now();
                 match persist_manifest(self, &transaction, TransactionPhase::PersistAborted) {
-                    Ok(()) => self.record_recovery_note(
+                    Ok(()) => self.record_note(
+                        report,
                         RecoveryPhase::Compensated,
                         path,
-                        "compensated file transaction".to_owned(),
+                        format!("compensated committing {}", transaction.id),
                     ),
-                    Err(error) => {
+                    Err(source) => {
                         transaction.state = TransactionState::Committing;
-                        self.record_recovery_note(
-                            RecoveryPhase::PersistAborted,
-                            path,
-                            error.to_string(),
+                        let message = format!(
+                            "persist compensated transaction {}: {source}",
+                            transaction.id
                         );
+                        let error = RecoveryError::Transaction {
+                            transaction_id: transaction.id.clone(),
+                            source,
+                        };
+                        self.record_note(report, RecoveryPhase::PersistAborted, path, message);
+                        report.errors.push(error);
                     }
                 }
             }
-            Err(error) => {
+            Err(source) => {
                 transaction.state = TransactionState::Committing;
-                transaction.error = join_attribution(&transaction.error, &error);
+                transaction.error = format!("crash recovery compensation pending: {source}");
                 transaction.updated_at = CreatedAt::now();
-                let message =
-                    match persist_manifest(self, &transaction, TransactionPhase::PersistAborted) {
-                        Ok(()) => transaction.error.clone(),
-                        Err(persist) => join_attribution(&transaction.error, &persist),
+                let message = format!("compensate {}: {source}", transaction.id);
+                let error = RecoveryError::Transaction {
+                    transaction_id: transaction.id.clone(),
+                    source,
+                };
+                self.record_note(
+                    report,
+                    RecoveryPhase::CompensationPending,
+                    path.clone(),
+                    message,
+                );
+                report.errors.push(error);
+                if let Err(source) =
+                    persist_manifest(self, &transaction, TransactionPhase::PersistAborted)
+                {
+                    let message = source.to_string();
+                    let error = RecoveryError::Transaction {
+                        transaction_id: transaction.id.clone(),
+                        source,
                     };
-                self.record_recovery_note(RecoveryPhase::CompensationPending, path, message);
+                    transaction.error = format!("{}; {message}", transaction.error);
+                    self.record_note(
+                        report,
+                        RecoveryPhase::PersistAborted,
+                        path,
+                        error.to_string(),
+                    );
+                    report.errors.push(error);
+                }
             }
         }
         transaction
@@ -227,21 +426,35 @@ impl Store {
             .unwrap_or_default()
     }
 
-    fn record_pending_manifest(&self, path: PathBuf, error: String) -> TransactionManifest {
-        self.record_recovery_note(RecoveryPhase::ReadManifest, path.clone(), error.clone());
-        pending_manifest_for_path(&path, error)
+    fn record_note(
+        &self,
+        report: &mut RecoveryReport,
+        phase: RecoveryPhase,
+        path: PathBuf,
+        message: String,
+    ) {
+        report
+            .notes
+            .push(self.record_recovery_note(phase, path, message));
     }
 
-    fn record_recovery_note(&self, phase: RecoveryPhase, path: PathBuf, message: String) {
+    fn record_recovery_note(
+        &self,
+        phase: RecoveryPhase,
+        path: PathBuf,
+        message: String,
+    ) -> RecoveryNote {
+        let note = RecoveryNote {
+            phase,
+            path,
+            message,
+        };
         self.runtime
             .recovery_notes
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .push(RecoveryNote {
-                phase,
-                path,
-                message,
-            });
+            .push(note.clone());
+        note
     }
 }
 
@@ -253,7 +466,7 @@ fn pending_manifest(error: String) -> TransactionManifest {
     }
 }
 
-fn pending_manifest_for_path(path: &std::path::Path, error: String) -> TransactionManifest {
+fn pending_manifest_for_path(path: &Path, error: String) -> TransactionManifest {
     let mut manifest = pending_manifest(error);
     manifest.id = path
         .file_name()
@@ -261,12 +474,4 @@ fn pending_manifest_for_path(path: &std::path::Path, error: String) -> Transacti
         .to_string_lossy()
         .into_owned();
     manifest
-}
-
-fn join_attribution(previous: &str, error: &super::transaction::TransactionError) -> String {
-    if previous.is_empty() {
-        error.to_string()
-    } else {
-        format!("{previous}; {error}")
-    }
 }
