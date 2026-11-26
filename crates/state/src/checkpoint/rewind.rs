@@ -254,29 +254,22 @@ impl Store {
                 });
                 continue;
             };
-            if revision.existed && revision.blob_ref.is_empty() && revision.content.is_none() {
-                if !revision.sha256.is_empty()
-                    && self.blobs.as_ref().is_some_and(|blobs| {
-                        !blobs.has(&revision.sha256)
-                            && (revision.blob_ref.is_empty() || !blobs.has(&revision.blob_ref))
-                    })
-                {
-                    conflicts.push(RewindConflict {
-                        path,
-                        reason: CONFLICT_MISSING_PAYLOAD.to_owned(),
-                        checkpoint_sha: revision.sha256,
-                        ..RewindConflict::default()
-                    });
-                    continue;
-                }
-                if revision.blob_ref.is_empty() {
-                    conflicts.push(RewindConflict {
-                        path,
-                        reason: CONFLICT_MISSING_PAYLOAD.to_owned(),
-                        ..RewindConflict::default()
-                    });
-                    continue;
-                }
+            if revision.existed
+                && revision.blob_ref.is_empty()
+                && revision.content.is_none()
+                && !(!revision.sha256.is_empty()
+                    && self
+                        .blobs
+                        .as_ref()
+                        .is_some_and(|blobs| blobs.has(&revision.sha256)))
+            {
+                conflicts.push(RewindConflict {
+                    path,
+                    reason: CONFLICT_MISSING_PAYLOAD.to_owned(),
+                    checkpoint_sha: revision.sha256,
+                    ..RewindConflict::default()
+                });
+                continue;
             }
             let Ok(current) = fingerprint_path(&self.root, &absolute) else {
                 conflicts.push(RewindConflict {

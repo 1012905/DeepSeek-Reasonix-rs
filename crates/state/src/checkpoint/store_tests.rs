@@ -711,8 +711,8 @@ fn rewind_wire_types_keep_numeric_scope_and_conflict_fields() {
     assert_eq!(value["currentExisted"], true);
     assert_eq!(serde_json::to_value(RewindScope::Both).unwrap(), json!(2));
     let target = TransactionTarget {
-        restore_inline: b"restore".to_vec(),
-        forward_inline: b"forward".to_vec(),
+        restore_inline: Some(b"restore".to_vec()),
+        forward_inline: Some(b"forward".to_vec()),
         ..TransactionTarget::default()
     };
     let value = serde_json::to_value(&target).unwrap();

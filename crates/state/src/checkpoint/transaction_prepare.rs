@@ -112,7 +112,7 @@ fn build_targets(
                         TransactionError::at(TransactionPhase::Prepare, error.into())
                     })?;
                 } else {
-                    target.restore_inline = data.clone();
+                    target.restore_inline = Some(data.clone());
                 }
             }
             target.publish_tmp = publish_tmp.to_string_lossy().into_owned();
@@ -135,7 +135,7 @@ fn build_targets(
                     }
                 }
             } else {
-                target.forward_inline = data.to_vec();
+                target.forward_inline = Some(data.to_vec());
             }
         }
         transaction.targets.push(target);
@@ -149,41 +149,82 @@ fn restore_bytes(
     forward: &Fingerprint,
     path: &str,
 ) -> Result<Vec<u8>, TransactionError> {
-    if !revision.blob_ref.is_empty() {
-        let blobs = store
-            .blobs
-            .as_ref()
-            .ok_or_else(|| TransactionError::MissingPayload {
-                path: path.to_owned(),
-                reference: revision.blob_ref.clone(),
-            })?;
-        return match blobs.get(&revision.blob_ref) {
-            Ok(data) => Ok(data),
-            Err(BlobError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
-                Err(TransactionError::MissingPayload {
-                    path: path.to_owned(),
-                    reference: revision.blob_ref.clone(),
-                })
-            }
-            Err(error) => Err(TransactionError::at(
-                TransactionPhase::Prepare,
-                error.into(),
-            )),
-        };
+    if !revision.blob_ref.is_empty()
+        && let Some(blobs) = &store.blobs
+    {
+        return load_blob(blobs, &revision.blob_ref, path);
     }
-    let Some(text) = revision.content.as_deref() else {
-        return Err(TransactionError::MissingPayload {
-            path: path.to_owned(),
-            reference: revision.sha256.clone(),
+    if let Some(text) = revision.content.as_deref() {
+        let kind = revision
+            .encoding
+            .or(Some(forward.encoding))
+            .unwrap_or(Kind::Utf8);
+        return fileencoding::encode(text, kind).map_err(|error| {
+            TransactionError::at(TransactionPhase::Prepare, TransactionError::Encoding(error))
         });
-    };
-    let kind = revision
-        .encoding
-        .or(Some(forward.encoding))
-        .unwrap_or(Kind::Utf8);
-    fileencoding::encode(text, kind).map_err(|error| {
-        TransactionError::at(TransactionPhase::Prepare, TransactionError::Encoding(error))
+    }
+    if !revision.sha256.is_empty()
+        && let Some(blobs) = &store.blobs
+        && blobs.has(&revision.sha256)
+    {
+        return load_blob(blobs, &revision.sha256, path);
+    }
+    Err(TransactionError::MissingPayload {
+        path: path.to_owned(),
+        reference: if revision.blob_ref.is_empty() {
+            revision.sha256.clone()
+        } else {
+            revision.blob_ref.clone()
+        },
     })
+}
+
+pub(super) fn load_restore_payload(
+    store: &Store,
+    target: &TransactionTarget,
+) -> Result<Vec<u8>, TransactionError> {
+    if !target.restore_blob.is_empty()
+        && let Some(blobs) = &store.blobs
+    {
+        return load_blob(blobs, &target.restore_blob, &target.path);
+    }
+    if let Some(inline) = &target.restore_inline {
+        return Ok(inline.clone());
+    }
+    if !target.restore_sha.is_empty()
+        && let Some(blobs) = &store.blobs
+        && blobs.has(&target.restore_sha)
+    {
+        return load_blob(blobs, &target.restore_sha, &target.path);
+    }
+    Err(TransactionError::MissingPayload {
+        path: target.path.clone(),
+        reference: if target.restore_blob.is_empty() {
+            target.restore_sha.clone()
+        } else {
+            target.restore_blob.clone()
+        },
+    })
+}
+
+fn load_blob(
+    blobs: &super::blob::BlobStore,
+    reference: &str,
+    path: &str,
+) -> Result<Vec<u8>, TransactionError> {
+    match blobs.get(reference) {
+        Ok(data) => Ok(data),
+        Err(BlobError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+            Err(TransactionError::MissingPayload {
+                path: path.to_owned(),
+                reference: reference.to_owned(),
+            })
+        }
+        Err(error) => Err(TransactionError::at(
+            TransactionPhase::Prepare,
+            error.into(),
+        )),
+    }
 }
 
 fn checkpoint_backup(store: &Store, from_turn: i64) -> Result<Vec<u8>, TransactionError> {
@@ -210,20 +251,10 @@ fn checkpoint_backup(store: &Store, from_turn: i64) -> Result<Vec<u8>, Transacti
 
 fn abort_prepare(
     store: &Store,
-    mut transaction: TransactionManifest,
+    transaction: TransactionManifest,
     cause: TransactionError,
 ) -> Result<TransactionManifest, TransactionError> {
     let _ = cleanup_temps(store, &transaction.targets);
-    transaction.state = TransactionState::Aborted;
-    transaction.error = cause.to_string();
-    transaction.updated_at = crate::sessionstore::eventlog::record::CreatedAt::now();
-    if let Err(error) = persist_manifest(store, &transaction, TransactionPhase::PersistAborted) {
-        return Err(TransactionError::CompensationPending {
-            cause: Box::new(cause),
-            compensation: Box::new(error),
-            stages: Vec::new(),
-        });
-    }
     Err(cause)
 }
 

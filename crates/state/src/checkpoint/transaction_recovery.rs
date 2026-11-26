@@ -158,7 +158,7 @@ impl Store {
                     );
                     return transaction;
                 }
-                if transaction.kind != "rewind" {
+                if transaction.kind != "rewind" && transaction.kind != "undo" {
                     self.record_recovery_note(
                         RecoveryPhase::UnsupportedKind,
                         self.transaction_manifest_path(&transaction.id),

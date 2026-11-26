@@ -3,6 +3,7 @@
 mod atomic_json;
 mod barrier;
 mod blob;
+mod checkpoint_backup;
 mod conversation_fork;
 mod observer;
 mod ownership;
@@ -18,6 +19,7 @@ mod transaction_publish;
 mod transaction_recovery;
 mod types;
 mod undo;
+mod undo_execute;
 mod writer_admission;
 
 pub use atomic_json::{read_json_file, write_json_atomic};
@@ -70,6 +72,8 @@ mod transaction_recovery_tests;
 mod transaction_test_support;
 #[cfg(test)]
 mod transaction_tests;
+#[cfg(test)]
+mod undo_execute_tests;
 #[cfg(test)]
 mod undo_tests;
 #[cfg(test)]

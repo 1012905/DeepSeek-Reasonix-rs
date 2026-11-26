@@ -35,6 +35,7 @@ pub enum TransactionPhase {
     Finalize,
     CrashAfterConversationBeforeFinalize,
     PersistCommitted,
+    PersistParentUndone,
     CompensateFile,
     SyncForwardOwnership,
     PersistAborted,
@@ -236,6 +237,10 @@ pub enum TransactionError {
     BarrierBusy,
     #[error("active background writer prevents rewind")]
     ActiveWriters,
+    #[error("undo is not available for transaction {transaction_id}")]
+    UndoNotAvailable { transaction_id: String },
+    #[error("undo found file conflicts")]
+    UndoFileConflicts(Vec<RewindConflict>),
     #[error("workspace token changed from {expected} to {actual}")]
     WorkspaceTokenMismatch { expected: String, actual: String },
     #[error("rewind precheck found conflicts")]

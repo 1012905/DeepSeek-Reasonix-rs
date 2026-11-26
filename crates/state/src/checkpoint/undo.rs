@@ -6,7 +6,8 @@ use crate::sessionstore::eventlog::record::CreatedAt;
 
 use super::atomic_json::write_json_atomic;
 use super::store::{Store, StoreError};
-use super::types::{TransactionManifest, TransactionState};
+use super::transaction::TransactionError;
+use super::types::{RewindUndo, TransactionManifest, TransactionState};
 
 #[derive(Clone)]
 pub(super) struct UndoCallback(Arc<dyn Fn() + Send + Sync>);
@@ -118,6 +119,39 @@ impl Store {
             .unwrap_or_else(|error| error.into_inner()) = Some(UndoCallback(Arc::new(callback)));
     }
 
+    pub fn available_undo(&self) -> Option<RewindUndo> {
+        if self.barrier().has_writers() {
+            return None;
+        }
+        let offer = self
+            .runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .visible_offer()
+            .cloned()?;
+        if !self.state().active_writers.is_empty() {
+            return None;
+        }
+        Some(RewindUndo {
+            transaction_id: offer.id,
+            turn: offer.turn,
+            files: offer.targets.len(),
+        })
+    }
+
+    pub fn last_undo_transaction_id(&self) -> String {
+        self.runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .visible_offer()
+            .map(|offer| offer.id.clone())
+            .unwrap_or_default()
+    }
+
     #[cfg(test)]
     pub(crate) fn current_undo_offer(&self) -> Option<TransactionManifest> {
         self.runtime
@@ -127,6 +161,28 @@ impl Store {
             .unwrap_or_else(|error| error.into_inner())
             .visible_offer()
             .cloned()
+    }
+
+    pub(super) fn undo_offer(
+        &self,
+        transaction_id: &str,
+    ) -> Result<TransactionManifest, TransactionError> {
+        let offers = self
+            .runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if offers.pending.is_some() {
+            return Err(StoreError::UndoRecoveryPending.into());
+        }
+        offers
+            .visible_offer()
+            .filter(|offer| offer.id == transaction_id)
+            .cloned()
+            .ok_or_else(|| TransactionError::UndoNotAvailable {
+                transaction_id: transaction_id.to_owned(),
+            })
     }
 
     pub(super) fn require_undo_recovery_complete(&self) -> Result<(), StoreError> {
@@ -149,6 +205,26 @@ impl Store {
         &'store self,
         transaction: &'transaction mut TransactionManifest,
     ) -> Result<UndoTransaction<'store, 'transaction>, StoreError> {
+        self.track_undo_transaction_inner(transaction, None)
+            .map_err(|error| match error {
+                TransactionError::Store(source) => source,
+                _ => unreachable!("unconditional transaction tracking cannot reject an offer"),
+            })
+    }
+
+    pub(super) fn track_undo_offer<'store, 'transaction>(
+        &'store self,
+        transaction_id: &str,
+        transaction: &'transaction mut TransactionManifest,
+    ) -> Result<UndoTransaction<'store, 'transaction>, TransactionError> {
+        self.track_undo_transaction_inner(transaction, Some(transaction_id))
+    }
+
+    fn track_undo_transaction_inner<'store, 'transaction>(
+        &'store self,
+        transaction: &'transaction mut TransactionManifest,
+        expected_offer: Option<&str>,
+    ) -> Result<UndoTransaction<'store, 'transaction>, TransactionError> {
         let _operation = self
             .runtime
             .undo
@@ -162,7 +238,16 @@ impl Store {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if offers.pending.is_some() {
-            return Err(StoreError::UndoRecoveryPending);
+            return Err(StoreError::UndoRecoveryPending.into());
+        }
+        if let Some(expected) = expected_offer
+            && !offers
+                .visible_offer()
+                .is_some_and(|offer| offer.id == expected)
+        {
+            return Err(TransactionError::UndoNotAvailable {
+                transaction_id: expected.to_owned(),
+            });
         }
         let previous_offer = offers.visible_offer().map(|offer| offer.id.clone());
         let mut pending = transaction.clone();
@@ -231,6 +316,28 @@ impl Store {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         offers.current = Some(transaction.clone());
+    }
+
+    pub(super) fn retire_undo_offer(&self, transaction_id: &str) {
+        let _operation = self
+            .runtime
+            .undo
+            .operation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut offers = self
+            .runtime
+            .undo
+            .offers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if offers
+            .current
+            .as_ref()
+            .is_some_and(|offer| offer.id == transaction_id)
+        {
+            offers.current = None;
+        }
     }
 
     pub(super) fn restore_undo_slot(

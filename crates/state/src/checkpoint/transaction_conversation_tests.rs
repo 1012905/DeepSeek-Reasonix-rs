@@ -98,7 +98,7 @@ fn conversation_applier_truncates_then_truncates_checkpoints() {
         .unwrap();
 
     assert!(result.ok);
-    assert!(!result.undo_available);
+    assert!(result.undo_available);
     assert!(result.conversation_ok);
     assert_eq!(
         *applier.calls.lock().unwrap(),
@@ -226,7 +226,7 @@ fn conversation_commit_without_applier_truncates_store_checkpoints() {
         .unwrap();
 
     assert!(result.ok);
-    assert!(!result.undo_available);
+    assert!(result.undo_available);
     assert_checkpoints_truncated(&fixture);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
     let durable = single_manifest(&fixture.dir).0;
@@ -245,7 +245,7 @@ fn both_commit_without_applier_truncates_store_checkpoints() {
         .unwrap();
 
     assert!(result.ok);
-    assert!(!result.undo_available);
+    assert!(result.undo_available);
     assert_checkpoints_truncated(&fixture);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
     assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");

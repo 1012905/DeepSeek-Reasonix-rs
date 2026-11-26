@@ -32,22 +32,7 @@ fn publish(
     applier: Option<&dyn ConversationApplier>,
     injection: Option<&TransactionInjection>,
 ) -> Result<RewindResult, TransactionError> {
-    transaction.state = TransactionState::Committing;
-    transaction.updated_at = CreatedAt::now();
-    if injection.is_some_and(|value| value.fails(TransactionPhase::PersistCommitting)) {
-        let cause = TransactionError::injected(TransactionPhase::PersistCommitting);
-        transaction_compensate::fail(
-            store,
-            transaction,
-            Vec::new(),
-            cause,
-            applier,
-            false,
-            injection,
-        )?;
-        unreachable!("clean compensation still returns the transaction cause")
-    }
-    if let Err(cause) = persist_manifest(store, transaction, TransactionPhase::PersistCommitting) {
+    if let Err(cause) = start_publish(store, transaction, injection) {
         return fail(
             store,
             transaction,
@@ -58,101 +43,14 @@ fn publish(
             injection,
         );
     }
-
-    let mut result = RewindResult {
-        transaction_id: transaction.id.clone(),
-        undo_available: false,
-        coverage: transaction.coverage,
-        coverage_gaps: transaction.coverage_gaps.clone(),
-        ..RewindResult::default()
-    };
     let mut stages = Vec::with_capacity(transaction.targets.len());
-    for (files_done, index) in (0..transaction.targets.len()).enumerate() {
-        let target = transaction.targets[index].clone();
-        let phase = if target.action == "delete" {
-            TransactionPhase::DeleteFile
-        } else {
-            TransactionPhase::PublishFile
-        };
-        let mut stage = FileStage {
-            path: target.path.clone(),
-            phase: "commit".to_owned(),
-            action: target.action.clone(),
-            ..FileStage::default()
-        };
-        if injection.is_some_and(|value| value.fails_after_files(phase, files_done)) {
-            let cause = TransactionError::injected(phase);
-            stage.error = cause.to_string();
-            stages.push(stage);
+    let mut result = match publish_files(store, transaction, injection, &mut stages) {
+        Ok(result) => result,
+        Err(cause @ TransactionError::InjectedCrash { .. }) => return Err(cause),
+        Err(cause) => {
             return fail(store, transaction, stages, cause, applier, false, injection);
         }
-
-        let mut candidate = transaction.clone();
-        candidate.targets[index].published = true;
-        candidate.updated_at = CreatedAt::now();
-        if injection.is_some_and(|value| value.fails(TransactionPhase::PersistPublishedIntent)) {
-            let cause = TransactionError::injected(TransactionPhase::PersistPublishedIntent);
-            stage.error = cause.to_string();
-            stages.push(stage);
-            return fail(store, transaction, stages, cause, applier, false, injection);
-        }
-        if let Err(cause) =
-            persist_manifest(store, &candidate, TransactionPhase::PersistPublishedIntent)
-        {
-            stage.error = cause.to_string();
-            stages.push(stage);
-            return fail(store, transaction, stages, cause, applier, false, injection);
-        }
-        *transaction = candidate;
-        if injection.is_some_and(|value| value.crashes(TransactionPhase::CrashAfterPublishedIntent))
-        {
-            return Err(TransactionError::InjectedCrash {
-                phase: TransactionPhase::CrashAfterPublishedIntent,
-            });
-        }
-
-        if let Err(cause) = publish_target(store, &target) {
-            stage.error = cause.to_string();
-            stages.push(stage);
-            return fail(store, transaction, stages, cause, applier, false, injection);
-        }
-        if injection
-            .is_some_and(|value| value.crashes(TransactionPhase::CrashAfterPublishBeforeProgress))
-        {
-            stage.phase = "done".to_owned();
-            stages.push(stage);
-            return Err(TransactionError::InjectedCrash {
-                phase: TransactionPhase::CrashAfterPublishBeforeProgress,
-            });
-        }
-        transaction.updated_at = CreatedAt::now();
-        if injection.is_some_and(|value| value.fails(TransactionPhase::PersistProgress)) {
-            let cause = TransactionError::injected(TransactionPhase::PersistProgress);
-            stage.error = cause.to_string();
-            stages.push(stage);
-            return fail(store, transaction, stages, cause, applier, false, injection);
-        }
-        if let Err(cause) = persist_manifest(store, transaction, TransactionPhase::PersistProgress)
-        {
-            stage.error = cause.to_string();
-            stages.push(stage);
-            return fail(store, transaction, stages, cause, applier, false, injection);
-        }
-        stage.phase = "done".to_owned();
-        stages.push(stage);
-        if target.action == "write" {
-            result.written.push(target.path);
-        } else {
-            result.deleted.push(target.path);
-        }
-    }
-    if injection.is_some_and(|value| value.fails(TransactionPhase::PersistProgress)) {
-        let cause = TransactionError::injected(TransactionPhase::PersistProgress);
-        return fail(store, transaction, stages, cause, applier, false, injection);
-    }
-    if let Err(cause) = persist_manifest(store, transaction, TransactionPhase::PersistProgress) {
-        return fail(store, transaction, stages, cause, applier, false, injection);
-    }
+    };
 
     if matches!(
         transaction.scope,
@@ -250,6 +148,123 @@ fn publish(
     Ok(result)
 }
 
+pub(super) fn start_publish(
+    store: &Store,
+    transaction: &mut TransactionManifest,
+    injection: Option<&TransactionInjection>,
+) -> Result<(), TransactionError> {
+    transaction.state = TransactionState::Committing;
+    transaction.updated_at = CreatedAt::now();
+    if injection.is_some_and(|value| value.fails(TransactionPhase::PersistCommitting)) {
+        return Err(TransactionError::injected(
+            TransactionPhase::PersistCommitting,
+        ));
+    }
+    persist_manifest(store, transaction, TransactionPhase::PersistCommitting)
+}
+
+pub(super) fn publish_files(
+    store: &Store,
+    transaction: &mut TransactionManifest,
+    injection: Option<&TransactionInjection>,
+    stages: &mut Vec<FileStage>,
+) -> Result<RewindResult, TransactionError> {
+    let mut result = RewindResult {
+        transaction_id: transaction.id.clone(),
+        undo_available: true,
+        coverage: transaction.coverage,
+        coverage_gaps: transaction.coverage_gaps.clone(),
+        ..RewindResult::default()
+    };
+    for (files_done, index) in (0..transaction.targets.len()).enumerate() {
+        let target = transaction.targets[index].clone();
+        let phase = if target.action == "delete" {
+            TransactionPhase::DeleteFile
+        } else {
+            TransactionPhase::PublishFile
+        };
+        let mut stage = FileStage {
+            path: target.path.clone(),
+            phase: "commit".to_owned(),
+            action: target.action.clone(),
+            ..FileStage::default()
+        };
+        if injection.is_some_and(|value| value.fails_after_files(phase, files_done)) {
+            let cause = TransactionError::injected(phase);
+            stage.error = cause.to_string();
+            stages.push(stage);
+            return Err(cause.with_stages(stages.clone()));
+        }
+
+        let mut candidate = transaction.clone();
+        candidate.targets[index].published = true;
+        candidate.updated_at = CreatedAt::now();
+        if injection.is_some_and(|value| value.fails(TransactionPhase::PersistPublishedIntent)) {
+            let cause = TransactionError::injected(TransactionPhase::PersistPublishedIntent);
+            stage.error = cause.to_string();
+            stages.push(stage);
+            return Err(cause.with_stages(stages.clone()));
+        }
+        if let Err(cause) =
+            persist_manifest(store, &candidate, TransactionPhase::PersistPublishedIntent)
+        {
+            stage.error = cause.to_string();
+            stages.push(stage);
+            return Err(cause.with_stages(stages.clone()));
+        }
+        *transaction = candidate;
+        if injection.is_some_and(|value| value.crashes(TransactionPhase::CrashAfterPublishedIntent))
+        {
+            return Err(TransactionError::InjectedCrash {
+                phase: TransactionPhase::CrashAfterPublishedIntent,
+            });
+        }
+
+        if let Err(cause) = publish_target(store, &target) {
+            stage.error = cause.to_string();
+            stages.push(stage);
+            return Err(cause.with_stages(stages.clone()));
+        }
+        if injection
+            .is_some_and(|value| value.crashes(TransactionPhase::CrashAfterPublishBeforeProgress))
+        {
+            stage.phase = "done".to_owned();
+            stages.push(stage);
+            return Err(TransactionError::InjectedCrash {
+                phase: TransactionPhase::CrashAfterPublishBeforeProgress,
+            });
+        }
+        transaction.updated_at = CreatedAt::now();
+        if injection.is_some_and(|value| value.fails(TransactionPhase::PersistProgress)) {
+            let cause = TransactionError::injected(TransactionPhase::PersistProgress);
+            stage.error = cause.to_string();
+            stages.push(stage);
+            return Err(cause.with_stages(stages.clone()));
+        }
+        if let Err(cause) = persist_manifest(store, transaction, TransactionPhase::PersistProgress)
+        {
+            stage.error = cause.to_string();
+            stages.push(stage);
+            return Err(cause.with_stages(stages.clone()));
+        }
+        stage.phase = "done".to_owned();
+        stages.push(stage);
+        if target.action == "write" {
+            result.written.push(target.path);
+        } else {
+            result.deleted.push(target.path);
+        }
+    }
+    if injection.is_some_and(|value| value.fails(TransactionPhase::PersistProgress)) {
+        let cause = TransactionError::injected(TransactionPhase::PersistProgress);
+        return Err(cause.with_stages(stages.clone()));
+    }
+    if let Err(cause) = persist_manifest(store, transaction, TransactionPhase::PersistProgress) {
+        return Err(cause.with_stages(stages.clone()));
+    }
+    Ok(result)
+}
+
 fn fail(
     store: &Store,
     transaction: &mut TransactionManifest,
@@ -323,7 +338,7 @@ pub(super) fn publish_target(
     Ok(())
 }
 
-fn cleanup_committed(store: &Store, targets: &[TransactionTarget]) {
+pub(super) fn cleanup_committed(store: &Store, targets: &[TransactionTarget]) {
     for target in targets {
         if target.backup_path.is_empty() {
             continue;
