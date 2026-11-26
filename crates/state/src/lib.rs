@@ -13,5 +13,6 @@
 #![forbid(unsafe_code)]
 
 pub mod checkpoint;
+pub mod sessioninbox;
 pub mod sessionstore;
 pub mod store;
