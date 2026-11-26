@@ -10,12 +10,20 @@ mod enqueue;
 mod idempotency;
 mod ids;
 mod manifest;
+mod metrics;
 mod operations;
+mod process;
+mod recovery;
 mod refs;
 mod types;
 
 pub use disk::{Store, remove_dir};
-pub use ids::{preview_text, process_run_id, sha256_hex};
+pub use ids::{preview_text, preview_text_bytes, process_run_id, sha256_hex};
+pub use metrics::{
+    MetricsSnapshot, metrics, note_capacity_reject, note_enqueue, note_paused, note_recovered,
+    note_steer_accepted, note_steer_rejected, note_tx_fail, note_uncertain,
+};
+pub use process::ProcessClass;
 pub use refs::{
     MAX_FROZEN_DIR_ENTRIES, RefError, apply_frozen_refs, freeze_refs, materialize_refs,
 };
@@ -38,11 +46,21 @@ mod disk_recovery_tests;
 #[cfg(test)]
 mod disk_tests;
 #[cfg(test)]
+mod ids_fallback_tests;
+#[cfg(test)]
 mod ids_tests;
 #[cfg(test)]
 mod manifest_tests;
 #[cfg(test)]
+mod metrics_tests;
+#[cfg(test)]
 mod operations_tests;
+#[cfg(test)]
+mod preview_bytes_tests;
+#[cfg(test)]
+mod process_tests;
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(test)]
 mod refs_tests;
 #[cfg(test)]

@@ -11,7 +11,7 @@ use super::types::{
 use super::{Result, encode_envelope};
 use crate::sessionstore::eventlog::record::CreatedAt;
 
-use super::preview_text;
+use super::{preview_text, preview_text_bytes};
 
 impl super::disk::Store {
     pub fn enqueue(&self, request: EnqueueRequest) -> Result<InboxReceipt> {
@@ -265,10 +265,7 @@ fn ref_summaries(refs: &[RefSnapshot]) -> Vec<RefSummary> {
             path: first_non_empty(&[&reference.display_path, &reference.path]),
             commit: reference.commit.clone(),
             bytes: i64::try_from(reference.content.len()).unwrap_or(i64::MAX),
-            preview: preview_text(
-                &String::from_utf8_lossy(&reference.content),
-                super::DEFAULT_PREVIEW_RUNES.min(40),
-            ),
+            preview: preview_text_bytes(&reference.content, super::DEFAULT_PREVIEW_RUNES.min(40)),
         })
         .collect()
 }
