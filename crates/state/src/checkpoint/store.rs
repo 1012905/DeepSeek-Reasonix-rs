@@ -894,14 +894,28 @@ fn load_state(dir: &Path) -> StoreState {
         let mut entries: Vec<_> = entries.flatten().collect();
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
-            if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
-                continue;
-            }
             let Some(turn) = parse_turn_file(entry.file_name().to_string_lossy().as_ref()) else {
                 continue;
             };
             if seen.contains(&turn) {
                 continue;
+            }
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => continue,
+                Ok(kind) if kind.is_file() => {}
+                Ok(_) => {
+                    warn!(
+                        ?entry,
+                        "checkpoint: non-regular turn file stays reserved without following it"
+                    );
+                    state.unreadable.insert(turn);
+                    continue;
+                }
+                Err(error) => {
+                    warn!(%error, ?entry, "checkpoint: turn file type unreadable; its number stays reserved");
+                    state.unreadable.insert(turn);
+                    continue;
+                }
             }
             let path = entry.path();
             let decoded = match fileencoding::read_file_utf8(&path) {
