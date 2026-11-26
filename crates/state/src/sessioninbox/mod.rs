@@ -11,10 +11,14 @@ mod idempotency;
 mod ids;
 mod manifest;
 mod operations;
+mod refs;
 mod types;
 
 pub use disk::{Store, remove_dir};
 pub use ids::{preview_text, process_run_id, sha256_hex};
+pub use refs::{
+    MAX_FROZEN_DIR_ENTRIES, RefError, apply_frozen_refs, freeze_refs, materialize_refs,
+};
 pub use types::*;
 
 pub(crate) use blob::{encode_envelope, idempotency_request_hash};
@@ -39,5 +43,7 @@ mod ids_tests;
 mod manifest_tests;
 #[cfg(test)]
 mod operations_tests;
+#[cfg(test)]
+mod refs_tests;
 #[cfg(test)]
 mod types_tests;

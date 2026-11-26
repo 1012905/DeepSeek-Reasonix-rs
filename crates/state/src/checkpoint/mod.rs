@@ -29,6 +29,7 @@ pub use blob::{BlobError, BlobStore, digest, valid_blob_ref};
 pub use conversation_fork::ConversationForkError;
 pub use file_revert::{FileRevertDisabledReason, FileRevertError, FileRevertRejection};
 pub use observer::{BeginWriteError, MutationObserver, ObserverOptions};
+pub(crate) use path_capture::scoped_path;
 pub use path_capture::{
     CaptureError, Fingerprint, PathError, capture_path, compare_identity, fingerprint_path,
     normalize_rel_path, safe_path,

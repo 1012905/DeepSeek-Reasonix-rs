@@ -1659,11 +1659,11 @@ commit.
   changed while opening), LimitReader MaxItemBytes+1 with a truncated flag,
   after-stat SameFile+Size+ModTime re-check (reference changed while
   reading).
-- `freezeDirectory`: sorted walk; > 100 entries → `…[truncated;
-  directory has more entries]…`. `skipFrozenDirEntry`:
-  `.DS_Store`/`Thumbs.db` always; directories `.git`,
-  `.idea`, `.vscode`, `build`, `dist`,
-  `node_modules`, `__pycache__` skipped.
+- `freezeDirectory`: walks in filesystem order, sorts accumulated entries,
+  then keeps the first 100 plus `…[truncated; directory has more entries]…`;
+  retained paths are not necessarily lexicographically first.
+- `skipFrozenDirEntry`: `.DS_Store`/`Thumbs.db` always; directories `.git`,
+  `.idea`, `.vscode`, `build`, `dist`, `node_modules`, `__pycache__`.
 - `ApplyFrozenRefs` (legacy version-1 blobs): `\n\n<!-- frozen inbox
   references (enqueue-time snapshot) -->\n` + `\n### @<path>\n` +
   fenced body, paths sorted.
