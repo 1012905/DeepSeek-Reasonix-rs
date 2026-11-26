@@ -15,3 +15,4 @@ pub mod fileutil;
 pub mod secrets;
 pub mod shellparse;
 pub mod shellparse_analysis;
+pub mod simple_fold;

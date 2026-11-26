@@ -377,16 +377,25 @@ fn outside_workspace_after_is_a_gap_not_a_failure() {
     let meta = &store.list()[0];
     assert_eq!(meta.coverage, Coverage::None);
     assert_eq!(meta.coverage_gaps[0].reason, GAP_OUTSIDE_WORKSPACE);
+    assert_eq!(meta.coverage_gaps[0].path, outside.to_string_lossy());
+    let error = capture_path(
+        &outside,
+        &CaptureOptions {
+            workspace_root: root.path().to_path_buf(),
+            read_content: true,
+            ..CaptureOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert!(error.is_outside_workspace());
     assert!(matches!(
-        capture_path(
-            &outside,
-            &CaptureOptions {
-                workspace_root: root.path().to_path_buf(),
-                read_content: true,
-                ..CaptureOptions::default()
-            }
-        ),
-        Err(CaptureError::Path(PathError::OutsideWorkspace { .. }))
+        error,
+        CaptureError::AtPath { path, source }
+            if path == outside
+                && matches!(
+                    source.as_ref(),
+                    CaptureError::Path(PathError::OutsideWorkspace { .. })
+                )
     ));
 }
 

@@ -3,12 +3,14 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
-use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+use cap_fs_ext::{FollowSymlinks, MetadataExt as _, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 #[cfg(windows)]
 use cap_std::fs::OpenOptionsExt as _;
 use cap_std::fs::{Dir, OpenOptions};
 use reasonix_core::fileencoding::{self, Kind};
+#[cfg(windows)]
+use reasonix_core::simple_fold::equal_os_str;
 use thiserror::Error;
 
 use super::blob::digest;
@@ -45,6 +47,12 @@ pub enum PathError {
 
 #[derive(Debug, Error)]
 pub enum CaptureError {
+    #[error("{source}")]
+    AtPath {
+        path: PathBuf,
+        #[source]
+        source: Box<CaptureError>,
+    },
     #[error(transparent)]
     Path(#[from] PathError),
     #[error("relative path without workspace root: {0}")]
@@ -83,23 +91,29 @@ pub enum CaptureError {
 impl CaptureError {
     pub fn gap(&self) -> CoverageGap {
         let path = match self {
-            Self::Path(PathError::OutsideWorkspace { path, .. } | PathError::Io { path, .. }) => {
-                path
-            }
-            Self::Path(PathError::Symlink { component }) => component,
-            Self::RelativeWithoutRoot(path)
+            Self::AtPath { path, .. }
+            | Self::Path(PathError::OutsideWorkspace { path, .. } | PathError::Io { path, .. })
+            | Self::RelativeWithoutRoot(path)
             | Self::Inspect { path, .. }
             | Self::Unreadable { path, .. }
             | Self::Hardlink { path, .. }
             | Self::Directory { path, .. }
             | Self::Oversized { path, .. }
             | Self::Read { path, .. } => path,
+            Self::Path(PathError::Symlink { component }) => component,
         };
         self.gap_at(path)
     }
 
     pub(crate) fn gap_at(&self, path: &Path) -> CoverageGap {
-        let reason = match self {
+        let mut gap = CoverageGap::new(self.gap_reason(), &self.to_string());
+        gap.path = path.to_string_lossy().into_owned();
+        gap
+    }
+
+    fn gap_reason(&self) -> &'static str {
+        match self {
+            Self::AtPath { source, .. } => source.gap_reason(),
             Self::Path(PathError::OutsideWorkspace { .. }) => GAP_OUTSIDE_WORKSPACE,
             Self::Path(PathError::Symlink { .. }) => GAP_SYMLINK,
             Self::RelativeWithoutRoot(_)
@@ -110,14 +124,15 @@ impl CaptureError {
             Self::Hardlink { .. } => GAP_HARDLINK,
             Self::Directory { .. } => GAP_CAPTURE_FAILED,
             Self::Oversized { .. } => GAP_OVERSIZED,
-        };
-        let mut gap = CoverageGap::new(reason, &self.to_string());
-        gap.path = path.to_string_lossy().into_owned();
-        gap
+        }
     }
 
     pub fn is_outside_workspace(&self) -> bool {
-        matches!(self, Self::Path(PathError::OutsideWorkspace { .. }))
+        match self {
+            Self::AtPath { source, .. } => source.is_outside_workspace(),
+            Self::Path(PathError::OutsideWorkspace { .. }) => true,
+            _ => false,
+        }
     }
 }
 
@@ -142,7 +157,7 @@ impl Default for Fingerprint {
             existed: false,
             is_dir: false,
             is_symlink: false,
-            nlink: 1,
+            nlink: 0,
             mode: 0,
             size: 0,
             sha256: String::new(),
@@ -284,9 +299,7 @@ fn relative_components(root: &Path, absolute: &Path) -> Option<Vec<std::ffi::OsS
 fn component_eq(left: &Component<'_>, right: &Component<'_>) -> bool {
     #[cfg(windows)]
     {
-        left.as_os_str()
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
+        equal_os_str(left.as_os_str(), right.as_os_str())
     }
     #[cfg(not(windows))]
     {
@@ -295,6 +308,13 @@ fn component_eq(left: &Component<'_>, right: &Component<'_>) -> bool {
 }
 
 pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, CaptureError> {
+    capture_path_inner(path, opts).map_err(|source| CaptureError::AtPath {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })
+}
+
+fn capture_path_inner(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, CaptureError> {
     if !path.is_absolute() && opts.workspace_root.as_os_str().is_empty() {
         return Err(CaptureError::RelativeWithoutRoot(path.to_path_buf()));
     }
@@ -305,7 +325,7 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
         PathError::Io { op, path, source } => CaptureError::Inspect { op, path, source },
     })?;
     let (root, relative) = capture_scope(&opts.workspace_root, &absolute)?;
-    let Some((mut file, metadata)) = open_captured_file(&root, &relative, &absolute)? else {
+    let Some((mut file, metadata, nlink)) = open_captured_file(&root, &relative, &absolute)? else {
         return Ok(Fingerprint {
             abs_path: absolute,
             ..Fingerprint::default()
@@ -316,7 +336,7 @@ pub fn capture_path(path: &Path, opts: &CaptureOptions) -> Result<Fingerprint, C
         existed: true,
         is_dir: metadata.is_dir(),
         is_symlink: metadata.file_type().is_symlink(),
-        nlink: link_count(&metadata),
+        nlink: if nlink > 1 { nlink } else { 0 },
         mode: file_mode(&metadata),
         size: metadata.len(),
         ..Fingerprint::default()
@@ -395,7 +415,7 @@ fn open_captured_file(
     root: &Path,
     relative: &[OsString],
     absolute: &Path,
-) -> Result<Option<(fs::File, fs::Metadata)>, CaptureError> {
+) -> Result<Option<(fs::File, fs::Metadata, u64)>, CaptureError> {
     let mut dir = match Dir::open_ambient_dir(root, ambient_authority()) {
         Ok(dir) => dir,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -407,22 +427,30 @@ fn open_captured_file(
         }
     };
     if relative.is_empty() {
+        let opened = dir
+            .dir_metadata()
+            .map_err(|source| CaptureError::Unreadable {
+                path: absolute.to_path_buf(),
+                source,
+            })?;
+        let nlink = opened.nlink();
         let file = dir.into_std_file();
         let metadata = file.metadata().map_err(|source| CaptureError::Unreadable {
             path: absolute.to_path_buf(),
             source,
         })?;
-        return Ok(Some((file, metadata)));
+        return Ok(Some((file, metadata, nlink)));
     }
     let mut current = root.to_path_buf();
     for (index, component) in relative.iter().enumerate() {
         current.push(component);
-        let Some((file, metadata)) = open_checkpoint_entry(&dir, Path::new(component), &current)?
+        let Some((file, metadata, nlink)) =
+            open_checkpoint_entry(&dir, Path::new(component), &current)?
         else {
             return Ok(None);
         };
         if index + 1 == relative.len() {
-            return Ok(Some((file, metadata)));
+            return Ok(Some((file, metadata, nlink)));
         }
         if !metadata.is_dir() {
             return Err(CaptureError::Unreadable {
@@ -442,7 +470,7 @@ fn open_checkpoint_entry(
     dir: &Dir,
     relative: &Path,
     absolute: &Path,
-) -> Result<Option<(fs::File, fs::Metadata)>, CaptureError> {
+) -> Result<Option<(fs::File, fs::Metadata, u64)>, CaptureError> {
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     #[cfg(windows)]
@@ -460,12 +488,13 @@ fn open_checkpoint_entry(
                     component: absolute.to_path_buf(),
                 }));
             }
+            let nlink = opened.nlink();
             let file = file.into_std();
             let metadata = file.metadata().map_err(|source| CaptureError::Unreadable {
                 path: absolute.to_path_buf(),
                 source,
             })?;
-            Ok(Some((file, metadata)))
+            Ok(Some((file, metadata, nlink)))
         }
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(source) => {
@@ -523,17 +552,6 @@ pub fn compare_identity(
         return Some(CONFLICT_MANUAL_EDIT);
     }
     None
-}
-
-#[cfg(unix)]
-fn link_count(metadata: &fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    metadata.nlink()
-}
-
-#[cfg(not(unix))]
-fn link_count(_metadata: &fs::Metadata) -> u64 {
-    1
 }
 
 #[cfg(unix)]
