@@ -315,7 +315,7 @@ fn safe_path_rejects_symlink_components_without_a_workspace_root() {
 
 #[cfg(unix)]
 #[test]
-fn capture_path_rejects_unix_directories_as_directories_not_hardlinks() {
+fn capture_path_classifies_unix_directories_as_hardlinks() {
     use std::os::unix::fs::MetadataExt;
 
     let temp = tempfile::tempdir().unwrap();
