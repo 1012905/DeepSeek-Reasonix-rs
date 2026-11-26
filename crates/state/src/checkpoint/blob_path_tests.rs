@@ -191,10 +191,7 @@ fn capture_hardlink_gap_preserves_original_path_and_count() {
     let original = root.join("original.txt");
     let absolute = root.join("link.txt");
     fs::write(&original, b"hardlink").unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::hard_link(&original, &absolute).unwrap();
-    #[cfg(windows)]
-    std::fs::hard_link(&original, &absolute).unwrap();
+    fs::hard_link(&original, &absolute).unwrap();
     let opts = CaptureOptions {
         workspace_root: root.clone(),
         read_content: true,
