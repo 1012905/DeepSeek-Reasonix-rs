@@ -293,3 +293,65 @@ fn checkpoint_backup_contains_future_checkpoints() {
     assert!(backup.iter().any(|checkpoint| checkpoint.turn == 0));
     assert!(fs::metadata(&durable.targets[0].publish_tmp).is_ok());
 }
+
+#[test]
+fn checkpoint_backup_uses_compact_go_json_bytes() {
+    let mut fixture = fixture();
+    let sensitive = "<>&\u{2028}\u{2029}";
+    let escaped = "\\u003c\\u003e\\u0026\\u2028\\u2029";
+    let checkpoint = Checkpoint {
+        schema_version: SCHEMA_V2,
+        turn: 0,
+        time: serde_json::from_value::<Checkpoint>(serde_json::json!({
+            "turn": 0,
+            "time": "2026-02-03T04:05:06.123456789Z"
+        }))
+        .unwrap()
+        .time,
+        prompt: format!("prompt {sensitive}"),
+        msg_index: 9,
+        session_id: "source".to_owned(),
+        files: vec![FileSnap {
+            path: format!("dir/{sensitive}/file.txt"),
+            content: Some(format!("content {sensitive}")),
+            mode: 0o600,
+            ..FileSnap::default()
+        }],
+        coverage: Coverage::Complete,
+        ..Checkpoint::default()
+    };
+    fixture.store.persist_checkpoint(&checkpoint).unwrap();
+    fixture.store = Store::new(Some(&fixture.dir), fixture.root.path());
+    let plan = conversation_plan(&fixture, RewindScope::Conversation);
+    let applier = MockApplier::default();
+    let injection = TransactionInjection::crash(TransactionPhase::CrashAfterPrepared);
+    assert!(
+        fixture
+            .store
+            .commit_rewind(
+                &plan.plan_id,
+                7,
+                b"conversation-forward",
+                Some(&applier),
+                Some(&injection),
+            )
+            .is_err()
+    );
+
+    let durable = single_manifest(&fixture.dir).0;
+    assert_eq!(durable.state, TransactionState::Prepared);
+    let bytes = durable.checkpoint_backup;
+    let expected = format!(
+        r#"[{{"schemaVersion":2,"turn":0,"time":"2026-02-03T04:05:06.123456789Z","prompt":"prompt {escaped}","msgIndex":9,"sessionId":"source","files":[{{"path":"dir/{escaped}/file.txt","content":"content {escaped}","mode":384}}],"coverage":"complete"}}]"#
+    );
+    assert_eq!(bytes.as_slice(), expected.as_bytes());
+    assert!(!bytes.contains(&b'\n'));
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(
+        !text
+            .chars()
+            .any(|character| matches!(character, '<' | '>' | '&' | '\u{2028}' | '\u{2029}'))
+    );
+    let decoded: Vec<Checkpoint> = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, vec![checkpoint]);
+}

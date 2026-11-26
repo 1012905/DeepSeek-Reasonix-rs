@@ -6,6 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::sessionstore::eventlog::record::CreatedAt;
+use reasonix_contract::gojson;
 use reasonix_core::fileencoding;
 use reasonix_core::filelock::{self, FileLockError, FileLockGuard};
 use reasonix_core::fileutil::atomic_write_file_strict;
@@ -815,10 +816,12 @@ impl Store {
         let Some(dir) = &self.dir else {
             return Ok(());
         };
-        let bytes = serde_json::to_vec(checkpoint).map_err(|source| StoreError::Json {
-            path: turn_path(dir, checkpoint.turn, checkpoint.expired_file_payload),
-            source,
-        })?;
+        let bytes = gojson::marshal(checkpoint)
+            .map_err(|source| StoreError::Json {
+                path: turn_path(dir, checkpoint.turn, checkpoint.expired_file_payload),
+                source,
+            })?
+            .into_bytes();
         let path = turn_path(dir, checkpoint.turn, checkpoint.expired_file_payload);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| StoreError::Io {

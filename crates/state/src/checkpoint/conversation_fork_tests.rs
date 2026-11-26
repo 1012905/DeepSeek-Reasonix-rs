@@ -311,6 +311,40 @@ fn copies_only_conversation_fields_and_marks_fork() {
 }
 
 #[test]
+fn conversation_fork_uses_compact_go_json_bytes() {
+    let sensitive = "<>&\u{2028}\u{2029}";
+    let original = Checkpoint {
+        schema_version: SCHEMA_V2,
+        turn: 1,
+        time: fixed_time("2026-02-03T04:05:06.123456789Z"),
+        prompt: format!("prompt {sensitive}"),
+        msg_index: 2,
+        session_id: "source".to_owned(),
+        coverage: Coverage::None,
+        ..Checkpoint::default()
+    };
+    let (_temp, root, _dir, store) = load_fixture(std::slice::from_ref(&original));
+    let destination = root.join("child.ckpt");
+
+    store
+        .copy_conversation_prefix_to(&destination, "child", 3)
+        .unwrap();
+
+    let bytes = fs::read(turn_path(&destination, original.turn, false)).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(!text.contains('\n'));
+    assert!(
+        !text
+            .chars()
+            .any(|character| matches!(character, '<' | '>' | '&' | '\u{2028}' | '\u{2029}'))
+    );
+    assert!(text.contains(r#""prompt":"prompt \u003c\u003e\u0026\u2028\u2029""#));
+    let stored: Checkpoint = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(stored.prompt, original.prompt);
+    assert_eq!(stored.session_id, "child");
+}
+
+#[test]
 fn does_not_copy_blobs_plans_or_undo_transactions() {
     let (_temp, root, dir, store) = fixture();
     write(&root, "a.txt", "before");

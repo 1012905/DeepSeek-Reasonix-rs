@@ -1,6 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use reasonix_contract::gojson;
 use reasonix_core::fileencoding::{self, Kind};
 
 use super::atomic_json::write_json_atomic;
@@ -192,17 +193,19 @@ fn checkpoint_backup(store: &Store, from_turn: i64) -> Result<Vec<u8>, Transacti
         .into_iter()
         .filter(|checkpoint| checkpoint.turn >= from_turn)
         .collect();
-    serde_json::to_vec(&checkpoints).map_err(|error| {
-        TransactionError::at(
-            TransactionPhase::Prepare,
-            SecureError::JsonEncode {
-                path: transaction_dir(store.dir.as_deref().unwrap_or_else(|| Path::new("")))
-                    .join("checkpoint-backup.json"),
-                source: error,
-            }
-            .into(),
-        )
-    })
+    gojson::marshal(&checkpoints)
+        .map(|json| json.into_bytes())
+        .map_err(|error| {
+            TransactionError::at(
+                TransactionPhase::Prepare,
+                SecureError::JsonEncode {
+                    path: transaction_dir(store.dir.as_deref().unwrap_or_else(|| Path::new("")))
+                        .join("checkpoint-backup.json"),
+                    source: error,
+                }
+                .into(),
+            )
+        })
 }
 
 fn abort_prepare(

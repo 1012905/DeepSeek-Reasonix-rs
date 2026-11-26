@@ -26,6 +26,51 @@ fn read_turn(dir: &Path, turn: i64) -> Value {
 }
 
 #[test]
+fn checkpoint_persistence_uses_compact_go_json_bytes() {
+    let (_temp, _root, dir, store) = fixture();
+    let sensitive = "<>&\u{2028}\u{2029}";
+    let escaped = "\\u003c\\u003e\\u0026\\u2028\\u2029";
+    let checkpoint = Checkpoint {
+        schema_version: SCHEMA_V2,
+        turn: 3,
+        time: serde_json::from_value::<Checkpoint>(json!({
+            "turn": 0,
+            "time": "2026-02-03T04:05:06.123456789Z"
+        }))
+        .unwrap()
+        .time,
+        prompt: format!("prompt {sensitive}"),
+        msg_index: 4,
+        session_id: format!("session {sensitive}"),
+        files: vec![FileSnap {
+            path: format!("dir/{sensitive}/file.txt"),
+            content: Some(format!("content {sensitive}")),
+            mode: 0o640,
+            ..FileSnap::default()
+        }],
+        coverage: Coverage::Complete,
+        ..Checkpoint::default()
+    };
+
+    store.persist_checkpoint(&checkpoint).unwrap();
+
+    let bytes = fs::read(turn_path(&dir, checkpoint.turn, false)).unwrap();
+    let expected = format!(
+        r#"{{"schemaVersion":2,"turn":3,"time":"2026-02-03T04:05:06.123456789Z","prompt":"prompt {escaped}","msgIndex":4,"sessionId":"session {escaped}","files":[{{"path":"dir/{escaped}/file.txt","content":"content {escaped}","mode":416}}],"coverage":"complete"}}"#
+    );
+    assert_eq!(bytes.as_slice(), expected.as_bytes());
+    assert!(!bytes.contains(&b'\n'));
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(
+        !text
+            .chars()
+            .any(|character| matches!(character, '<' | '>' | '&' | '\u{2028}' | '\u{2029}'))
+    );
+    let decoded: Checkpoint = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, checkpoint);
+}
+
+#[test]
 fn v1_load_marks_legacy_and_preserves_inline_preimage() {
     let (temp, root, dir, _) = fixture();
     fs::create_dir_all(&dir).unwrap();
