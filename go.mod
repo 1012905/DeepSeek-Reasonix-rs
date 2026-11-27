@@ -6,31 +6,31 @@ toolchain go1.26.11
 
 require (
 	aead.dev/minisign v0.3.0
-	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.1
-	charm.land/lipgloss/v2 v2.1.0
+	charm.land/bubbles/v2 v2.2.2
+	charm.land/bubbletea/v2 v2.1.2
+	charm.land/lipgloss/v2 v2.1.1
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
 	github.com/BurntSushi/toml v1.6.0
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/atotto/clipboard v0.1.4
-	github.com/aymanbagabas/go-udiff v0.4.1
-	github.com/bmatcuk/doublestar/v4 v4.10.4
+	github.com/aymanbagabas/go-udiff v0.4.2
+	github.com/bmatcuk/doublestar/v4 v4.10.7
 	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/ansi v0.11.10
 	github.com/creack/pty v1.1.24
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/kevinburke/ssh_config v1.6.0
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/mattn/go-runewidth v0.0.31
-	github.com/pkg/sftp v1.13.12
-	github.com/rivo/uniseg v0.4.7
+	github.com/pkg/sftp v1.13.13
+	github.com/rivo/uniseg v0.4.8-0.20261110175422-3a370411ca06
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/pflag v1.1.0
-	github.com/tdewolff/parse/v2 v2.8.20
+	github.com/tdewolff/parse/v2 v2.25.0
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0
 	github.com/tree-sitter/tree-sitter-python v0.25.0
@@ -43,12 +43,12 @@ require (
 	golang.org/x/crypto v0.59.0
 	golang.org/x/image v0.48.0
 	golang.org/x/mod v0.43.0
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
 	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 	mvdan.cc/sh/v3 v3.14.1
 	rsc.io/qr v0.2.0
 )
