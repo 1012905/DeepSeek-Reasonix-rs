@@ -1690,10 +1690,11 @@ commit.
   its FIFO place (State→Queued, Intent→Followup, clear BlockReason/BlockCode,
   UpdatedAt, commit + notify). Repeat is a no-op; nothing is delivered twice.
 - `RecoverOrphanedInFlight(ownedIDs)` /
-  `RecoverOrphanedInFlightOwnedBy(ownedBy)`: the callback resolves live
-  ownership only AFTER the Store transaction is current; it must be lock-free
-  and must not call Store methods (Controller uses a sync.Map so a newly
-  admitted item cannot be recovered from a stale snapshot). Unowned
+  `RecoverOrphanedInFlightOwnedBy(ownedBy)`: the callback runs under the Store
+  mutex, first in a pre-transaction candidate scan and again after the disk
+  transaction refreshes the manifest. It must be lock-free and must not call
+  Store methods; the second scan re-resolves live ownership so an item admitted
+  after the first scan is not recovered from a stale snapshot. Unowned
   running/steer items → uncertain + in-flight owner is no longer active +
   owner_inactive; Paused = true, Recovered = true, RecoveredN = min(len(items),
   RecoveredN + recovered).
