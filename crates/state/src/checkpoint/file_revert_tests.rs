@@ -1244,6 +1244,17 @@ fn file_revert_target_propagates_forward_capture_error() {
     let error = transaction_prepare::prepare_file_revert(&fixture.store, &plan, &revision, None)
         .unwrap_err();
 
+    #[cfg(unix)]
+    assert!(matches!(
+        error,
+        TransactionError::Operation { phase: TransactionPhase::Prepare, source, .. }
+            if matches!(
+                source.as_ref(),
+                TransactionError::Capture(CaptureError::AtPath { source, .. })
+                    if matches!(source.as_ref(), CaptureError::Hardlink { nlink, .. } if *nlink > 1)
+            )
+    ));
+    #[cfg(not(unix))]
     assert!(matches!(
         error,
         TransactionError::Operation { phase: TransactionPhase::Prepare, source, .. }

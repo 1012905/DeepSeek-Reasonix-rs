@@ -231,7 +231,9 @@ fn freeze_refs_caps_the_enumerated_prefix_before_sorting() {
     for index in (0..101).rev() {
         fs::write(tree.join(format!("f{index:03}")), b"").unwrap();
     }
-    let mut enumerated = fs::read_dir(&tree)
+    let dir = cap_std::fs::Dir::open_ambient_dir(&tree, cap_std::ambient_authority()).unwrap();
+    let mut enumerated = dir
+        .read_dir(".")
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect::<Vec<_>>();
