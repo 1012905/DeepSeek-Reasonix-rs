@@ -51,6 +51,7 @@ fn break_transaction_lock(store: &Store) {
     fs::create_dir(store.dir().join("transaction.lock")).unwrap();
 }
 
+#[cfg(windows)]
 fn blob_names(store: &Store) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(store.dir().join("blobs"))
         .unwrap()

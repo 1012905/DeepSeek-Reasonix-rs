@@ -254,7 +254,7 @@ fn orphan_gc_quarantines_unknown_and_unreferenced_entries() {
 #[test]
 fn orphan_gc_quarantines_non_utf8_entries_without_lossy_rename() {
     use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
     let temp = tempfile::tempdir().unwrap();
     support::write_manifest(temp.path(), "session", &empty_manifest(process_run_id()));
@@ -272,7 +272,7 @@ fn orphan_gc_quarantines_non_utf8_entries_without_lossy_rename() {
                     .unwrap()
                     .file_name()
                     .as_bytes()
-                    .starts_with(invalid.as_bytes())
+                    .starts_with(invalid.as_os_str().as_bytes())
             })
     );
 }
