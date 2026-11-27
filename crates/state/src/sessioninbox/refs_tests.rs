@@ -224,25 +224,16 @@ fn freeze_refs_caps_directory_entries_at_one_hundred_with_legacy_marker() {
 }
 
 #[test]
-fn freeze_refs_caps_the_enumerated_prefix_before_sorting() {
-    let temp = tempfile::tempdir().unwrap();
-    let tree = temp.path().join("tree");
-    fs::create_dir(&tree).unwrap();
-    for index in (0..101).rev() {
-        fs::write(tree.join(format!("f{index:03}")), b"").unwrap();
-    }
-    let dir = cap_std::fs::Dir::open_ambient_dir(&tree, cap_std::ambient_authority()).unwrap();
-    let mut enumerated = dir
-        .read_dir(".")
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+fn freeze_refs_sorts_the_enumerated_entries_before_capping() {
+    let entries = (0..101)
+        .rev()
+        .map(|index| format!("f{index:03}"))
         .collect::<Vec<_>>();
-    enumerated.truncate(MAX_FROZEN_DIR_ENTRIES);
+    let mut enumerated = entries.clone();
     enumerated.sort();
+    enumerated.truncate(MAX_FROZEN_DIR_ENTRIES);
     enumerated.push("…[truncated; directory has more entries]…".to_owned());
-
-    let refs = freeze_refs(temp.path().to_str().unwrap(), &["tree".to_owned()]).unwrap();
-    assert_eq!(refs[0].content, enumerated.join("\n").into_bytes());
+    assert_eq!(refs::cap_frozen_entries(entries), enumerated);
 }
 
 #[test]

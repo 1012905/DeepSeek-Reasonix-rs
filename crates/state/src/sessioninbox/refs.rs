@@ -107,11 +107,7 @@ fn freeze_scoped_ref(root: &Dir, root_path: &Path, path: &str) -> Result<RefSnap
         Target::Directory(dir) => {
             let mut entries = Vec::new();
             walk_directory(&dir, "", path, &mut entries)?;
-            entries.sort();
-            if entries.len() > MAX_FROZEN_DIR_ENTRIES {
-                entries.truncate(MAX_FROZEN_DIR_ENTRIES);
-                entries.push(DIRECTORY_TRUNCATION_MARKER.to_owned());
-            }
+            let entries = cap_frozen_entries(entries);
             Ok(frozen_snapshot(
                 display,
                 entries.join("\n").into_bytes(),
@@ -141,6 +137,16 @@ fn freeze_scoped_ref(root: &Dir, root_path: &Path, path: &str) -> Result<RefSnap
             Ok(frozen_snapshot(display, content, truncated))
         }
     }
+}
+
+pub(super) fn cap_frozen_entries(mut entries: Vec<String>) -> Vec<String> {
+    entries.sort();
+    let truncated = entries.len() > MAX_FROZEN_DIR_ENTRIES;
+    if truncated {
+        entries.truncate(MAX_FROZEN_DIR_ENTRIES);
+        entries.push(DIRECTORY_TRUNCATION_MARKER.to_owned());
+    }
+    entries
 }
 
 enum Target {
