@@ -1659,11 +1659,11 @@ commit.
   changed while opening), LimitReader MaxItemBytes+1 with a truncated flag,
   after-stat SameFile+Size+ModTime re-check (reference changed while
   reading).
-- `freezeDirectory`: sorted walk; > 100 entries → `…[truncated;
-  directory has more entries]…`. `skipFrozenDirEntry`:
-  `.DS_Store`/`Thumbs.db` always; directories `.git`,
-  `.idea`, `.vscode`, `build`, `dist`,
-  `node_modules`, `__pycache__` skipped.
+- `freezeDirectory`: walks in filesystem order, sorts accumulated entries,
+  then keeps the first 100 plus `…[truncated; directory has more entries]…`;
+  retained paths are not necessarily lexicographically first.
+- `skipFrozenDirEntry`: `.DS_Store`/`Thumbs.db` always; directories `.git`,
+  `.idea`, `.vscode`, `build`, `dist`, `node_modules`, `__pycache__`.
 - `ApplyFrozenRefs` (legacy version-1 blobs): `\n\n<!-- frozen inbox
   references (enqueue-time snapshot) -->\n` + `\n### @<path>\n` +
   fenced body, paths sorted.
@@ -1690,10 +1690,11 @@ commit.
   its FIFO place (State→Queued, Intent→Followup, clear BlockReason/BlockCode,
   UpdatedAt, commit + notify). Repeat is a no-op; nothing is delivered twice.
 - `RecoverOrphanedInFlight(ownedIDs)` /
-  `RecoverOrphanedInFlightOwnedBy(ownedBy)`: the callback resolves live
-  ownership only AFTER the Store transaction is current; it must be lock-free
-  and must not call Store methods (Controller uses a sync.Map so a newly
-  admitted item cannot be recovered from a stale snapshot). Unowned
+  `RecoverOrphanedInFlightOwnedBy(ownedBy)`: the callback runs under the Store
+  mutex, first in a pre-transaction candidate scan and again after the disk
+  transaction refreshes the manifest. It must be lock-free and must not call
+  Store methods; the second scan re-resolves live ownership so an item admitted
+  after the first scan is not recovered from a stale snapshot. Unowned
   running/steer items → uncertain + in-flight owner is no longer active +
   owner_inactive; Paused = true, Recovered = true, RecoveredN = min(len(items),
   RecoveredN + recovered).

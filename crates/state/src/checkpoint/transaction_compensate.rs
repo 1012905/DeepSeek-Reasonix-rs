@@ -105,15 +105,12 @@ fn compensate_published(store: &Store, target: &TransactionTarget) -> Result<(),
             target.restore_mode,
         ) {
             let recovery = recovery_path(target);
-            secure_path::write_new_file(
+            let _ = secure_path::write_new_file(
                 &store.root,
                 &recovery,
                 &forward,
                 effective_mode(target.forward_mode),
-            )
-            .map_err(|error| {
-                TransactionError::at(TransactionPhase::CompensateFile, error.into())
-            })?;
+            );
             return Err(TransactionError::ExternalModification {
                 path: target.path.clone(),
                 recovery: Some(recovery),
@@ -217,21 +214,20 @@ fn restore_forward_copy(
 }
 
 fn load_forward(store: &Store, target: &TransactionTarget) -> Result<Vec<u8>, TransactionError> {
-    if target.forward_blob.is_empty() {
-        return Ok(target.forward_inline.clone());
+    if !target.forward_blob.is_empty()
+        && let Some(blobs) = &store.blobs
+    {
+        return blobs
+            .get(&target.forward_blob)
+            .map_err(|error| TransactionError::at(TransactionPhase::CompensateFile, error.into()));
     }
-    let blobs = store.blobs.as_ref().ok_or_else(|| {
-        TransactionError::at(
-            TransactionPhase::CompensateFile,
-            TransactionError::MissingPayload {
-                path: target.path.clone(),
-                reference: target.forward_blob.clone(),
-            },
-        )
-    })?;
-    blobs
-        .get(&target.forward_blob)
-        .map_err(|error| TransactionError::at(TransactionPhase::CompensateFile, error.into()))
+    target
+        .forward_inline
+        .clone()
+        .ok_or_else(|| TransactionError::MissingPayload {
+            path: target.path.clone(),
+            reference: target.forward_blob.clone(),
+        })
 }
 
 fn cleanup_temp(store: &Store, target: &TransactionTarget) -> Result<(), TransactionError> {
@@ -292,6 +288,40 @@ fn mark_stage(
     stage.comp_error = error.map(ToString::to_string).unwrap_or_default();
 }
 
+pub(super) fn reapply_rewind(
+    transaction: &TransactionManifest,
+    applier: Option<&dyn ConversationApplier>,
+) -> Result<(), TransactionError> {
+    if !matches!(
+        transaction.scope,
+        RewindScope::Conversation | RewindScope::Both
+    ) {
+        return Ok(());
+    }
+    let Some(applier) = applier else {
+        return Ok(());
+    };
+    let mut errors = Vec::new();
+    if transaction.has_boundary
+        && let Err(source) = applier.apply_conversation_truncate(
+            transaction.boundary_index,
+            &transaction.conversation_forward,
+        )
+    {
+        errors.push(conversation_error(
+            ConversationPhase::ApplyConversationTruncate,
+            source,
+        ));
+    }
+    if let Err(source) = applier.truncate_checkpoints(transaction.truncate_from) {
+        errors.push(conversation_error(
+            ConversationPhase::TruncateCheckpoints,
+            source,
+        ));
+    }
+    combine_errors(errors)
+}
+
 pub(super) fn restore_conversation(
     transaction: &TransactionManifest,
     applier: Option<&dyn ConversationApplier>,
@@ -340,16 +370,36 @@ fn combine_errors(errors: Vec<TransactionError>) -> Result<(), TransactionError>
 pub(super) fn fail(
     store: &Store,
     transaction: &mut TransactionManifest,
-    mut stages: Vec<FileStage>,
+    stages: Vec<FileStage>,
     cause: TransactionError,
     applier: Option<&dyn ConversationApplier>,
     restore_state: bool,
     injection: Option<&TransactionInjection>,
 ) -> Result<(), TransactionError> {
-    let mut compensation_errors = Vec::new();
-    if restore_state && let Err(error) = restore_conversation(transaction, applier) {
-        compensation_errors.push(error);
-    }
+    let state_compensation = if restore_state {
+        restore_conversation(transaction, applier).err()
+    } else {
+        None
+    };
+    fail_after_state_compensation(
+        store,
+        transaction,
+        stages,
+        cause,
+        state_compensation,
+        injection,
+    )
+}
+
+pub(super) fn fail_after_state_compensation(
+    store: &Store,
+    transaction: &mut TransactionManifest,
+    mut stages: Vec<FileStage>,
+    cause: TransactionError,
+    state_compensation: Option<TransactionError>,
+    injection: Option<&TransactionInjection>,
+) -> Result<(), TransactionError> {
+    let mut compensation_errors: Vec<_> = state_compensation.into_iter().collect();
     if let Err(error) = compensate(store, &transaction.targets, &mut stages, injection) {
         compensation_errors.push(error);
     }

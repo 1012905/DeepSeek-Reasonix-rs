@@ -21,10 +21,10 @@ fn terminal(id: &str, state: TransactionState, created_at: &str) -> TransactionM
 }
 
 #[test]
-fn committed_rewind_records_an_internal_offer_without_advertising_undo() {
+fn committed_rewind_advertises_public_undo_offer() {
     let (fixture, result) = committed_fixture();
     assert!(result.ok);
-    assert!(!result.undo_available);
+    assert!(result.undo_available);
     let offer = fixture.store.current_undo_offer().unwrap();
     assert_eq!(offer.id, result.transaction_id);
     assert_eq!(offer.state, TransactionState::Committed);
@@ -216,7 +216,7 @@ fn committed_backup_cleanup_failure_does_not_fail_rewind_or_hide_the_offer() {
         .expect("committed rewind survives best-effort backup cleanup");
 
     assert!(result.ok);
-    assert!(!result.undo_available);
+    assert!(result.undo_available);
     assert_eq!(
         fixture.store.current_undo_offer().unwrap().id,
         result.transaction_id

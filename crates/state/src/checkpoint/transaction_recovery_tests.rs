@@ -160,6 +160,59 @@ fn startup_preserves_external_edit_and_writes_forward_recovery_copy() {
 }
 
 #[test]
+fn external_modification_retry_keeps_identity_and_existing_recovery_copy() {
+    let fixture = published_intent();
+    write(fixture.root.path(), "a.txt", "external-edit");
+    let before = single_manifest(&fixture.dir).0;
+    let target = &before.targets[0];
+    let suffix = target.restore_sha.get(..8).unwrap_or("unknown");
+    let recovery = PathBuf::from(format!("{}.reasonix-recovery-{suffix}", target.abs_path));
+
+    let recovered = restart(&fixture);
+    assert_eq!(fs::read(&recovery).unwrap(), b"a-after");
+    let pending = single_manifest(&fixture.dir).0;
+    assert_eq!(pending.state, TransactionState::Committing);
+    fs::write(&recovery, b"existing recovery copy").unwrap();
+
+    let mut stages = Vec::new();
+    let error = transaction_compensate::compensate(&recovered, &pending.targets, &mut stages, None)
+        .unwrap_err();
+    let TransactionError::Compensation(errors) = error else {
+        panic!("expected compensation errors");
+    };
+    assert_eq!(errors.len(), 1);
+    let TransactionError::ExternalModification {
+        path,
+        recovery: actual_recovery,
+    } = &errors[0]
+    else {
+        panic!("expected external modification identity: {:?}", errors[0]);
+    };
+    assert_eq!(path, &target.path);
+    assert_eq!(actual_recovery.as_ref(), Some(&recovery));
+    assert_eq!(fs::read(&recovery).unwrap(), b"existing recovery copy");
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"external-edit");
+    assert!(stages.iter().any(|stage| {
+        stage.path == target.path
+            && !stage.compensated
+            && stage
+                .comp_error
+                .contains(&recovery.to_string_lossy().to_string())
+    }));
+
+    let retried = restart(&fixture);
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Committing
+    );
+    assert_eq!(fs::read(&recovery).unwrap(), b"existing recovery copy");
+    assert!(retried.recovery_notes().iter().any(|note| {
+        note.phase == RecoveryPhase::CompensationPending
+            && note.message.contains(&format!("{recovery:?}"))
+    }));
+}
+
+#[test]
 fn failed_compensation_stays_committing_and_startup_retry_completes() {
     let (fixture, plan_id) = prepared();
     let injection = TransactionInjection::fail_after(TransactionPhase::PublishFile, 1)
@@ -405,6 +458,25 @@ fn startup_ignores_terminal_transaction_manifests() {
 }
 
 #[test]
+fn startup_aborted_newer_transaction_does_not_hide_committed_undo_offer() {
+    let (fixture, original) = committed_fixture();
+    let (mut newer, _) = single_manifest(&fixture.dir);
+    newer.id = "newer-aborted".to_owned();
+    newer.state = TransactionState::Aborted;
+    newer.created_at = crate::sessionstore::eventlog::record::CreatedAt::from_datetime(
+        newer.created_at.get() + chrono::Duration::seconds(1),
+    );
+    save_manifest(&fixture.dir, &newer);
+
+    let recovered = restart(&fixture);
+
+    assert_eq!(
+        recovered.current_undo_offer().unwrap().id,
+        original.transaction_id
+    );
+}
+
+#[test]
 fn unreadable_manifest_and_recovery_directory_produce_notes() {
     let fixture = fixture();
     fs::create_dir_all(transaction_dir(&fixture.dir)).unwrap();
@@ -554,5 +626,590 @@ fn startup_removes_new_file_only_while_it_matches_restore_state() {
         single_manifest(&fixture.dir).0.state,
         TransactionState::Aborted
     );
+    assert_recovery_allows_mutation(&recovered);
+}
+
+fn manifests(dir: &Path) -> Vec<(TransactionManifest, PathBuf)> {
+    transaction_paths(dir)
+        .into_iter()
+        .map(|path| {
+            let manifest = read_json_file(&path).unwrap();
+            (manifest, path)
+        })
+        .collect()
+}
+
+fn crash_conversation_rewind() -> (Fixture, TransactionManifest) {
+    let fixture = modify_add_delete_fixture();
+    let plan = fixture
+        .store
+        .prepare_rewind(0, RewindScope::Both, 7, 5, true);
+    assert!(plan.can_files && plan.can_conversation, "{plan:?}");
+    let applier = MockApplier::default();
+    let injection =
+        TransactionInjection::crash(TransactionPhase::CrashAfterConversationBeforeFinalize);
+    assert!(matches!(
+        fixture.store.commit_rewind(
+            &plan.plan_id,
+            7,
+            b"conversation-forward",
+            Some(&applier),
+            Some(&injection),
+        ),
+        Err(TransactionError::InjectedCrash {
+            phase: TransactionPhase::CrashAfterConversationBeforeFinalize
+        })
+    ));
+    let transaction = single_manifest(&fixture.dir).0;
+    assert_eq!(transaction.state, TransactionState::Committing);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    (fixture, transaction)
+}
+
+fn crash_conversation_undo() -> (Fixture, TransactionManifest, PathBuf) {
+    let fixture = modify_add_delete_fixture();
+    let plan = fixture
+        .store
+        .prepare_rewind(0, RewindScope::Both, 7, 5, true);
+    assert!(plan.can_files && plan.can_conversation, "{plan:?}");
+    let applier = MockApplier::default();
+    fixture
+        .store
+        .commit_rewind(
+            &plan.plan_id,
+            7,
+            b"conversation-forward",
+            Some(&applier),
+            None,
+        )
+        .unwrap();
+    let original = single_manifest(&fixture.dir).0;
+    let injection =
+        TransactionInjection::crash(TransactionPhase::CrashAfterConversationBeforeFinalize);
+    assert!(matches!(
+        fixture
+            .store
+            .undo_rewind(&original.id, Some(&applier), Some(&injection),),
+        Err(TransactionError::InjectedCrash {
+            phase: TransactionPhase::CrashAfterConversationBeforeFinalize
+        })
+    ));
+    let (undo, path) = manifests(&fixture.dir)
+        .into_iter()
+        .find(|(transaction, _)| transaction.kind == "undo")
+        .expect("interrupted undo manifest");
+    assert_eq!(undo.state, TransactionState::Committing);
+    assert_eq!(undo.parent_transaction, original.id);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    (fixture, undo, path)
+}
+
+struct OrderedRecoveryApplier<'a> {
+    root: &'a Path,
+    expected_file: &'a [u8],
+    observations: std::sync::atomic::AtomicUsize,
+}
+
+impl OrderedRecoveryApplier<'_> {
+    fn observe(&self) {
+        assert_eq!(
+            fs::read(self.root.join("a.txt")).unwrap(),
+            self.expected_file,
+            "conversation recovery must precede file compensation"
+        );
+        self.observations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl ConversationApplier for OrderedRecoveryApplier<'_> {
+    fn apply_conversation_truncate(
+        &self,
+        _boundary: i64,
+        _forward: &[u8],
+    ) -> Result<(), ConversationError> {
+        self.observe();
+        Ok(())
+    }
+
+    fn restore_conversation(&self, _forward: &[u8]) -> Result<(), ConversationError> {
+        self.observe();
+        Ok(())
+    }
+
+    fn truncate_checkpoints(&self, _from_turn: i64) -> Result<(), ConversationError> {
+        self.observe();
+        Ok(())
+    }
+
+    fn restore_checkpoints(&self, _backup: &[u8]) -> Result<(), ConversationError> {
+        self.observe();
+        Ok(())
+    }
+}
+
+#[test]
+fn recovery_restores_conversation_before_file_compensation() {
+    let (fixture, transaction) = crash_conversation_rewind();
+    let recovered = restart(&fixture);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    assert!(
+        recovered
+            .recovery_notes()
+            .iter()
+            .any(|note| note.phase == RecoveryPhase::DeferredConversation)
+    );
+    let applier = OrderedRecoveryApplier {
+        root: fixture.root.path(),
+        expected_file: b"a-before",
+        observations: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let report = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(
+        applier
+            .observations
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
+    assert!(!fixture.root.path().join("c.txt").exists());
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Aborted
+    );
+    assert!(report.notes.iter().any(|note| {
+        note.phase == RecoveryPhase::Compensated
+            && note.path.ends_with(format!("{}.json", transaction.id))
+    }));
+}
+
+#[test]
+fn recovery_reapplies_undo_rewind_before_file_compensation() {
+    let (fixture, undo, _) = crash_conversation_undo();
+    let recovered = restart(&fixture);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    let applier = OrderedRecoveryApplier {
+        root: fixture.root.path(),
+        expected_file: b"a-after",
+        observations: std::sync::atomic::AtomicUsize::new(0),
+    };
+
+    let report = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(
+        applier
+            .observations
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    assert!(!fixture.root.path().join("b.txt").exists());
+    assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");
+    let (durable, _) = manifests(&fixture.dir)
+        .into_iter()
+        .find(|(transaction, _)| transaction.id == undo.id)
+        .unwrap();
+    assert_eq!(durable.state, TransactionState::Aborted);
+    assert_eq!(durable.boundary_index, undo.boundary_index);
+    assert_eq!(durable.conversation_forward, undo.conversation_forward);
+    assert_eq!(durable.truncate_from, undo.truncate_from);
+}
+
+#[test]
+fn recovery_refuses_missing_forward_conversation_payload() {
+    let fixture = modify_add_delete_fixture();
+    let plan = fixture
+        .store
+        .prepare_rewind(0, RewindScope::Both, 7, 5, true);
+    assert!(plan.can_files && plan.can_conversation, "{plan:?}");
+    let applier = MockApplier::default();
+    let injection =
+        TransactionInjection::crash(TransactionPhase::CrashAfterConversationBeforeFinalize);
+    assert!(
+        fixture
+            .store
+            .commit_rewind(&plan.plan_id, 7, b"", Some(&applier), Some(&injection))
+            .is_err()
+    );
+    let transaction = single_manifest(&fixture.dir).0;
+    assert!(transaction.has_boundary);
+    assert!(transaction.conversation_forward.is_empty());
+    let recovered = restart(&fixture);
+    let applier = MockApplier::default();
+
+    let report = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(report.errors.iter().any(|error| matches!(
+        error,
+        RecoveryError::MissingForwardConversation { transaction_id }
+            if transaction_id == &transaction.id
+    )));
+    assert!(applier.calls.lock().unwrap().is_empty());
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    let pending = single_manifest(&fixture.dir).0;
+    assert_eq!(pending.state, TransactionState::Committing);
+    assert_eq!(
+        pending.error,
+        "crash recovery conversation compensation pending: missing forward conversation payload"
+    );
+    assert!(report.notes.iter().any(|note| {
+        note.phase == RecoveryPhase::ConversationPending
+            && note.path.ends_with(format!("{}.json", transaction.id))
+    }));
+    assert_recovery_blocks_mutation(&recovered);
+}
+
+#[test]
+fn failed_conversation_recovery_stays_committing_and_retries() {
+    let (fixture, transaction) = crash_conversation_rewind();
+    let recovered = restart(&fixture);
+    let applier = MockApplier::default();
+    applier.fail_at(ConversationPhase::RestoreConversation);
+
+    let failed = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(!failed.errors.is_empty());
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Committing
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    assert_recovery_blocks_mutation(&recovered);
+    assert_recovery_blocks_rewind(&recovered);
+    assert!(failed.notes.iter().any(|note| {
+        note.phase == RecoveryPhase::ConversationPending
+            && note.path.ends_with(format!("{}.json", transaction.id))
+    }));
+
+    applier.failures.lock().unwrap().clear();
+    let retried = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(retried.errors.is_empty(), "{retried:?}");
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Aborted
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_recovery_allows_mutation(&recovered);
+    assert_eq!(
+        applier
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| matches!(call, ConversationCall::RestoreConversation(_)))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn startup_recovers_file_only_undo() {
+    let (fixture, original) = committed_fixture();
+    let injection =
+        TransactionInjection::crash(TransactionPhase::CrashAfterConversationBeforeFinalize);
+    assert!(matches!(
+        fixture
+            .store
+            .undo_rewind(&original.transaction_id, None, Some(&injection),),
+        Err(TransactionError::InjectedCrash {
+            phase: TransactionPhase::CrashAfterConversationBeforeFinalize
+        })
+    ));
+
+    let recovered = restart(&fixture);
+
+    let (undo, _) = manifests(&fixture.dir)
+        .into_iter()
+        .find(|(transaction, _)| transaction.kind == "undo")
+        .unwrap();
+    assert_eq!(undo.state, TransactionState::Aborted);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    assert!(!fixture.root.path().join("b.txt").exists());
+    assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");
+    assert_eq!(
+        recovered.current_undo_offer().unwrap().id,
+        original.transaction_id
+    );
+    assert_recovery_allows_mutation(&recovered);
+}
+
+#[test]
+fn startup_recovers_file_only_file_revert() {
+    let (fixture, plan_id) = prepared();
+    crash_at(
+        &fixture,
+        &plan_id,
+        TransactionPhase::CrashAfterPublishBeforeProgress,
+    );
+    let mut transaction = single_manifest(&fixture.dir).0;
+    transaction.kind = "file_revert".to_owned();
+    save_manifest(&fixture.dir, &transaction);
+
+    let recovered = restart(&fixture);
+
+    assert_eq!(
+        single_manifest(&fixture.dir).0.state,
+        TransactionState::Aborted
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
+    assert!(!fixture.root.path().join("c.txt").exists());
+    assert_recovery_allows_mutation(&recovered);
+}
+
+#[test]
+fn in_memory_pending_undo_recovers_with_applier() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "a.txt", "a-before");
+    let store = std::sync::Arc::new(Store::new(None, root.path()));
+    store.begin(0, "edit", 0).unwrap();
+    store.capture_before(root.path().join("a.txt"), CaptureBeforeOpts::default());
+    write(root.path(), "a.txt", "a-after");
+    store
+        .capture_after(
+            root.path().join("a.txt"),
+            CaptureAfterOpts {
+                seq: 1,
+                ..CaptureAfterOpts::default()
+            },
+        )
+        .unwrap();
+    let plan = store.prepare_rewind(0, RewindScope::Both, 7, 5, true);
+    assert!(plan.can_files && plan.can_conversation, "{plan:?}");
+    let applier = MockApplier::default();
+    let original = store
+        .commit_rewind(
+            &plan.plan_id,
+            7,
+            b"conversation-forward",
+            Some(&applier),
+            None,
+        )
+        .unwrap();
+    let offers = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let callback_offers = offers.clone();
+    let callback_store = std::sync::Arc::clone(&store);
+    store.on_undo_change(move || {
+        callback_offers.lock().unwrap().push(
+            callback_store
+                .available_undo()
+                .map(|offer| offer.transaction_id),
+        );
+    });
+    let injection =
+        TransactionInjection::crash(TransactionPhase::CrashAfterConversationBeforeFinalize);
+    let error = store
+        .undo_rewind(&original.transaction_id, Some(&applier), Some(&injection))
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            TransactionError::InjectedCrash {
+                phase: TransactionPhase::CrashAfterConversationBeforeFinalize
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(store.available_undo().is_none());
+    assert_eq!(*offers.lock().unwrap(), vec![None]);
+    let recovery = MockApplier::default();
+
+    let report = store.recover_transactions_with_applier(Some(&recovery));
+
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(
+        store.available_undo().unwrap().transaction_id,
+        original.transaction_id
+    );
+    assert_eq!(
+        *offers.lock().unwrap(),
+        vec![None, Some(original.transaction_id.clone())]
+    );
+    assert_eq!(
+        *recovery.calls.lock().unwrap(),
+        vec![
+            ConversationCall::ApplyConversationTruncate {
+                boundary: 5,
+                forward: b"conversation-forward".to_vec(),
+            },
+            ConversationCall::TruncateCheckpoints(0),
+        ]
+    );
+    assert_eq!(read(root.path(), "a.txt"), b"a-before");
+}
+
+#[test]
+fn recovery_retry_is_idempotent() {
+    let (fixture, _) = crash_conversation_rewind();
+    let recovered = restart(&fixture);
+    let applier = MockApplier::default();
+    let first = recovered.recover_transactions_with_applier(Some(&applier));
+    assert!(first.errors.is_empty(), "{first:?}");
+    let before = single_manifest(&fixture.dir).0;
+    let calls = applier.calls.lock().unwrap().clone();
+
+    let second = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(second.errors.is_empty(), "{second:?}");
+    assert!(second.notes.is_empty());
+    assert_eq!(single_manifest(&fixture.dir).0, before);
+    assert_eq!(*applier.calls.lock().unwrap(), calls);
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
+    assert!(!fixture.root.path().join("c.txt").exists());
+}
+
+#[test]
+fn undo_recovery_does_not_load_parent_manifest() {
+    let (fixture, undo, _) = crash_conversation_undo();
+    fs::remove_file(manifest_path(&fixture.dir, &undo.parent_transaction)).unwrap();
+    let recovered = restart(&fixture);
+    let applier = MockApplier::default();
+
+    let report = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(
+        *applier.calls.lock().unwrap(),
+        vec![
+            ConversationCall::ApplyConversationTruncate {
+                boundary: undo.boundary_index,
+                forward: undo.conversation_forward.clone(),
+            },
+            ConversationCall::TruncateCheckpoints(undo.truncate_from),
+        ]
+    );
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    let (durable, _) = manifests(&fixture.dir)
+        .into_iter()
+        .find(|(transaction, _)| transaction.id == undo.id)
+        .unwrap();
+    assert_eq!(durable.state, TransactionState::Aborted);
+}
+
+#[test]
+fn recovery_does_not_fall_back_to_superseded_undo() {
+    let (fixture, first) = committed_fixture();
+    let plan = fixture
+        .store
+        .prepare_rewind(0, RewindScope::Conversation, 7, 5, true);
+    assert!(plan.can_conversation, "{plan:?}");
+    let applier = MockApplier::default();
+    let second = fixture
+        .store
+        .commit_rewind(&plan.plan_id, 7, b"second-forward", Some(&applier), None)
+        .unwrap();
+    assert_ne!(first.transaction_id, second.transaction_id);
+    let plan = fixture
+        .store
+        .prepare_rewind(0, RewindScope::Conversation, 7, 5, true);
+    assert!(plan.can_conversation, "{plan:?}");
+    let injection =
+        TransactionInjection::crash(TransactionPhase::CrashAfterConversationBeforeFinalize);
+    assert!(
+        fixture
+            .store
+            .commit_rewind(
+                &plan.plan_id,
+                7,
+                b"third-forward",
+                Some(&applier),
+                Some(&injection),
+            )
+            .is_err()
+    );
+    let recovered = restart(&fixture);
+    assert!(recovered.available_undo().is_none());
+    let recovery = MockApplier::default();
+    recovery.fail_at(ConversationPhase::RestoreConversation);
+
+    let failed = recovered.recover_transactions_with_applier(Some(&recovery));
+
+    assert!(!failed.errors.is_empty());
+    assert!(recovered.available_undo().is_none());
+    assert!(matches!(
+        recovered.undo_rewind(&first.transaction_id, None, None),
+        Err(TransactionError::Store(StoreError::UndoRecoveryPending))
+    ));
+    recovery.failures.lock().unwrap().clear();
+    let retried = recovered.recover_transactions_with_applier(Some(&recovery));
+    assert!(retried.errors.is_empty(), "{retried:?}");
+    assert_eq!(
+        recovered.available_undo().unwrap().transaction_id,
+        second.transaction_id
+    );
+    assert_ne!(
+        recovered.available_undo().unwrap().transaction_id,
+        first.transaction_id
+    );
+}
+
+#[cfg(windows)]
+struct ReadOnlyOnTruncateApplier {
+    manifest: PathBuf,
+}
+
+#[cfg(windows)]
+impl ConversationApplier for ReadOnlyOnTruncateApplier {
+    fn apply_conversation_truncate(
+        &self,
+        _boundary: i64,
+        _forward: &[u8],
+    ) -> Result<(), ConversationError> {
+        Ok(())
+    }
+
+    fn restore_conversation(&self, _forward: &[u8]) -> Result<(), ConversationError> {
+        Ok(())
+    }
+
+    fn truncate_checkpoints(&self, _from_turn: i64) -> Result<(), ConversationError> {
+        reasonix_core::fileutil::set_file_mode(&self.manifest, 0o400).unwrap();
+        Ok(())
+    }
+
+    fn restore_checkpoints(&self, _backup: &[u8]) -> Result<(), ConversationError> {
+        Ok(())
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn startup_undo_terminal_persistence_failure_stays_committing() {
+    let (fixture, undo, manifest) = crash_conversation_undo();
+    let recovered = restart(&fixture);
+    let applier = ReadOnlyOnTruncateApplier {
+        manifest: manifest.clone(),
+    };
+
+    let failed = recovered.recover_transactions_with_applier(Some(&applier));
+
+    assert!(!failed.errors.is_empty());
+    assert!(failed.notes.iter().any(|note| {
+        note.phase == RecoveryPhase::PersistAborted
+            && note.path.ends_with(format!("{}.json", undo.id))
+    }));
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
+    let (durable, _) = manifests(&fixture.dir)
+        .into_iter()
+        .find(|(transaction, _)| transaction.id == undo.id)
+        .unwrap();
+    assert_eq!(durable.state, TransactionState::Committing);
+    assert_recovery_blocks_mutation(&recovered);
+
+    reasonix_core::fileutil::set_file_mode(&manifest, 0o600).unwrap();
+    let retried = recovered.recover_transactions_with_applier(Some(&MockApplier::default()));
+    assert!(retried.errors.is_empty(), "{retried:?}");
+    let (durable, _) = manifests(&fixture.dir)
+        .into_iter()
+        .find(|(transaction, _)| transaction.id == undo.id)
+        .unwrap();
+    assert_eq!(durable.state, TransactionState::Aborted);
     assert_recovery_allows_mutation(&recovered);
 }

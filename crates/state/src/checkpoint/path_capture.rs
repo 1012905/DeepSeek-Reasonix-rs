@@ -167,6 +167,16 @@ impl Default for Fingerprint {
     }
 }
 
+pub(super) fn same_fingerprint(left: &Fingerprint, right: &Fingerprint) -> bool {
+    left.existed == right.existed
+        && left.is_dir == right.is_dir
+        && left.is_symlink == right.is_symlink
+        && left.nlink == right.nlink
+        && left.mode == right.mode
+        && left.size == right.size
+        && left.sha256 == right.sha256
+}
+
 pub fn safe_path(root: &Path, path: &Path) -> Result<PathBuf, PathError> {
     if path.as_os_str().is_empty() {
         return Err(PathError::Io {
@@ -191,6 +201,32 @@ pub fn safe_path(root: &Path, path: &Path) -> Result<PathBuf, PathError> {
         return Ok(absolute);
     }
 
+    let (root, absolute, relative) = scoped_path(root, path)?;
+    let mut current = root;
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(PathError::Symlink { component: current });
+            }
+            Ok(_) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(absolute),
+            Err(source) => {
+                return Err(PathError::Io {
+                    op: "inspect workspace path",
+                    path: current,
+                    source,
+                });
+            }
+        }
+    }
+    Ok(absolute)
+}
+
+pub(crate) fn scoped_path(
+    root: &Path,
+    path: &Path,
+) -> Result<(PathBuf, PathBuf, PathBuf), PathError> {
     let root = std::path::absolute(root).map_err(|source| PathError::Io {
         op: "resolve workspace root",
         path: root.to_path_buf(),
@@ -213,25 +249,7 @@ pub fn safe_path(root: &Path, path: &Path) -> Result<PathBuf, PathError> {
             root,
         });
     }
-    let mut current = root;
-    for component in relative {
-        current.push(component);
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(PathError::Symlink { component: current });
-            }
-            Ok(_) => {}
-            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(absolute),
-            Err(source) => {
-                return Err(PathError::Io {
-                    op: "inspect workspace path",
-                    path: current,
-                    source,
-                });
-            }
-        }
-    }
-    Ok(absolute)
+    Ok((root, absolute, relative.iter().collect()))
 }
 
 fn validate_absolute_symlinks(absolute: &Path) -> Result<(), PathError> {

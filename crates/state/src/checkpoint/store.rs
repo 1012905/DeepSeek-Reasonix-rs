@@ -185,7 +185,7 @@ impl Store {
             runtime: StoreRuntime::default(),
             state: Mutex::new(state),
         };
-        store.recover_file_transactions_on_startup();
+        store.recover_transactions_with_applier(None);
         store
     }
 

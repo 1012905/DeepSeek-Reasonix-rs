@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -35,6 +36,7 @@ pub enum TransactionPhase {
     Finalize,
     CrashAfterConversationBeforeFinalize,
     PersistCommitted,
+    PersistParentUndone,
     CompensateFile,
     SyncForwardOwnership,
     PersistAborted,
@@ -135,8 +137,43 @@ pub enum RecoveryPhase {
     PersistAborted,
     Compensated,
     CompensationPending,
+    ConversationPending,
     DeferredConversation,
     UnsupportedKind,
+}
+
+#[derive(Debug, Default)]
+pub struct RecoveryReport {
+    pub notes: Vec<RecoveryNote>,
+    pub errors: Vec<RecoveryError>,
+}
+
+#[derive(Debug, Error)]
+pub enum RecoveryError {
+    #[error("read transaction recovery directory {path}: {source}")]
+    ReadDirectory {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("read transaction manifest {path}: {source}")]
+    ReadManifest {
+        path: PathBuf,
+        #[source]
+        source: SecureError,
+    },
+    #[error("transaction manifest is not a regular file: {path}")]
+    InvalidManifest { path: PathBuf },
+    #[error("unsupported transaction kind {kind}")]
+    UnsupportedKind { kind: String },
+    #[error("transaction {transaction_id}: missing forward conversation payload")]
+    MissingForwardConversation { transaction_id: String },
+    #[error("transaction {transaction_id}: {source}")]
+    Transaction {
+        transaction_id: String,
+        #[source]
+        source: TransactionError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +273,10 @@ pub enum TransactionError {
     BarrierBusy,
     #[error("active background writer prevents rewind")]
     ActiveWriters,
+    #[error("undo is not available for transaction {transaction_id}")]
+    UndoNotAvailable { transaction_id: String },
+    #[error("undo found file conflicts")]
+    UndoFileConflicts(Vec<RewindConflict>),
     #[error("workspace token changed from {expected} to {actual}")]
     WorkspaceTokenMismatch { expected: String, actual: String },
     #[error("rewind precheck found conflicts")]
@@ -248,7 +289,7 @@ pub enum TransactionError {
     MissingBackupPath { path: String },
     #[error("transaction publish temp is missing for {path}")]
     MissingPublishTemp { path: String },
-    #[error("external modification after publish for {path}")]
+    #[error("external modification after publish for {path}{}", .recovery.as_ref().map(|path| format!("; recovery copy at {}", path.display())).unwrap_or_default())]
     ExternalModification {
         path: String,
         recovery: Option<PathBuf>,

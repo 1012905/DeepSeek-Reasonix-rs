@@ -617,12 +617,13 @@ pub struct TransactionTarget {
     #[serde(rename = "restoreBlob", skip_serializing_if = "String::is_empty")]
     pub restore_blob: String,
     #[serde(
+        default,
         rename = "restoreInline",
-        skip_serializing_if = "Vec::is_empty",
-        serialize_with = "bytes_wire::serialize",
-        deserialize_with = "bytes_wire::deserialize"
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "bytes_wire::serialize_option",
+        deserialize_with = "bytes_wire::deserialize_option"
     )]
-    pub restore_inline: Vec<u8>,
+    pub restore_inline: Option<Vec<u8>>,
     #[serde(
         rename = "restoreEncoding",
         skip_serializing_if = "Option::is_none",
@@ -639,12 +640,13 @@ pub struct TransactionTarget {
     #[serde(rename = "forwardBlob", skip_serializing_if = "String::is_empty")]
     pub forward_blob: String,
     #[serde(
+        default,
         rename = "forwardInline",
-        skip_serializing_if = "Vec::is_empty",
-        serialize_with = "bytes_wire::serialize",
-        deserialize_with = "bytes_wire::deserialize"
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "bytes_wire::serialize_option",
+        deserialize_with = "bytes_wire::deserialize_option"
     )]
-    pub forward_inline: Vec<u8>,
+    pub forward_inline: Option<Vec<u8>>,
     #[serde(rename = "publishTmp", skip_serializing_if = "String::is_empty")]
     pub publish_tmp: String,
     #[serde(rename = "backupPath", skip_serializing_if = "String::is_empty")]
@@ -784,6 +786,29 @@ mod bytes_wire {
         base64::engine::general_purpose::STANDARD
             .decode(value)
             .map_err(serde::de::Error::custom)
+    }
+
+    pub fn serialize_option<S>(bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match bytes {
+            Some(bytes) => serialize(bytes, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize_option<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer)?
+            .map(|value| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(value)
+                    .map_err(serde::de::Error::custom)
+            })
+            .transpose()
     }
 }
 

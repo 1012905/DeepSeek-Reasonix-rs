@@ -3,7 +3,9 @@
 mod atomic_json;
 mod barrier;
 mod blob;
+mod checkpoint_backup;
 mod conversation_fork;
+mod file_revert;
 mod observer;
 mod ownership;
 mod path_capture;
@@ -18,13 +20,16 @@ mod transaction_publish;
 mod transaction_recovery;
 mod types;
 mod undo;
+mod undo_execute;
 mod writer_admission;
 
 pub use atomic_json::{read_json_file, write_json_atomic};
 pub use barrier::{BarrierError, ExclusivePermit, MutationBarrier, WritePermit};
 pub use blob::{BlobError, BlobStore, digest, valid_blob_ref};
 pub use conversation_fork::ConversationForkError;
+pub use file_revert::{FileRevertDisabledReason, FileRevertError, FileRevertRejection};
 pub use observer::{BeginWriteError, MutationObserver, ObserverOptions};
+pub(crate) use path_capture::scoped_path;
 pub use path_capture::{
     CaptureError, Fingerprint, PathError, capture_path, compare_identity, fingerprint_path,
     normalize_rel_path, safe_path,
@@ -36,8 +41,8 @@ pub use secure_path::{
 };
 pub use store::{Store, StoreConfig, StoreError, expired_dir, turn_path};
 pub use transaction::{
-    ConversationApplier, ConversationError, ConversationPhase, RecoveryNote, RecoveryPhase,
-    TransactionError, TransactionInjection, TransactionPhase,
+    ConversationApplier, ConversationError, ConversationPhase, RecoveryError, RecoveryNote,
+    RecoveryPhase, RecoveryReport, TransactionError, TransactionInjection, TransactionPhase,
 };
 pub use types::*;
 pub use writer_admission::{RegisteredWriter, WriterError, WriterErrorKind};
@@ -48,6 +53,8 @@ mod barrier_tests;
 mod blob_path_tests;
 #[cfg(test)]
 mod conversation_fork_tests;
+#[cfg(test)]
+mod file_revert_tests;
 #[cfg(test)]
 mod gc_tests;
 #[cfg(test)]
@@ -70,6 +77,8 @@ mod transaction_recovery_tests;
 mod transaction_test_support;
 #[cfg(test)]
 mod transaction_tests;
+#[cfg(test)]
+mod undo_execute_tests;
 #[cfg(test)]
 mod undo_tests;
 #[cfg(test)]

@@ -28,7 +28,7 @@ fn commit_rewind_modify_add_delete_persists_progress_and_cleans_staging() {
     let result = commit(&fixture, &plan_id, b"conversation-forward").unwrap();
 
     assert!(result.ok);
-    assert!(!result.undo_available);
+    assert!(result.undo_available);
     assert_eq!(read(fixture.root.path(), "a.txt"), b"a-before");
     assert_eq!(read(fixture.root.path(), "c.txt"), b"c-before");
     assert!(!fixture.root.path().join("b.txt").exists());
@@ -123,6 +123,33 @@ fn prepared_manifest_failure_cleans_publish_temps() {
 }
 
 #[test]
+fn prepare_failure_cleans_temps_without_persisting_aborted_manifest() {
+    let (fixture, plan_id) = prepared_fixture();
+    let injection = TransactionInjection::fail(TransactionPhase::PersistPrepared);
+
+    let error = fixture
+        .store
+        .commit_rewind(&plan_id, 7, b"forward", None, Some(&injection))
+        .unwrap_err();
+
+    assert!(error.phases().contains(&TransactionPhase::PersistPrepared));
+    assert_no_manifest(&fixture.dir);
+    assert!(fixture.store.current_undo_offer().is_none());
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"a-after");
+    assert_eq!(read(fixture.root.path(), "b.txt"), b"b-created");
+    assert!(!fixture.root.path().join("c.txt").exists());
+    let leftovers: Vec<_> = fs::read_dir(fixture.root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().contains(".reasonix-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "stale transaction temps: {leftovers:?}"
+    );
+}
+
+#[test]
 fn missing_restore_blob_rejects_before_target_mutation() {
     let (mut fixture, plan_id) = prepared_fixture();
     fixture.store.config.retain = 1;
@@ -142,7 +169,13 @@ fn missing_restore_blob_rejects_before_target_mutation() {
             .unwrap()
             .expired_file_payload
     );
-    assert!(fixture.store.blobs().unwrap().has(&digest(b"a-before")));
+    fixture
+        .store
+        .blobs()
+        .unwrap()
+        .remove(&digest(b"a-before"))
+        .unwrap();
+    assert!(!fixture.store.blobs().unwrap().has(&digest(b"a-before")));
 
     let error = commit(&fixture, &plan_id, b"forward").unwrap_err();
     match error {
@@ -493,6 +526,83 @@ fn blob_restore_uses_raw_content_addressed_payload() {
     assert!(plan.can_files);
     assert!(commit(&fixture, &plan.plan_id, b"forward").unwrap().ok);
     assert_eq!(read(fixture.root.path(), "a.txt"), restore);
+}
+
+#[test]
+fn restore_payload_loader_accepts_legacy_sha_addressed_blob() {
+    let mut fixture = fixture();
+    let restore = b"legacy-sha-payload";
+    let blob = fixture.store.blobs().unwrap().put(restore).unwrap();
+    write(fixture.root.path(), "a.txt", "after");
+    let checkpoints = [checkpoint(
+        0,
+        vec![FileSnap {
+            sha256: blob.clone(),
+            ..owned_file("a.txt", None, Some(true), &digest(b"after"), live_mode())
+        }],
+    )];
+    fixture.store = load(fixture.root.path(), &fixture.dir, &checkpoints);
+    let plan = plan(&fixture.store, RewindScope::Code);
+    assert!(plan.can_files, "{plan:?}");
+
+    assert!(commit(&fixture, &plan.plan_id, b"forward").unwrap().ok);
+    assert_eq!(read(fixture.root.path(), "a.txt"), restore);
+}
+
+#[test]
+fn transaction_inline_wire_preserves_present_empty_payload() {
+    let missing: TransactionTarget = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert!(
+        serde_json::to_value(&missing)
+            .unwrap()
+            .get("forwardInline")
+            .is_none()
+    );
+    let empty: TransactionTarget = serde_json::from_value(serde_json::json!({
+        "forwardInline": ""
+    }))
+    .unwrap();
+    let value = serde_json::to_value(&empty).unwrap();
+    assert_eq!(value["forwardInline"], "");
+}
+
+#[test]
+fn compensation_recovers_crash_between_backup_and_publish_renames() {
+    let fixture = fixture();
+    write(fixture.root.path(), "a.txt", "forward");
+    let absolute = fixture.root.path().join("a.txt");
+    let (publish, backup) =
+        transaction_prepare::sibling_paths(&absolute, "tx-crash-gap", 0).unwrap();
+    fs::write(&publish, b"restore").unwrap();
+    fs::rename(&absolute, &backup).unwrap();
+    let target = TransactionTarget {
+        path: "a.txt".to_owned(),
+        abs_path: absolute.to_string_lossy().into_owned(),
+        restore_existed: true,
+        restore_mode: live_mode(),
+        restore_sha: digest(b"restore"),
+        forward_existed: true,
+        forward_mode: live_mode(),
+        forward_sha: digest(b"forward"),
+        forward_inline: Some(b"forward".to_vec()),
+        publish_tmp: publish.to_string_lossy().into_owned(),
+        backup_path: backup.to_string_lossy().into_owned(),
+        published: true,
+        action: "write".to_owned(),
+        ..TransactionTarget::default()
+    };
+
+    transaction_compensate::compensate(
+        &fixture.store,
+        std::slice::from_ref(&target),
+        &mut Vec::new(),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(read(fixture.root.path(), "a.txt"), b"forward");
+    assert!(!publish.exists());
+    assert!(!backup.exists());
 }
 
 #[test]
